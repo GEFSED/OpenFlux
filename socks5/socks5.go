@@ -16,6 +16,9 @@ type Dialer interface {
 type SOCKS5Server struct {
 	listenAddr string
 	dialer     Dialer
+	mu         sync.Mutex
+	listener   net.Listener
+	stopped    bool
 }
 
 func NewSOCKS5Server(addr string, dialer Dialer) *SOCKS5Server {
@@ -23,22 +26,66 @@ func NewSOCKS5Server(addr string, dialer Dialer) *SOCKS5Server {
 }
 
 func (s *SOCKS5Server) Start() error {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return fmt.Errorf("SOCKS5 server stopped")
+	}
+	s.mu.Unlock()
+
 	listener, err := net.Listen("tcp", s.listenAddr)
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		listener.Close()
+		return nil
+	}
+	s.listener = listener
+	s.mu.Unlock()
+
+	defer func() {
+		listener.Close()
+		s.mu.Lock()
+		if s.listener == listener {
+			s.listener = nil
+		}
+		s.mu.Unlock()
+	}()
 
 	utils.Debugf("[SOCKS5] Listening on %s", s.listenAddr)
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			s.mu.Lock()
+			stopped := s.stopped
+			s.mu.Unlock()
+			if stopped {
+				return nil
+			}
 			utils.Debugf("[SOCKS5] Accept error: %v", err)
 			continue
 		}
 		go s.handleConnection(conn)
 	}
+}
+
+// Stop closes the listener and causes Start to return. A stopped server cannot
+// be started again; construct a new server for the next session.
+func (s *SOCKS5Server) Stop() error {
+	s.mu.Lock()
+	s.stopped = true
+	listener := s.listener
+	s.mu.Unlock()
+
+	if listener != nil {
+		return listener.Close()
+	}
+	return nil
 }
 
 func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {

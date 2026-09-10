@@ -2,109 +2,159 @@
 
 [English](README.md) | **Русский**
 
-Исследовательский инструмент сетевого стека. TCP-туннель с подключаемыми транспортами.
+> Это экспериментальный независимо развиваемый форк
+> [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux).
+> Основные отличия от исходного проекта перечислены в [FORK.md](FORK.md).
 
-## Обзор
+OpenFlux — исследовательский TCP-туннель с подключаемыми транспортами. В этом
+форке добавлены Android VPN-клиент и обязательное сквозное шифрование для
+транспорта через Yandex Docs.
+
+```text
+Android VPN или SOCKS5-клиент -> зашифрованный транспорт -> Linux-нода -> интернет
 ```
-Client (SOCKS5) --> Transport --> Exit Node --> Internet
-```
+
+## Возможности
+
+- Android-клиент для Android 8+ (`arm64-v8a`) на системном `VpnService`;
+- интерфейс в стиле Android 11 с подключением, логами и настройками;
+- аутентифицированное шифрование AES-256-GCM и получение ключа через scrypt;
+- хранение ссылки и общего секрета с защитой Android Keystore;
+- зашифрованная проверка задержки и живой график пинга;
+- DNS-over-HTTPS на Android;
+- SOCKS5-клиент для компьютера и режим выходной Linux-ноды;
+- транспорт через Yandex Docs и экспериментальный транспорт через MAX.
+
+## Важные ограничения
+
+OpenFlux — экспериментальный исследовательский проект, а не проверенная замена
+WireGuard или другому зрелому VPN. Android-туннель сейчас поддерживает IPv4 и
+TCP. DNS обслуживается отдельно через HTTPS; произвольный UDP и IPv6 через
+туннель не передаются. Владелец транспорта по-прежнему видит метаданные: время
+соединения, объём трафика и зашифрованные данные. Пользователь с правом
+редактирования документа может нарушить доступность соединения.
+
+Используйте программу только на своих системах и сетях либо там, где у вас есть
+разрешение на тестирование.
 
 ## Требования
-1. Golang v. 1.26.3+ — требуется для сборки бинарника десктопного клиента / выходной ноды (universal-bypass-tool);
-2. Android Native Development Kit (NDK) v.27.0.12077973+ — требуется для сборки бинарника для Android-клиента;
-3. XCode v. 26.6+ — требуется для сборки бинарника для iOS-клиента;
-4. VPS / VDS выходная нода на Linux.
 
-## Обзор
+- Go 1.26.4 или новее для клиента компьютера и выходной ноды;
+- Linux VPS/VDS с root-доступом для выходной ноды;
+- для сборки Android: Java 17, Android SDK/API 35, Build Tools 35.0.0,
+  NDK 27.0.12077973, Gradle 8.14.3 и `gomobile`;
+- редактируемый документ в старом редакторе Yandex Docs при использовании
+  транспорта Yandex.
 
-TCP-пакеты передаются через Transport. На данный момент доступны два транспорта:
-1. Yandex — отправляет пакеты через курсорные сообщения Yandex Docs;
-2. Max — отправляет пакеты через WebRTC DataChannel.
+## Подготовка приватной конфигурации
 
-Клиентская часть запускает SOCKS5-прокси, выходная нода декапсулирует и пересылает пакеты в пункт назначения.
-
-## Структура
-
-```
-universal-bypass-tool/
-├── main.go
-├── transport/
-│   ├── transport.go      # Transport interface
-│   └── yandex/           # Yandex Docs backend
-│   └── oneme/            # MAX Messenger backend
-├── tunnel/
-│   ├── tunnel.go         # TCP tunnel core
-│   ├── endpoint.go       # Virtual NIC
-│   └── rawsocket.go      # Raw socket (exit node)
-├── socks5/               # SOCKS5 server
-├── network/              # Checksums, packet parsing
-└── utils/                # Debug logging
-```
-
-## Сборка (бинарник десктоп-клиента / выходной ноды)
+Создайте эти файлы локально и передайте те же значения на выходную ноду. Они
+исключены через `.gitignore`, их нельзя добавлять в Git:
 
 ```bash
-go mod tidy
-go build -o universal-bypass-tool .
+printf '%s\n' 'https://ссылка-на-ваш-документ' > document-url
+openssl rand -base64 32 > encryption-key
+chmod 600 document-url encryption-key
 ```
 
-## Сборка для Android (клиентский бинарник)
+Секрет шифрования должен содержать не менее 16 символов. Используйте уникальное
+случайное значение, а не обычный пароль. Если ссылка или секрет раскрыты,
+замените оба значения.
+
+## Сборка ноды и клиента компьютера
+
 ```bash
-export ANDROID_NDK_HOME=<путь до вашего Android NDK>
-./build_android.sh
+go build -o openflux .
 ```
 
-## Сборка для iOS (клиентский бинарник)
+Запустите выходную Linux-ноду от root:
+
 ```bash
-export XCODE_PATH="<путь до вашего Xcode.app>" # опционально, по умолчанию /Applications/Xcode.app
-./build_ios.sh
+sudo iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP 2>/dev/null || \
+  sudo iptables -I OUTPUT 1 -p tcp --tcp-flags RST RST -j DROP
+sudo ./openflux --exit-node --transport yandex \
+  --url-file ./document-url --encryption-key-file ./encryption-key
 ```
 
-## Использование
+Пример [systemd-сервиса](deploy/openflux.service) ожидает бинарник и приватные
+файлы в `/root/openflux`. Перед установкой проверьте пути:
 
-### 1. Настройка выходной ноды
-1. У вас должен быть root-доступ выходной ноде;
-2. Поддерживается только устаревший редактор документов Yandex (переключается в настройках интерфейса).
-
-Команды для настройки выходной ноды:
 ```bash
-sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
-sudo ./universal-bypass-tool --exit-node --url "YOUR_YANDEX_DOC_URL" --debug
+sudo install -d -m 700 /root/openflux
+sudo install -m 755 ./openflux /root/openflux/openflux
+sudo install -m 600 ./document-url ./encryption-key /root/openflux/
+sudo install -m 644 deploy/openflux.service /etc/systemd/system/openflux.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now openflux
+sudo systemctl status openflux
 ```
 
-### 1. Настройка десктопного клиента:
+Запустите клиент компьютера и настройте в браузере SOCKS5-прокси
+`127.0.0.1:1080`:
 
-Команды для настройки десктопного клиента:
 ```bash
-./universal-bypass-tool --client --url "YOUR_YANDEX_DOC_URL" --socks5 :1080 --debug
+./openflux --client --transport yandex --socks5 127.0.0.1:1080 \
+  --url-file ./document-url --encryption-key-file ./encryption-key
 ```
 
-Затем настройте SOCKS5-прокси в браузере на localhost:1080.
+Добавляйте `--debug` только при диагностике и проверяйте логи перед публикацией.
 
-## Флаги
+## Сборка и установка Android-приложения
 
-| Флаг          | По умолчанию        | Описание                       |
-|---------------|---------------------|--------------------------------|
-| `--client`    |                     | Запуск в режиме клиента        |
-| `--exit-node` |                     | Запуск в режиме ноды           |
-| `--socks5`    | `:1080`             | Адрес SOCKS5 прокси            |
-| `--url`       | `https://localhost` | URL документа (Yandex Docs)    |
-| `--maxToken`  | ``                  | Токен авторизации (Max)        |
-| `--maxUid`    | ``                  | ID пользователя (Max)          |
-| `--debug`     | `false`             | Включить подробное логирование |
-| `--transport` | `yandex`            | Выбор транспорта               |
+Укажите `ANDROID_SDK_ROOT` (или `ANDROID_HOME`), установите `gomobile` и Gradle,
+затем выполните:
 
-## Реализация собственных транспортов
+```bash
+go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
+go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
+gomobile init
+./build_android_app.sh
+```
 
-Вы можете реализовать интерфейс `Transport` из `transport/transport.go` и зарегистрировать свой транспорт в switch-блоке в main.go.
+Debug APK для arm64 появится в
+`dist/OpenFlux-android-arm64-debug.apk`. Передайте его на устройство с Android
+8+, установите, укажите собственные ссылку и общий секрет во вкладке
+**«Настройки»**, затем подтвердите системный запрос Android на создание VPN.
+
+Настройки сохраняются после обычного обновления приложения, если Application ID
+и сертификат подписи не менялись. Очистка данных или удаление приложения стирает
+их. APK с другим сертификатом не сможет обновить установленную версию. Артефакт
+из CI подписан debug-ключом и предназначен для тестирования, а не для релиза.
+
+Дополнительные сведения находятся в [android/README.md](android/README.md).
+
+## Флаги командной строки
+
+| Флаг | По умолчанию | Описание |
+| --- | --- | --- |
+| `--client` | выкл. | Запустить SOCKS5-клиент |
+| `--exit-node` | выкл. | Запустить выходную ноду (нужен root) |
+| `--socks5` | `:1080` | Адрес SOCKS5-прокси |
+| `--transport` | `yandex` | Транспорт (`yandex` или `oneme`) |
+| `--url` | пусто | Ссылка в аргументе; безопаснее `--url-file` |
+| `--url-file` | пусто | Прочитать ссылку на документ из файла |
+| `--encryption-key-file` | пусто | Прочитать секрет транспорта Yandex из файла |
+| `--maxToken` | пусто | Токен транспорта MAX |
+| `--maxUid` | пусто | ID пользователя транспорта MAX |
+| `--debug` | выкл. | Включить подробные логи |
+
+## Разработка и безопасность
+
+Перед коммитом выполните:
+
+```bash
+gofmt -w $(git ls-files '*.go')
+go test ./...
+go vet ./...
+git diff --check
+```
+
+Правила участия находятся в [CONTRIBUTING.md](CONTRIBUTING.md), порядок сообщения
+об уязвимостях — в [SECURITY.md](SECURITY.md), список изменений — в
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Лицензия
 
-Проект распространяется под лицензией **GNU General Public License v3.0 or later**.
-Полный текст — в файле [LICENSE](LICENSE).
-
-Лицензии третьих сторон — в файле [NOTICE](NOTICE).
-
-## Дисклеймер
-
-Только для образовательного использования. Тестируйте на собственных машинах и сетях.
+OpenFlux распространяется по GNU General Public License v3.0 или более поздней
+версии. См. [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT) и [NOTICE](NOTICE). Этот
+форк не одобрен Yandex и не связан с компанией.
