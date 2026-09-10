@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 )
 
 var (
-	debugLog *log.Logger
-	verbose  bool
+	debugLog  *log.Logger
+	verbose   bool
+	logSinkMu sync.RWMutex
+	logSink   func(string)
 )
 
 func EnableDebug() {
@@ -19,8 +22,23 @@ func EnableDebug() {
 
 func Debugf(format string, args ...interface{}) {
 	if verbose {
-		debugLog.Output(2, fmt.Sprintf(format, args...))
+		message := fmt.Sprintf(format, args...)
+		debugLog.Output(2, message)
+
+		logSinkMu.RLock()
+		sink := logSink
+		logSinkMu.RUnlock()
+		if sink != nil {
+			sink(message)
+		}
 	}
+}
+
+// SetLogSink mirrors debug messages to an embedding application.
+func SetLogSink(sink func(string)) {
+	logSinkMu.Lock()
+	logSink = sink
+	logSinkMu.Unlock()
 }
 
 func IsVerbose() bool {

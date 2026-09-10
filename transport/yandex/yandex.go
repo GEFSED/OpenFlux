@@ -49,8 +49,8 @@ func (s *DocSession) safeWrite(messageType int, data []byte) error {
 type YandexDocsTransport struct {
 	*transport.BaseTransport
 
-	url      string
-	session  *DocSession
+	url     string
+	session *DocSession
 
 	userCounter atomic.Int32
 	baseUserID  string
@@ -74,6 +74,22 @@ func (t *YandexDocsTransport) Start() error {
 	go t.keepAliveLoop()
 	t.connectToDoc(0)
 
+	return nil
+}
+
+func (t *YandexDocsTransport) Stop() error {
+	if err := t.BaseTransport.Stop(); err != nil {
+		return err
+	}
+
+	t.Mu.Lock()
+	session := t.session
+	t.session = nil
+	t.Mu.Unlock()
+
+	if session != nil && session.Conn != nil {
+		return session.Conn.Close()
+	}
 	return nil
 }
 

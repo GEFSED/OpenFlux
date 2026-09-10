@@ -6,8 +6,9 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
-        _ "github.com/wlynxg/anet"
+	_ "github.com/wlynxg/anet"
 	"universal-bypass-tool/socks5"
 	"universal-bypass-tool/transport"
 	"universal-bypass-tool/transport/oneme"
@@ -24,14 +25,16 @@ var (
 
 func main() {
 	//os.Setenv("GODEBUG", "netdns=go")
-        fmt.Print("written by p1neappleXpress\n")
+	fmt.Print("written by p1neappleXpress\n")
 
 	exitNode := flag.Bool("exit-node", false, "Run as exit node (needs root)")
 	client := flag.Bool("client", false, "Run as client")
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
 	socksAddr := flag.String("socks5", ":1080", "SOCKS5 address")
 	transportType := flag.String("transport", "yandex", "Transport type (yandex, google, custom)")
-	flag.StringVar(&globalDocUrl, "url", "http://#", "Document URL. If u use Yandex.Docs transport")
+	flag.StringVar(&globalDocUrl, "url", "", "Document URL. Required for Yandex.Docs transport")
+	urlFile := flag.String("url-file", "", "Read the document URL from a file")
+	encryptionKeyFile := flag.String("encryption-key-file", "", "Read the shared encryption secret from a file")
 	flag.StringVar(&maxToken, "maxToken", "", "MAX call user id. If u use MAX transport")
 	flag.StringVar(&maxUid, "maxUid", "", "MAX Web token. If u use MAX transport")
 	flag.Parse()
@@ -54,7 +57,22 @@ func main() {
 
 	switch *transportType {
 	case "yandex":
-		trans = transport.NewCompressedTransport(yandex.NewYandexDocsTransport(globalDocUrl, config))
+		var err error
+		globalDocUrl, err = readRequiredOption(globalDocUrl, *urlFile, "document URL")
+		if err != nil {
+			log.Fatal(err)
+		}
+		secret, err := readRequiredOption("", *encryptionKeyFile, "encryption key")
+		if err != nil {
+			log.Fatal(err)
+		}
+		encrypted, err := transport.NewEncryptedTransport(
+			yandex.NewYandexDocsTransport(globalDocUrl, config), secret, globalDocUrl, *exitNode,
+		)
+		if err != nil {
+			log.Fatalf("Configure encrypted transport: %v", err)
+		}
+		trans = transport.NewCompressedTransport(encrypted)
 	case "oneme":
 		uidint, _ := strconv.ParseInt(maxUid, 10, 64)
 		trans = transport.NewCompressedTransport(oneme.NewOneMeTransport(*exitNode, maxToken, uidint, config))
@@ -77,4 +95,22 @@ func main() {
 		socks5Server := socks5.NewSOCKS5Server(*socksAddr, tun)
 		log.Fatal(socks5Server.Start())
 	}
+}
+
+func readRequiredOption(value, filename, label string) (string, error) {
+	if value != "" && filename != "" {
+		return "", fmt.Errorf("use only one of the inline or file options for %s", label)
+	}
+	if filename != "" {
+		data, err := os.ReadFile(filename)
+		if err != nil {
+			return "", fmt.Errorf("read %s file: %w", label, err)
+		}
+		value = string(data)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("%s is required", label)
+	}
+	return value, nil
 }

@@ -1,5 +1,6 @@
 build/
 dist/
+output/
 github_output/
 *.exe
 *.dll
@@ -7,8 +8,8 @@ github_output/
 *.dylib
 universal-bypass-tool
 universal-bypass-tool-*
-app
-app.exe
+/app
+/app.exe
 
 capture.txt
 capture.etl
@@ -32,6 +33,16 @@ Thumbs.db
 
 .env
 .env.local
+document-url
+encryption-key
+*.jks
+*.keystore
+keystore.properties
 
 .gradle/
 *.hprof
+.gocache/
+.gopath/
+android/local.properties
+android/app/libs/*.aar
+android/app/libs/*-sources.jar
