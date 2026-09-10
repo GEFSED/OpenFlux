@@ -16,6 +16,10 @@ transport.
 Android VPN or SOCKS5 client -> encrypted document transport -> Linux exit node -> Internet
 ```
 
+## Android interface
+
+![OpenFlux Android: connection, logs and settings](docs/images/openflux-android-tabs.png)
+
 ## Features
 
 - Android 8+ client using the system `VpnService` API, with ARM, ARM64, x86 and

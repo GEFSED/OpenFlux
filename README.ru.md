@@ -16,6 +16,10 @@ OpenFlux — исследовательский TCP-туннель с подкл
 Android VPN или SOCKS5-клиент -> зашифрованный транспорт -> Linux-нода -> интернет
 ```
 
+## Интерфейс Android
+
+![OpenFlux Android: подключение, логи и настройки](docs/images/openflux-android-tabs.png)
+
 ## Возможности
 
 - Android-клиент для Android 8+ на системном `VpnService` со сборками для ARM,
