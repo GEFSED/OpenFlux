@@ -1,6 +1,23 @@
-# OpenFlux
+<div align="center">
+  <img src="design/logo/avatar.svg" width="112" alt="Логотип OpenFlux">
+  <h1>OpenFlux Android</h1>
+  <p>Зашифрованный VPN через документ-транспорт для Android, компьютера и выходной Linux-ноды.</p>
+  <p>
+    <a href="https://github.com/damnurmum/OpenFlux-Android/releases/latest"><img src="https://img.shields.io/github/v/release/damnurmum/OpenFlux-Android?display_name=tag&amp;sort=semver&amp;style=flat-square&amp;color=7aa2f7" alt="Последний релиз"></a>
+    <a href="https://github.com/damnurmum/OpenFlux-Android/actions/workflows/ci.yml"><img src="https://github.com/damnurmum/OpenFlux-Android/actions/workflows/ci.yml/badge.svg" alt="Статус CI"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/damnurmum/OpenFlux-Android?style=flat-square" alt="Лицензия GPL-3.0"></a>
+    <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android 8 или новее">
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/Go-1.26.4%2B-00ADD8?style=flat-square&amp;logo=go&amp;logoColor=white" alt="Go 1.26.4 или новее">
+    <img src="https://img.shields.io/badge/Java-17-ED8B00?style=flat-square&amp;logo=openjdk&amp;logoColor=white" alt="Java 17">
+    <img src="https://img.shields.io/badge/ABI-ARM64%20%7C%20ARMv7%20%7C%20x86__64%20%7C%20x86-455a64?style=flat-square" alt="Поддерживаемые архитектуры Android">
+    <img src="https://img.shields.io/badge/IPv4%20%2F%20TCP-experimental-f59e0b?style=flat-square" alt="Экспериментальная поддержка IPv4 и TCP">
+  </p>
+  <p><a href="README.md">English</a> · <strong>Русский</strong></p>
+</div>
 
-[English](README.md) | **Русский**
+![OpenFlux Android: подключение, логи и настройки](docs/images/openflux-android-tabs.png)
 
 > Это экспериментальный независимо развиваемый форк
 > [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux).
@@ -10,15 +27,11 @@ OpenFlux — исследовательский TCP-туннель с подкл
 форке добавлены Android VPN-клиент и обязательное сквозное шифрование для
 транспорта через Yandex Docs.
 
-[Скачать последнюю Android-версию](https://github.com/damnurmum/OpenFlux-Android/releases/latest)
+**[Скачать последнюю Android-версию](https://github.com/damnurmum/OpenFlux-Android/releases/latest)**
 
 ```text
 Android VPN или SOCKS5-клиент -> зашифрованный транспорт -> Linux-нода -> интернет
 ```
-
-## Интерфейс Android
-
-![OpenFlux Android: подключение, логи и настройки](docs/images/openflux-android-tabs.png)
 
 ## Возможности
 
