@@ -1,6 +1,23 @@
-# OpenFlux
+<div align="center">
+  <img src="design/logo/avatar.svg" width="112" alt="OpenFlux logo">
+  <h1>OpenFlux Android</h1>
+  <p>Encrypted document-transport VPN for Android, desktop clients and Linux exit nodes.</p>
+  <p>
+    <a href="https://github.com/damnurmum/OpenFlux-Android/releases/latest"><img src="https://img.shields.io/github/v/release/damnurmum/OpenFlux-Android?display_name=tag&amp;sort=semver&amp;style=flat-square&amp;color=7aa2f7" alt="Latest release"></a>
+    <a href="https://github.com/damnurmum/OpenFlux-Android/actions/workflows/ci.yml"><img src="https://github.com/damnurmum/OpenFlux-Android/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/damnurmum/OpenFlux-Android?style=flat-square" alt="GPL-3.0 license"></a>
+    <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android 8 or newer">
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/Go-1.26.4%2B-00ADD8?style=flat-square&amp;logo=go&amp;logoColor=white" alt="Go 1.26.4 or newer">
+    <img src="https://img.shields.io/badge/Java-17-ED8B00?style=flat-square&amp;logo=openjdk&amp;logoColor=white" alt="Java 17">
+    <img src="https://img.shields.io/badge/ABI-ARM64%20%7C%20ARMv7%20%7C%20x86__64%20%7C%20x86-455a64?style=flat-square" alt="Supported Android architectures">
+    <img src="https://img.shields.io/badge/IPv4%20%2F%20TCP-experimental-f59e0b?style=flat-square" alt="Experimental IPv4 and TCP support">
+  </p>
+  <p><strong>English</strong> · <a href="README.ru.md">Русский</a></p>
+</div>
 
-**English** | [Русский](README.ru.md)
+![OpenFlux Android: connection, logs and settings](docs/images/openflux-android-tabs.png)
 
 > This repository is an experimental, independently maintained fork of
 > [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux).
@@ -10,15 +27,11 @@ OpenFlux is a research TCP tunnel with pluggable transports. This fork adds an
 Android VPN client and mandatory end-to-end encryption for the Yandex Docs
 transport.
 
-[Download the latest Android release](https://github.com/damnurmum/OpenFlux-Android/releases/latest)
+**[Download the latest Android release](https://github.com/damnurmum/OpenFlux-Android/releases/latest)**
 
 ```text
 Android VPN or SOCKS5 client -> encrypted document transport -> Linux exit node -> Internet
 ```
-
-## Android interface
-
-![OpenFlux Android: connection, logs and settings](docs/images/openflux-android-tabs.png)
 
 ## Features
 
