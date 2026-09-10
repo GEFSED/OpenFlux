@@ -4,6 +4,15 @@ All notable changes to this fork are documented here.
 
 ## Unreleased
 
+## 0.3.0 - 2026-09-10
+
+### Added
+
+- Android APKs for `arm64-v8a`, `armeabi-v7a`, `x86_64`, `x86` and universal
+  devices;
+- automated GitHub Release publishing for tags matching `v*`;
+- SHA-256 checksums for every release APK.
+
 ## 0.2.0 - 2026-09-10
 
 ### Added

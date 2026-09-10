@@ -6,6 +6,24 @@ SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 NDK_ROOT="${ANDROID_NDK_HOME:-$SDK_ROOT/ndk/27.0.12077973}"
 GOMOBILE_BIN="${GOMOBILE_BIN:-$(command -v gomobile || true)}"
 GRADLE_BIN="${GRADLE_BIN:-}"
+BUILD_TYPE="${BUILD_TYPE:-debug}"
+
+case "$BUILD_TYPE" in
+    debug)
+        GRADLE_TASK="assembleDebug"
+        ;;
+    release)
+        GRADLE_TASK="assembleRelease"
+        : "${ANDROID_KEYSTORE_FILE:?Set ANDROID_KEYSTORE_FILE for a release build}"
+        : "${ANDROID_KEYSTORE_PASSWORD:?Set ANDROID_KEYSTORE_PASSWORD for a release build}"
+        : "${ANDROID_KEY_ALIAS:?Set ANDROID_KEY_ALIAS for a release build}"
+        : "${ANDROID_KEY_PASSWORD:?Set ANDROID_KEY_PASSWORD for a release build}"
+        ;;
+    *)
+        echo "Unsupported BUILD_TYPE: $BUILD_TYPE (use debug or release)"
+        exit 1
+        ;;
+esac
 
 if [ -z "$GRADLE_BIN" ]; then
     GRADLE_BIN="$(command -v gradle || true)"
@@ -33,6 +51,7 @@ if [ ! -d "$NDK_ROOT" ]; then
 fi
 
 mkdir -p "$SCRIPT_DIR/android/app/libs" "$SCRIPT_DIR/dist"
+rm -f "$SCRIPT_DIR/dist"/OpenFlux-android-*-$BUILD_TYPE.apk
 
 export ANDROID_HOME="$SDK_ROOT"
 export ANDROID_SDK_ROOT="$SDK_ROOT"
@@ -42,7 +61,7 @@ export PATH="$(dirname -- "$GOMOBILE_BIN"):$PATH"
 (
     cd "$SCRIPT_DIR/mobile"
     "$GOMOBILE_BIN" bind \
-        -target=android/arm64 \
+        -target=android \
         -androidapi=26 \
         -javapkg=io.openflux.bridge \
         -o ../android/app/libs/openflux.aar \
@@ -51,10 +70,18 @@ export PATH="$(dirname -- "$GOMOBILE_BIN"):$PATH"
 
 (
     cd "$SCRIPT_DIR/android"
-    "$GRADLE_BIN" --no-daemon assembleDebug
+    "$GRADLE_BIN" --no-daemon "$GRADLE_TASK"
 )
 
-cp "$SCRIPT_DIR/android/app/build/outputs/apk/debug/app-debug.apk" \
-   "$SCRIPT_DIR/dist/OpenFlux-android-arm64-debug.apk"
+OUTPUT_DIR="$SCRIPT_DIR/android/app/build/outputs/apk/$BUILD_TYPE"
+for ABI in universal arm64-v8a armeabi-v7a x86_64 x86; do
+    SOURCE_APK="$OUTPUT_DIR/app-$ABI-$BUILD_TYPE.apk"
+    if [ ! -f "$SOURCE_APK" ]; then
+        echo "Expected APK not found: $SOURCE_APK"
+        exit 1
+    fi
+    cp "$SOURCE_APK" "$SCRIPT_DIR/dist/OpenFlux-android-$ABI-$BUILD_TYPE.apk"
+done
 
-echo "Built: $SCRIPT_DIR/dist/OpenFlux-android-arm64-debug.apk"
+echo "Built APKs:"
+find "$SCRIPT_DIR/dist" -maxdepth 1 -name "OpenFlux-android-*-$BUILD_TYPE.apk" -print | sort

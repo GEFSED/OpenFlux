@@ -38,6 +38,7 @@ encryption-key
 *.jks
 *.keystore
 keystore.properties
+.signing/
 
 .gradle/
 *.hprof

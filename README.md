@@ -10,13 +10,16 @@ OpenFlux is a research TCP tunnel with pluggable transports. This fork adds an
 Android VPN client and mandatory end-to-end encryption for the Yandex Docs
 transport.
 
+[Download the latest Android release](https://github.com/damnurmum/OpenFlux-Android/releases/latest)
+
 ```text
 Android VPN or SOCKS5 client -> encrypted document transport -> Linux exit node -> Internet
 ```
 
 ## Features
 
-- Android 8+ (`arm64-v8a`) client using the system `VpnService` API;
+- Android 8+ client using the system `VpnService` API, with ARM, ARM64, x86 and
+  x86_64 builds;
 - Android 11-style UI with connection controls, logs and settings;
 - AES-256-GCM authenticated encryption with a key derived using scrypt;
 - Android Keystore-backed storage for the document URL and shared secret;
@@ -112,16 +115,19 @@ gomobile init
 ./build_android_app.sh
 ```
 
-The arm64 debug APK is written to
-`dist/OpenFlux-android-arm64-debug.apk`. Transfer it to an Android 8+ device,
-install it, enter your own document URL and shared secret in **Settings**, then
-approve Android's VPN prompt.
+The build creates separate APKs for `arm64-v8a`, `armeabi-v7a`, `x86_64` and
+`x86`, plus `OpenFlux-android-universal-debug.apk` for devices whose architecture
+is unknown. Transfer the appropriate APK to an Android 8+ device, install it,
+enter your own document URL and shared secret in **Settings**, then approve
+Android's VPN prompt.
 
 Configuration survives a normal in-place app update when the application ID
 and signing certificate stay the same. Clearing app data or uninstalling the
 app removes it. APKs signed with a different certificate cannot update the
-existing installation. The CI artifact is a debug build intended for testing,
-not a production release.
+existing installation. CI artifacts are debug builds; APKs attached to GitHub
+Releases use the project's persistent release certificate. Moving from a debug
+build to the release channel requires one uninstall and therefore clears saved
+settings.
 
 See [android/README.md](android/README.md) for Android-specific details.
 
