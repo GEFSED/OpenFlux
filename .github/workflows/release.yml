@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Git tag to publish
+        required: true
+        default: v0.3.0
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
@@ -57,7 +66,7 @@ jobs:
         run: GRADLE_BIN="$(command -v gradle)" ./build_android_app.sh
 
       - name: Verify APK signatures
-        run: for apk in dist/OpenFlux-android-*-release.apk; do apksigner verify --verbose "$apk"; done
+        run: for apk in dist/OpenFlux-android-*-release.apk; do "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$apk"; done
 
       - name: Generate checksums
         run: cd dist && sha256sum OpenFlux-android-*-release.apk > SHA256SUMS
@@ -65,7 +74,7 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OpenFlux-Android-${{ github.ref_name }}
+          name: OpenFlux-Android-${{ env.RELEASE_TAG }}
           path: |
             dist/OpenFlux-android-*-release.apk
             dist/SHA256SUMS
@@ -76,10 +85,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$RELEASE_TAG" \
             dist/OpenFlux-android-*-release.apk \
             dist/SHA256SUMS \
             --verify-tag \
             --generate-notes \
-            --title "OpenFlux Android $GITHUB_REF_NAME" \
+            --title "OpenFlux Android $RELEASE_TAG" \
             --notes "Experimental Android 8+ builds. Choose arm64-v8a for most modern phones, armeabi-v7a for older 32-bit ARM devices, x86/x86_64 for compatible emulators, or universal when unsure. If a debug build is installed, uninstall it once before installing this signed release; later release updates preserve app data."
