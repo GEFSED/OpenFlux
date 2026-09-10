@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -44,6 +45,7 @@ jobs:
       - run: GRADLE_BIN="$(command -v gradle)" ./build_android_app.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: OpenFlux-android-arm64-debug
+          name: OpenFlux-android-arm64-debug-${{ github.sha }}
           path: dist/OpenFlux-android-arm64-debug.apk
           if-no-files-found: error
+          retention-days: 30
