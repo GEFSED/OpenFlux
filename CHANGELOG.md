@@ -4,6 +4,21 @@ All notable changes to this fork are documented here.
 
 ## Unreleased
 
+### Added
+
+- synced with upstream p1neappleXpress/OpenFlux through commit `3249724`:
+  fixed swapped `maxToken`/`maxUid` flag descriptions, `yandex` transport now
+  returns errors instead of panicking on unexpected document config (with new
+  tests), and an experimental Yandex.Docs Volga transport (`vyandex.go`) is
+  now in the tree.
+
+### Notes
+
+- the new `vyandex` transport is intentionally not wired into the
+  `--transport` CLI switch: it has no mandatory encryption wrapper yet, so
+  exposing it would contradict this fork's encrypted-by-default security
+  model for Yandex Docs transports.
+
 ## 0.3.0 - 2026-09-10
 
 ### Added
