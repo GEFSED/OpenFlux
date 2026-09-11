@@ -43,7 +43,9 @@ Android VPN or SOCKS5 client -> encrypted document transport -> Linux exit node 
 - Android 11-style UI with connection controls, logs and settings;
 - AES-256-GCM authenticated encryption with a key derived using scrypt;
 - Android Keystore-backed storage for the document URL and shared secret;
-- encrypted latency checks and a live ping graph;
+- encrypted latency checks, a live ping graph, and the exit node's country
+  once it's known;
+- per-app VPN routing (whitelist or blacklist which apps use the tunnel);
 - DNS-over-HTTPS on Android;
 - desktop SOCKS5 client and Linux exit-node modes;
 - Yandex Docs and experimental MAX transport backends.

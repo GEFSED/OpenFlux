@@ -12,9 +12,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/scrypt"
 )
+
+// maxCountryBytes bounds the optional country name piggybacked on ping-pong
+// frames. It is cosmetic data, but the length is still capped defensively
+// since it arrives over the wire (authenticated, not otherwise validated).
+const maxCountryBytes = 48
 
 const (
 	encryptedVersion  = byte(1)
@@ -43,6 +49,7 @@ type EncryptedTransport struct {
 	pendingPings  map[uint64]time.Time
 	lastPingMs    atomic.Int64
 	pingSequence  atomic.Int64
+	country       atomic.Value // string
 }
 
 // NewEncryptedTransport creates a directional AES-256-GCM transport. Both
@@ -153,11 +160,22 @@ func (e *EncryptedTransport) Receive(callback func([]byte)) {
 		case framePingRequest:
 			if len(plaintext) == 9 {
 				response := append([]byte{framePingResponse}, plaintext[1:]...)
+				if country, ok := e.country.Load().(string); ok && country != "" {
+					response = append(response, country...)
+				}
 				_ = e.sendFrame(response)
 			}
 		case framePingResponse:
-			if len(plaintext) == 9 {
-				e.completePing(binary.BigEndian.Uint64(plaintext[1:]))
+			if len(plaintext) >= 9 {
+				e.completePing(binary.BigEndian.Uint64(plaintext[1:9]))
+				if extra := plaintext[9:]; len(extra) > 0 {
+					if len(extra) > maxCountryBytes {
+						extra = extra[:maxCountryBytes]
+					}
+					if utf8.Valid(extra) {
+						e.country.Store(string(extra))
+					}
+				}
 			}
 		}
 	})
@@ -215,6 +233,25 @@ func (e *EncryptedTransport) LastPingMillis() int64 {
 
 func (e *EncryptedTransport) PingSequence() int64 {
 	return e.pingSequence.Load()
+}
+
+// SetCountry publishes this peer's own country name so it rides along on
+// future ping responses. Intended for the exit node; a client-side value is
+// simply never read since only the exit node answers ping requests.
+func (e *EncryptedTransport) SetCountry(name string) {
+	if len(name) > maxCountryBytes {
+		name = name[:maxCountryBytes]
+	}
+	e.country.Store(name)
+}
+
+// LastCountry returns the remote peer's country name as learned from the
+// most recent ping response, or "" if it hasn't arrived yet.
+func (e *EncryptedTransport) LastCountry() string {
+	if country, ok := e.country.Load().(string); ok {
+		return country
+	}
+	return ""
 }
 
 func (e *EncryptedTransport) rememberNonce(nonce []byte) bool {

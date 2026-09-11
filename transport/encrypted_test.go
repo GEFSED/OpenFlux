@@ -132,3 +132,36 @@ func TestEncryptedTransportPingRoundTrip(t *testing.T) {
 		t.Fatalf("ping = %d ms, want positive value", client.LastPingMillis())
 	}
 }
+
+func TestEncryptedTransportPingCarriesCountry(t *testing.T) {
+	clientWire := &testTransport{}
+	exitWire := &testTransport{}
+	client, err := NewEncryptedTransport(clientWire, "a sufficiently long shared secret", "document", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitNode, err := NewEncryptedTransport(exitWire, "a sufficiently long shared secret", "document", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Receive(func([]byte) {})
+	exitNode.Receive(func([]byte) {})
+
+	if client.LastCountry() != "" {
+		t.Fatalf("client country = %q before any ping, want empty", client.LastCountry())
+	}
+
+	exitNode.SetCountry("Germany")
+	if err := client.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	exitWire.deliver(clientWire.sent)
+	clientWire.deliver(exitWire.sent)
+
+	if client.PingSequence() != 1 {
+		t.Fatalf("ping sequence = %d, want 1", client.PingSequence())
+	}
+	if got := client.LastCountry(); got != "Germany" {
+		t.Fatalf("client country = %q, want %q", got, "Germany")
+	}
+}

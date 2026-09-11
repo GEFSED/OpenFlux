@@ -2,10 +2,28 @@
 
 All notable changes to this fork are documented here.
 
-## Unreleased
+## 0.4.0 - 2026-09-12
 
 ### Added
 
+- Android Settings is now organized into tabs (Транспорт / Сеть /
+  Приложения / Вид) instead of one long scrolling page.
+- per-app VPN routing: a whitelist ("only these apps use the tunnel") or
+  blacklist ("all apps except these") mode, with an in-app picker over
+  installed apps. Backed by `VpnService.Builder.addAllowedApplication`/
+  `addDisallowedApplication`.
+- the exit node's country now shows up next to the ping once it arrives,
+  piggybacked on the existing encrypted ping/pong frames (no new protocol
+  message); the exit node determines it once at startup via `ip-api.com`
+  and publishes it through `EncryptedTransport.SetCountry`.
+- animations throughout the Android UI: crossfaded tab/page transitions,
+  a staggered card entrance on Home, a pulsing status dot while
+  connecting/disconnecting, an animated VPN-button color transition, and
+  small pop/bounce feedback on tab and toggle interactions.
+- haptic feedback: light ticks on button/toggle/tab interactions via
+  `View.performHapticFeedback`, plus distinct vibration patterns for a
+  successful connection and for errors via `Vibrator`/`VibrationEffect`
+  (new `VIBRATE` permission).
 - a beginner-friendly, step-by-step VPS deployment guide in English and
   Russian ([docs/GUIDE.md](GUIDE.md), [docs/GUIDE.ru.md](GUIDE.ru.md)),
   linked from both READMEs.
@@ -27,6 +45,10 @@ All notable changes to this fork are documented here.
   to scope the exit node's RST-drop iptables rule to a dedicated egress IP
   instead of dropping RSTs host-wide; aggressive GC on the exit node for
   small VPS instances.
+
+### Changed
+
+- Android application version is now 0.4.0 (version code 4).
 
 ### Notes
 

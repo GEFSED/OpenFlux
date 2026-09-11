@@ -146,6 +146,18 @@ func PingSequence() int64 {
 	return encrypted.PingSequence()
 }
 
+// ServerCountry returns the exit node's country name as learned from the
+// encrypted ping protocol, or "" if it hasn't arrived yet.
+func ServerCountry() string {
+	client.mu.Lock()
+	encrypted := client.encrypted
+	client.mu.Unlock()
+	if encrypted == nil {
+		return ""
+	}
+	return encrypted.LastCountry()
+}
+
 func IsConnected() bool {
 	client.mu.Lock()
 	trans := client.transport
