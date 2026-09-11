@@ -93,7 +93,28 @@ chmod 600 document-url encryption-key
 go build -o openflux .
 ```
 
-Запустите выходную Linux-ноду от root:
+TCP-соединения выходной ноды живут в userspace-стеке (gvisor), у ядра нет для
+них сокета, и оно слало бы RST на каждый ответный пакет — туннель бы рвался.
+Этот RST надо подавить, но точечно, не на весь хост. Глухое `-j DROP` на все
+исходящие RST превращает закрытые порты в «молчащие» (сканер видит `filtered`
+вместо `closed`) и мешает хосту нормально сбрасывать посторонние соединения.
+
+Рекомендуется: выделите машине второй/алиас IP под туннель и ограничьте
+правило им через `--local-ip`:
+
+```bash
+sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -s 203.0.113.10 -j DROP
+sudo ./openflux --exit-node --transport yandex --local-ip 203.0.113.10 \
+  --url-file ./document-url --encryption-key-file ./encryption-key
+```
+
+Ещё чище — запускать ноду в отдельном network namespace или контейнере, тогда
+правило вообще не трогает остальные сервисы хоста. `-m owner --uid-owner` тут
+не работает: рвущие туннель RST генерирует ядро без сокета-владельца, и
+owner-матч не срабатывает.
+
+Запасной вариант на весь хост (только на однозадачной машине, с пониманием
+последствий выше):
 
 ```bash
 sudo iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP 2>/dev/null || \
@@ -158,6 +179,7 @@ CI подписаны debug-ключом, а APK в GitHub Releases — пост
 | --- | --- | --- |
 | `--client` | выкл. | Запустить SOCKS5-клиент |
 | `--exit-node` | выкл. | Запустить выходную ноду (нужен root) |
+| `--local-ip` | пусто | Egress IP выходной ноды — для точечного RST-drop правила |
 | `--socks5` | `:1080` | Адрес SOCKS5-прокси |
 | `--transport` | `yandex` | Транспорт (`yandex` или `oneme`) |
 | `--url` | пусто | Ссылка в аргументе; безопаснее `--url-file` |

@@ -1,6 +1,7 @@
 package socks5
 
 import (
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -10,7 +11,7 @@ type unusedDialer struct{}
 
 func (unusedDialer) DialTCP(string) (net.Conn, error) { return nil, nil }
 
-func TestStopClosesListener(t *testing.T) {
+func TestCloseClosesListener(t *testing.T) {
 	server := NewSOCKS5Server("127.0.0.1:0", unusedDialer{})
 	result := make(chan error, 1)
 	go func() { result <- server.Start() }()
@@ -29,25 +30,25 @@ func TestStopClosesListener(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	if err := server.Stop(); err != nil {
-		t.Fatalf("Stop() error = %v", err)
+	if err := server.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
 	}
 	select {
 	case err := <-result:
-		if err != nil {
-			t.Fatalf("Start() after Stop() error = %v", err)
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("Start() after Close() error = %v, want net.ErrClosed", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("Start() did not return after Stop()")
+		t.Fatal("Start() did not return after Close()")
 	}
 }
 
-func TestStopBeforeStart(t *testing.T) {
+func TestCloseBeforeStart(t *testing.T) {
 	server := NewSOCKS5Server("127.0.0.1:0", unusedDialer{})
-	if err := server.Stop(); err != nil {
-		t.Fatalf("Stop() error = %v", err)
+	if err := server.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
 	}
 	if err := server.Start(); err == nil {
-		t.Fatal("Start() after Stop() unexpectedly succeeded")
+		t.Fatal("Start() after Close() unexpectedly succeeded")
 	}
 }
