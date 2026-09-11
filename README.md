@@ -89,6 +89,11 @@ secret if either is exposed.
 
 ## Build the exit node and desktop client
 
+The exit node and desktop client are the same binary; only the flags differ.
+Prebuilt Linux `amd64`/`arm64` binaries are attached to every
+[GitHub Release](https://github.com/damnurmum/OpenFlux-Android/releases/latest)
+alongside the Android APKs. To build it yourself instead:
+
 ```bash
 go build -o openflux .
 ```
