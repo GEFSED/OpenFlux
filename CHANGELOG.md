@@ -11,6 +11,16 @@ All notable changes to this fork are documented here.
   returns errors instead of panicking on unexpected document config (with new
   tests), and an experimental Yandex.Docs Volga transport (`vyandex.go`) is
   now in the tree.
+- synced with upstream through commit `9ef5ab3`: exponential reconnect
+  backoff and bounded WebSocket dial for the `yandex` transport; SOCKS5
+  `Bind`/`Close` lifecycle plus a bounds-check fix for malformed domain
+  requests; the MAX transport no longer kills the whole process
+  (`os.Exit(1)`) when its connection drops — fatal when embedded as an
+  Android library; panic recovery (`utils.SafeGo`) around background
+  goroutines in the transport, tunnel and SOCKS5 layers; a `--local-ip` flag
+  to scope the exit node's RST-drop iptables rule to a dedicated egress IP
+  instead of dropping RSTs host-wide; aggressive GC on the exit node for
+  small VPS instances.
 
 ### Notes
 
@@ -18,6 +28,10 @@ All notable changes to this fork are documented here.
   `--transport` CLI switch: it has no mandatory encryption wrapper yet, so
   exposing it would contradict this fork's encrypted-by-default security
   model for Yandex Docs transports.
+- upstream re-added a full iOS app (`ios-app/`, `export_ios*.go`,
+  `tunnel/packettunnel.go`, `build_ios*.sh`) and several Network Extension
+  hardening commits on top of it; none of that was carried over. This fork
+  does not support iOS (see [FORK.md](FORK.md)).
 
 ## 0.3.0 - 2026-09-10
 
