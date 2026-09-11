@@ -29,6 +29,9 @@ OpenFlux — исследовательский TCP-туннель с подкл
 
 **[Скачать последнюю Android-версию](https://github.com/damnurmum/OpenFlux-Android/releases/latest)**
 
+Впервые здесь? [docs/GUIDE.ru.md](docs/GUIDE.ru.md) — подробный пошаговый
+гайд для новичков: как развернуть exit-node на VPS и подключиться с Android.
+
 ```text
 Android VPN или SOCKS5-клиент -> зашифрованный транспорт -> Linux-нода -> интернет
 ```

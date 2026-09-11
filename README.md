@@ -29,6 +29,9 @@ transport.
 
 **[Download the latest Android release](https://github.com/damnurmum/OpenFlux-Android/releases/latest)**
 
+New to this? [docs/GUIDE.md](docs/GUIDE.md) is a beginner-friendly, step-by-step
+walkthrough for deploying an exit node on a VPS and connecting from Android.
+
 ```text
 Android VPN or SOCKS5 client -> encrypted document transport -> Linux exit node -> Internet
 ```
