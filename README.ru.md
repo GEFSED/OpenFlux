@@ -21,7 +21,7 @@
 
 > Это экспериментальный независимо развиваемый форк
 > [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux).
-> Основные отличия от исходного проекта перечислены в [FORK.md](FORK.md).
+> Основные отличия от исходного проекта перечислены в [FORK.md](docs/FORK.md).
 
 OpenFlux — исследовательский TCP-туннель с подключаемыми транспортами. В этом
 форке добавлены Android VPN-клиент и обязательное сквозное шифрование для
@@ -200,9 +200,9 @@ go vet ./...
 git diff --check
 ```
 
-Правила участия находятся в [CONTRIBUTING.md](CONTRIBUTING.md), порядок сообщения
-об уязвимостях — в [SECURITY.md](SECURITY.md), список изменений — в
-[CHANGELOG.md](CHANGELOG.md).
+Правила участия находятся в [CONTRIBUTING.md](docs/CONTRIBUTING.md), порядок
+сообщения об уязвимостях — в [SECURITY.md](docs/SECURITY.md), список
+изменений — в [CHANGELOG.md](docs/CHANGELOG.md).
 
 ## Лицензия
 

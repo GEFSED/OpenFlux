@@ -21,7 +21,7 @@
 
 > This repository is an experimental, independently maintained fork of
 > [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux).
-> See [FORK.md](FORK.md) for the differences from upstream.
+> See [FORK.md](docs/FORK.md) for the differences from upstream.
 
 OpenFlux is a research TCP tunnel with pluggable transports. This fork adds an
 Android VPN client and mandatory end-to-end encryption for the Yandex Docs
@@ -203,9 +203,9 @@ go vet ./...
 git diff --check
 ```
 
-Contributions are described in [CONTRIBUTING.md](CONTRIBUTING.md). Please read
-[SECURITY.md](SECURITY.md) before reporting a vulnerability. Changes are listed
-in [CHANGELOG.md](CHANGELOG.md).
+Contributions are described in [CONTRIBUTING.md](docs/CONTRIBUTING.md). Please
+read [SECURITY.md](docs/SECURITY.md) before reporting a vulnerability. Changes
+are listed in [CHANGELOG.md](docs/CHANGELOG.md).
 
 ## License
 
