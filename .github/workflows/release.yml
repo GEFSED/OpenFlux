@@ -1,4 +1,4 @@
-name: Android Release
+name: Release
 
 on:
   push:
@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   android:
-    name: Build and publish Android APKs
+    name: Build and publish release artifacts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +28,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Build Linux server/client binaries
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -o dist/OpenFlux-linux-amd64 .
+          GOOS=linux GOARCH=arm64 go build -o dist/OpenFlux-linux-arm64 .
 
       - uses: actions/setup-java@v4
         with:
@@ -69,14 +75,15 @@ jobs:
         run: for apk in dist/OpenFlux-android-*-release.apk; do "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$apk"; done
 
       - name: Generate checksums
-        run: cd dist && sha256sum OpenFlux-android-*-release.apk > SHA256SUMS
+        run: cd dist && sha256sum OpenFlux-android-*-release.apk OpenFlux-linux-* > SHA256SUMS
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OpenFlux-Android-${{ env.RELEASE_TAG }}
+          name: OpenFlux-${{ env.RELEASE_TAG }}
           path: |
             dist/OpenFlux-android-*-release.apk
+            dist/OpenFlux-linux-*
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 90
@@ -87,8 +94,11 @@ jobs:
         run: |
           gh release create "$RELEASE_TAG" \
             dist/OpenFlux-android-*-release.apk \
+            dist/OpenFlux-linux-* \
             dist/SHA256SUMS \
             --verify-tag \
             --generate-notes \
             --title "OpenFlux Android $RELEASE_TAG" \
-            --notes "Experimental Android 8+ builds. Choose arm64-v8a for most modern phones, armeabi-v7a for older 32-bit ARM devices, x86/x86_64 for compatible emulators, or universal when unsure. If a debug build is installed, uninstall it once before installing this signed release; later release updates preserve app data."
+            --notes "Experimental Android 8+ builds. Choose arm64-v8a for most modern phones, armeabi-v7a for older 32-bit ARM devices, x86/x86_64 for compatible emulators, or universal when unsure. If a debug build is installed, uninstall it once before installing this signed release; later release updates preserve app data.
+
+          Linux server/client binaries (amd64, arm64) are included for exit-node deployment and desktop CLI use; see README.md for setup."

@@ -89,6 +89,11 @@ chmod 600 document-url encryption-key
 
 ## Сборка ноды и клиента компьютера
 
+Выходная нода и клиент компьютера — один и тот же бинарник, различаются только
+флаги запуска. Готовые Linux-бинарники `amd64`/`arm64` прикладываются к каждому
+[релизу на GitHub](https://github.com/damnurmum/OpenFlux-Android/releases/latest)
+рядом с Android APK. Чтобы собрать самостоятельно:
+
 ```bash
 go build -o openflux .
 ```

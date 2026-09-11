@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   go:
-    name: Go tests
+    name: Go tests & Linux binaries
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +20,17 @@ jobs:
           cache: true
       - run: go test ./...
       - run: go vet ./...
+      - name: Build Linux server/client binaries
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -o dist/OpenFlux-linux-amd64 .
+          GOOS=linux GOARCH=arm64 go build -o dist/OpenFlux-linux-arm64 .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenFlux-linux-${{ github.sha }}
+          path: dist/OpenFlux-linux-*
+          if-no-files-found: error
+          retention-days: 30
 
   android:
     name: Android debug APKs

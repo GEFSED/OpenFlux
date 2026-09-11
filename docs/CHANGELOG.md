@@ -6,6 +6,9 @@ All notable changes to this fork are documented here.
 
 ### Added
 
+- CI now cross-compiles Linux `amd64`/`arm64` server/client binaries and
+  uploads them as a build artifact; GitHub Releases now attach the same
+  binaries (with checksums) alongside the Android APKs.
 - synced with upstream p1neappleXpress/OpenFlux through commit `3249724`:
   fixed swapped `maxToken`/`maxUid` flag descriptions, `yandex` transport now
   returns errors instead of panicking on unexpected document config (with new
