@@ -45,6 +45,12 @@ Android VPN or SOCKS5 client -> encrypted document transport -> Linux exit node 
 - desktop SOCKS5 client and Linux exit-node modes;
 - Yandex Docs and experimental MAX transport backends.
 
+> **MAX transport warning:** the MAX backend sends packets via WebRTC
+> DataChannel on your MAX account. Do not use a primary or important account;
+> running it from an external VPS may lead to account restrictions that
+> persist after OpenFlux stops. Treat MAX transport as experimental until its
+> detection and blocking behavior is better understood.
+
 ## Important limitations
 
 OpenFlux is experimental research software, not an audited replacement for

@@ -35,8 +35,8 @@ func main() {
 	flag.StringVar(&globalDocUrl, "url", "", "Document URL. Required for Yandex.Docs transport")
 	urlFile := flag.String("url-file", "", "Read the document URL from a file")
 	encryptionKeyFile := flag.String("encryption-key-file", "", "Read the shared encryption secret from a file")
-	flag.StringVar(&maxToken, "maxToken", "", "MAX call user id. If u use MAX transport")
-	flag.StringVar(&maxUid, "maxUid", "", "MAX Web token. If u use MAX transport")
+	flag.StringVar(&maxToken, "maxToken", "", "MAX Web token. If u use MAX transport")
+	flag.StringVar(&maxUid, "maxUid", "", "MAX call user id. If u use MAX transport")
 	flag.Parse()
 
 	if !*exitNode && !*client {
