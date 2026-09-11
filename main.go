@@ -3,11 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	godebug "runtime/debug"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "github.com/wlynxg/anet"
 	"universal-bypass-tool/socks5"
@@ -85,6 +88,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("Configure encrypted transport: %v", err)
 		}
+		if *exitNode {
+			go detectAndPublishCountry(encrypted)
+		}
 		trans = transport.NewCompressedTransport(encrypted)
 	case "oneme":
 		uidint, _ := strconv.ParseInt(maxUid, 10, 64)
@@ -119,6 +125,51 @@ func main() {
 		socks5Server := socks5.NewSOCKS5Server(*socksAddr, tun)
 		log.Fatal(socks5Server.Start())
 	}
+}
+
+// detectAndPublishCountry looks up this exit node's own public IP country and
+// publishes it via encrypted.SetCountry, so it starts riding along on ping
+// responses to the client. Best-effort: the client just shows no country if
+// this never succeeds.
+func detectAndPublishCountry(encrypted *transport.EncryptedTransport) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 5 * time.Second)
+		}
+		country, err := lookupCountry(client)
+		if err != nil {
+			utils.Debugf("[GEOIP] lookup failed: %v", err)
+			continue
+		}
+		encrypted.SetCountry(country)
+		utils.Debugf("[GEOIP] exit node country: %s", country)
+		return
+	}
+	utils.Debugf("[GEOIP] country lookup gave up after retries")
+}
+
+func lookupCountry(client *http.Client) (string, error) {
+	// ip-api.com's free tier is HTTP-only (HTTPS requires a paid plan). The
+	// request only reveals this exit node's own public IP, which is already
+	// inherently visible to anyone it connects to, so plain HTTP is fine here.
+	resp, err := client.Get("http://ip-api.com/line/?fields=country")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("geoip lookup returned HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 128))
+	if err != nil {
+		return "", err
+	}
+	country := strings.TrimSpace(string(body))
+	if country == "" {
+		return "", fmt.Errorf("geoip lookup returned no usable country")
+	}
+	return country, nil
 }
 
 func readRequiredOption(value, filename, label string) (string, error) {

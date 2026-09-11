@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.VpnService;
 import android.os.ParcelFileDescriptor;
@@ -15,6 +16,8 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -115,9 +118,7 @@ public final class OpenFluxVpnService extends VpnService {
                     .addAddress("10.10.10.2", 24)
                     .addRoute("0.0.0.0", 0)
                     .addDnsServer(dnsServer);
-            // Go opens the Yandex connection inside this process. Excluding our
-            // own package prevents that control connection from entering TUN.
-            builder.addDisallowedApplication(getPackageName());
+            applyAppFilter(builder);
             ParcelFileDescriptor established = builder.establish();
             if (established == null) throw new IOException("Android не создал TUN-интерфейс");
             synchronized (outputLock) {
@@ -129,7 +130,7 @@ public final class OpenFluxVpnService extends VpnService {
                 tunnelInput = new FileInputStream(established.getFileDescriptor());
                 tunnelOutput = new FileOutputStream(established.getFileDescriptor());
             }
-        } catch (PackageManager.NameNotFoundException | IOException | IllegalArgumentException exception) {
+        } catch (IOException | IllegalArgumentException exception) {
             fail(session, exception.getMessage());
             return;
         }
@@ -141,6 +142,49 @@ public final class OpenFluxVpnService extends VpnService {
         FileOutputStream output = tunnelOutput;
         workers.execute(() -> readOutgoingPackets(session, input, dnsServer));
         workers.execute(() -> writeIncomingPackets(session, output));
+    }
+
+    // applyAppFilter routes traffic per the user's "Приложения" settings tab:
+    // whitelist mode tunnels only the selected apps, blacklist mode tunnels
+    // everything except the selected apps, and "off" tunnels everything.
+    // Android forbids calling both addAllowedApplication and
+    // addDisallowedApplication on the same Builder, so the two modes are
+    // mutually exclusive branches below. Our own package must never enter
+    // the tunnel: Go opens the Yandex connection inside this process, so
+    // routing our own traffic through TUN would loop it back on itself.
+    private void applyAppFilter(Builder builder) {
+        SharedPreferences prefs = getSharedPreferences(AppFilter.PREFS_NAME, MODE_PRIVATE);
+        String mode = prefs.getString(AppFilter.KEY_MODE, AppFilter.MODE_OFF);
+        Set<String> packages = prefs.getStringSet(AppFilter.KEY_PACKAGES, Collections.emptySet());
+
+        if (AppFilter.MODE_WHITELIST.equals(mode) && !packages.isEmpty()) {
+            for (String packageName : packages) {
+                if (packageName.equals(getPackageName())) continue;
+                try {
+                    builder.addAllowedApplication(packageName);
+                } catch (PackageManager.NameNotFoundException ignored) {
+                    // App was uninstalled since it was selected; skip it.
+                }
+            }
+            return;
+        }
+
+        try {
+            builder.addDisallowedApplication(getPackageName());
+        } catch (PackageManager.NameNotFoundException neverThrown) {
+            // We are this package; it always exists.
+            throw new AssertionError(neverThrown);
+        }
+        if (AppFilter.MODE_BLACKLIST.equals(mode)) {
+            for (String packageName : packages) {
+                if (packageName.equals(getPackageName())) continue;
+                try {
+                    builder.addDisallowedApplication(packageName);
+                } catch (PackageManager.NameNotFoundException ignored) {
+                    // App was uninstalled since it was selected; skip it.
+                }
+            }
+        }
     }
 
     private void readOutgoingPackets(int session, FileInputStream input, String dnsServer) {

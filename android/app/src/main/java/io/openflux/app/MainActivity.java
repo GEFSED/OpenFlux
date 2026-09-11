@@ -1,30 +1,46 @@
 package io.openflux.app;
 
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ResolveInfo;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.net.VpnService;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.text.InputType;
 import android.text.method.PasswordTransformationMethod;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
+import android.view.animation.DecelerateInterpolator;
+import android.view.animation.OvershootInterpolator;
+import android.widget.BaseAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ListView;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
@@ -32,6 +48,12 @@ import android.widget.Toast;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 
 import android.util.Base64;
 
@@ -44,12 +66,17 @@ public final class MainActivity extends Activity {
     private static final int PAGE_HOME = 0;
     private static final int PAGE_LOGS = 1;
     private static final int PAGE_SETTINGS = 2;
+    private static final int SETTINGS_TRANSPORT = 0;
+    private static final int SETTINGS_NETWORK = 1;
+    private static final int SETTINGS_APPS = 2;
+    private static final int SETTINGS_INTERFACE = 3;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean darkMode;
     private boolean urlVisible;
     private boolean autoScroll = true;
     private int currentPage = PAGE_HOME;
+    private int settingsSubTab = SETTINGS_TRANSPORT;
     private int background;
     private int surface;
     private int text;
@@ -89,6 +116,17 @@ public final class MainActivity extends Activity {
     private long lastPingRequestAt;
     private long lastPingSequence;
     private boolean pingPanelShown;
+    private String lastCountry = "";
+    private boolean shellAnimated;
+    private ObjectAnimator dotPulse;
+    private int lastVpnButtonFill = -1;
+    private Vibrator vibrator;
+    private String lastAnnouncedState = "";
+
+    private SharedPreferences appFilterPrefs;
+    private String appFilterMode = AppFilter.MODE_OFF;
+    private final LinkedHashSet<String> selectedApps = new LinkedHashSet<>();
+    private List<AppEntry> installedAppsCache;
 
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -102,6 +140,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        vibrator = getSystemService(Vibrator.class);
         SharedPreferences prefs = getPreferences(MODE_PRIVATE);
         secureSettings = new SecureSettings(this);
         // Older prototype builds used plain preferences. Remove those values:
@@ -115,6 +154,9 @@ public final class MainActivity extends Activity {
         darkMode = prefs.contains("dark_mode")
                 ? prefs.getBoolean("dark_mode", isSystemDark())
                 : isSystemDark();
+        appFilterPrefs = getSharedPreferences(AppFilter.PREFS_NAME, MODE_PRIVATE);
+        appFilterMode = appFilterPrefs.getString(AppFilter.KEY_MODE, AppFilter.MODE_OFF);
+        selectedApps.addAll(appFilterPrefs.getStringSet(AppFilter.KEY_PACKAGES, Collections.emptySet()));
         applyPalette();
         configureSystemBars();
         buildShell();
@@ -191,6 +233,9 @@ public final class MainActivity extends Activity {
         root.addView(content, contentParams);
         root.addView(buildBottomNav(), new LinearLayout.LayoutParams(-1, dp(68)));
         setContentView(root);
+        root.setAlpha(0f);
+        root.animate().alpha(1f).setDuration(shellAnimated ? 200 : 340).start();
+        shellAnimated = true;
     }
 
     private View buildCompactHeader() {
@@ -244,30 +289,70 @@ public final class MainActivity extends Activity {
         item.setBackground(ripple(Color.TRANSPARENT, 14));
         ImageView image = new ImageView(this);
         image.setImageResource(icon);
-        image.setImageTintList(ColorStateList.valueOf(page == currentPage ? accent : secondary));
+        boolean active = page == currentPage;
+        image.setImageTintList(ColorStateList.valueOf(active ? accent : secondary));
         item.addView(image, new LinearLayout.LayoutParams(dp(24), dp(24)));
-        TextView title = text(label, 11, page == currentPage ? accent : secondary, page == currentPage);
+        if (active) {
+            image.setScaleX(0.6f);
+            image.setScaleY(0.6f);
+            image.animate().scaleX(1f).scaleY(1f).setDuration(280)
+                    .setInterpolator(new OvershootInterpolator(4f)).start();
+        }
+        TextView title = text(label, 11, active ? accent : secondary, active);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(-2, -2);
         titleParams.topMargin = dp(2);
         item.addView(title, titleParams);
-        item.setOnClickListener(v -> showPage(page));
+        item.setOnClickListener(v -> {
+            if (page != currentPage) tap(v);
+            showPage(page);
+        });
         return item;
     }
 
     private void showPage(int page) {
         captureSettings();
         currentPage = page;
-        content.removeAllViews();
         View pageView = page == PAGE_HOME ? buildHomePage()
                 : page == PAGE_LOGS ? buildLogsPage() : buildSettingsPage();
-        content.addView(pageView, new FrameLayout.LayoutParams(-1, -1));
+        crossfadeContent(pageView);
         LinearLayout oldNav = (LinearLayout) root.getChildAt(root.getChildCount() - 1);
         root.removeView(oldNav);
         root.addView(buildBottomNav(), new LinearLayout.LayoutParams(-1, dp(68)));
         updateStatus();
     }
 
+    // crossfadeContent swaps the FrameLayout's page content with a short fade
+    // + rise instead of an instant cut, used for both outer tab switches and
+    // Settings sub-tab switches.
+    private void crossfadeContent(View newView) {
+        int staleCount = content.getChildCount();
+        View[] stale = new View[staleCount];
+        for (int i = 0; i < staleCount; i++) stale[i] = content.getChildAt(i);
+
+        newView.setAlpha(0f);
+        newView.setTranslationY(dp(8));
+        content.addView(newView, new FrameLayout.LayoutParams(-1, -1));
+        newView.animate().alpha(1f).translationY(0f).setDuration(220).setStartDelay(40).start();
+
+        for (View old : stale) {
+            old.animate().cancel();
+            old.animate().alpha(0f).setDuration(140).withEndAction(() -> content.removeView(old)).start();
+        }
+    }
+
+    private void showSettingsSubTab(int tab) {
+        if (tab == settingsSubTab) return;
+        settingsSubTab = tab;
+        showPage(PAGE_SETTINGS);
+    }
+
     private View buildHomePage() {
+        if (dotPulse != null) {
+            dotPulse.cancel();
+            dotPulse = null;
+        }
+        lastVpnButtonFill = -1;
+
         LinearLayout page = page();
         TextView heading = text("Подключение", 25, text, true);
         page.addView(heading);
@@ -291,6 +376,7 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams transportParams = matchWrap();
         transportParams.topMargin = dp(28);
         page.addView(transport, transportParams);
+        staggerIn(transport, 30);
 
         LinearLayout status = new LinearLayout(this);
         status.setOrientation(LinearLayout.HORIZONTAL);
@@ -326,6 +412,7 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams statusParams = matchWrap();
         statusParams.topMargin = dp(14);
         page.addView(status, statusParams);
+        staggerIn(status, 80);
 
         vpnButton = new LinearLayout(this);
         vpnButton.setOrientation(LinearLayout.HORIZONTAL);
@@ -339,18 +426,35 @@ public final class MainActivity extends Activity {
         vpnButton.addView(powerIcon, powerParams);
         vpnButtonText = text("Запустить VPN", 16, Color.WHITE, true);
         vpnButton.addView(vpnButtonText, new LinearLayout.LayoutParams(-2, -2));
-        vpnButton.setOnClickListener(v -> toggleVpn());
+        vpnButton.setOnClickListener(v -> {
+            tap(v);
+            v.animate().cancel();
+            v.animate().scaleX(0.96f).scaleY(0.96f).setDuration(80).withEndAction(() ->
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(140)
+                            .setInterpolator(new OvershootInterpolator(3f)).start()).start();
+            toggleVpn();
+        });
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(58));
         buttonParams.topMargin = dp(16);
         page.addView(vpnButton, buttonParams);
+        staggerIn(vpnButton, 130);
 
         TextView summaryTitle = label("АКТИВНЫЕ ПАРАМЕТРЫ");
         LinearLayout.LayoutParams summaryTitleParams = matchWrap();
         summaryTitleParams.topMargin = dp(30);
         summaryTitleParams.bottomMargin = dp(8);
         page.addView(summaryTitle, summaryTitleParams);
-        page.addView(infoCard("DNS-сервер", dnsServer, "MTU пакета", String.valueOf(mtu)));
+        View activeParams = infoCard("DNS-сервер", dnsServer, "MTU пакета", String.valueOf(mtu));
+        page.addView(activeParams);
+        staggerIn(activeParams, 180);
         return page;
+    }
+
+    private void staggerIn(View view, int delayMs) {
+        view.setAlpha(0f);
+        view.setTranslationY(dp(14));
+        view.animate().alpha(1f).translationY(0f).setStartDelay(delayMs).setDuration(260)
+                .setInterpolator(new DecelerateInterpolator()).start();
     }
 
     private View buildLogsPage() {
@@ -361,6 +465,7 @@ public final class MainActivity extends Activity {
         header.addView(heading, new LinearLayout.LayoutParams(0, -2, 1f));
         ImageButton clear = iconButton(R.drawable.ic_delete, "Очистить журнал");
         clear.setOnClickListener(v -> {
+            tap(v);
             logs = "";
             logView.setText("");
         });
@@ -386,76 +491,19 @@ public final class MainActivity extends Activity {
     }
 
     private View buildSettingsPage() {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
         LinearLayout page = page();
-        scroll.addView(page, new ScrollView.LayoutParams(-1, -2));
         page.addView(text("Настройки", 25, text, true));
         TextView restartHint = text("Параметры сети применяются при следующем подключении.", 12, secondary, false);
         LinearLayout.LayoutParams hintParams = matchWrap();
         hintParams.topMargin = dp(4);
+        hintParams.bottomMargin = dp(16);
         page.addView(restartHint, hintParams);
 
-        TextView transportLabel = label("ТРАНСПОРТ");
-        LinearLayout.LayoutParams transportLabelParams = matchWrap();
-        transportLabelParams.topMargin = dp(24);
-        transportLabelParams.bottomMargin = dp(8);
-        page.addView(transportLabel, transportLabelParams);
-        page.addView(buildUrlField(), new LinearLayout.LayoutParams(-1, dp(56)));
+        page.addView(buildSettingsTabStrip());
 
-        LinearLayout.LayoutParams encryptionParams = new LinearLayout.LayoutParams(-1, dp(56));
-        encryptionParams.topMargin = dp(8);
-        page.addView(buildEncryptionField(), encryptionParams);
-        TextView encryptionHint = text(
-                "Одинаковый секрет (минимум 16 символов) должен быть настроен на телефоне и VDS.",
-                11, secondary, false);
-        LinearLayout.LayoutParams encryptionHintParams = matchWrap();
-        encryptionHintParams.topMargin = dp(5);
-        encryptionHintParams.leftMargin = dp(4);
-        encryptionHintParams.rightMargin = dp(4);
-        page.addView(encryptionHint, encryptionHintParams);
-        Button generateKey = new Button(this);
-        generateKey.setText("Сгенерировать безопасный ключ");
-        generateKey.setAllCaps(false);
-        generateKey.setTextColor(accent);
-        generateKey.setTextSize(13);
-        generateKey.setStateListAnimator(null);
-        generateKey.setBackground(ripple(Color.TRANSPARENT, 9));
-        generateKey.setOnClickListener(v -> generateEncryptionSecret());
-        LinearLayout.LayoutParams generateParams = new LinearLayout.LayoutParams(-1, dp(44));
-        generateParams.topMargin = dp(4);
-        page.addView(generateKey, generateParams);
-
-        TextView networkLabel = label("СЕТЬ");
-        LinearLayout.LayoutParams networkLabelParams = matchWrap();
-        networkLabelParams.topMargin = dp(22);
-        networkLabelParams.bottomMargin = dp(8);
-        page.addView(networkLabel, networkLabelParams);
-        dnsInput = settingInput("DNS-сервер", dnsServer, InputType.TYPE_CLASS_PHONE);
-        page.addView(settingRow(R.drawable.ic_public, "DNS-сервер", dnsInput));
-        mtuInput = settingInput("MTU", String.valueOf(mtu), InputType.TYPE_CLASS_NUMBER);
-        LinearLayout.LayoutParams mtuParams = matchWrap();
-        mtuParams.topMargin = dp(8);
-        page.addView(settingRow(R.drawable.ic_settings, "MTU пакета", mtuInput), mtuParams);
-
-        TextView appearanceLabel = label("ИНТЕРФЕЙС");
-        LinearLayout.LayoutParams appearanceParams = matchWrap();
-        appearanceParams.topMargin = dp(22);
-        appearanceParams.bottomMargin = dp(8);
-        page.addView(appearanceLabel, appearanceParams);
-        Switch themeSwitch = settingSwitch(R.drawable.ic_dark_mode, "Тёмная тема",
-                "До первого выбора используется тема телефона", darkMode);
-        themeSwitch.setOnCheckedChangeListener((button, checked) -> switchTheme(checked));
-        page.addView((View) themeSwitch.getTag());
-        Switch scrollSwitch = settingSwitch(R.drawable.ic_terminal, "Автопрокрутка логов",
-                "Показывать последние события", autoScroll);
-        scrollSwitch.setOnCheckedChangeListener((button, checked) -> {
-            autoScroll = checked;
-            getPreferences(MODE_PRIVATE).edit().putBoolean("auto_scroll", checked).apply();
-        });
-        LinearLayout.LayoutParams scrollSettingParams = matchWrap();
-        scrollSettingParams.topMargin = dp(8);
-        page.addView((View) scrollSwitch.getTag(), scrollSettingParams);
+        LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+        contentParams.topMargin = dp(14);
+        page.addView(buildSettingsSubTabContent(), contentParams);
 
         Button save = new Button(this);
         save.setText("Сохранить настройки");
@@ -466,15 +514,322 @@ public final class MainActivity extends Activity {
         save.setStateListAnimator(null);
         save.setBackground(buttonBackground(Color.rgb(26, 115, 232), Color.rgb(23, 78, 166)));
         save.setOnClickListener(v -> {
+            tap(v);
             readSettingsFromViews();
             persistSettings();
             Toast.makeText(this, "Настройки сохранены", Toast.LENGTH_SHORT).show();
         });
         LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(-1, dp(52));
-        saveParams.topMargin = dp(20);
+        saveParams.topMargin = dp(14);
         saveParams.bottomMargin = dp(12);
         page.addView(save, saveParams);
+        return page;
+    }
+
+    private View buildSettingsTabStrip() {
+        LinearLayout strip = new LinearLayout(this);
+        strip.setOrientation(LinearLayout.HORIZONTAL);
+        strip.setBackground(rounded(surface, border, 1, 12));
+        strip.setPadding(dp(4), dp(4), dp(4), dp(4));
+        strip.addView(settingsTabItem("Транспорт", SETTINGS_TRANSPORT), weighted());
+        strip.addView(settingsTabItem("Сеть", SETTINGS_NETWORK), weighted());
+        strip.addView(settingsTabItem("Приложения", SETTINGS_APPS), weighted());
+        strip.addView(settingsTabItem("Вид", SETTINGS_INTERFACE), weighted());
+        return strip;
+    }
+
+    private View settingsTabItem(String labelValue, int tab) {
+        boolean active = tab == settingsSubTab;
+        TextView item = text(labelValue, 12, active ? Color.WHITE : secondary, active);
+        item.setGravity(Gravity.CENTER);
+        item.setPadding(dp(6), dp(9), dp(6), dp(9));
+        item.setBackground(active ? rounded(accent, Color.TRANSPARENT, 0, 9) : ripple(Color.TRANSPARENT, 9));
+        item.setOnClickListener(v -> {
+            if (tab != settingsSubTab) tap(v);
+            showSettingsSubTab(tab);
+        });
+        if (active) {
+            item.setScaleX(0.88f);
+            item.setScaleY(0.88f);
+            item.animate().scaleX(1f).scaleY(1f).setDuration(220)
+                    .setInterpolator(new OvershootInterpolator(3f)).start();
+        }
+        return item;
+    }
+
+    private View buildSettingsSubTabContent() {
+        switch (settingsSubTab) {
+            case SETTINGS_NETWORK:
+                return wrapScroll(buildNetworkSettings());
+            case SETTINGS_APPS:
+                return buildAppsSettings();
+            case SETTINGS_INTERFACE:
+                return wrapScroll(buildInterfaceSettings());
+            case SETTINGS_TRANSPORT:
+            default:
+                return wrapScroll(buildTransportSettings());
+        }
+    }
+
+    private View wrapScroll(View sectionContent) {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(sectionContent, new ScrollView.LayoutParams(-1, -2));
         return scroll;
+    }
+
+    private View buildTransportSettings() {
+        LinearLayout section = page();
+        section.addView(buildUrlField(), new LinearLayout.LayoutParams(-1, dp(56)));
+
+        LinearLayout.LayoutParams encryptionParams = new LinearLayout.LayoutParams(-1, dp(56));
+        encryptionParams.topMargin = dp(8);
+        section.addView(buildEncryptionField(), encryptionParams);
+        TextView encryptionHint = text(
+                "Одинаковый секрет (минимум 16 символов) должен быть настроен на телефоне и VDS.",
+                11, secondary, false);
+        LinearLayout.LayoutParams encryptionHintParams = matchWrap();
+        encryptionHintParams.topMargin = dp(5);
+        encryptionHintParams.leftMargin = dp(4);
+        encryptionHintParams.rightMargin = dp(4);
+        section.addView(encryptionHint, encryptionHintParams);
+        Button generateKey = new Button(this);
+        generateKey.setText("Сгенерировать безопасный ключ");
+        generateKey.setAllCaps(false);
+        generateKey.setTextColor(accent);
+        generateKey.setTextSize(13);
+        generateKey.setStateListAnimator(null);
+        generateKey.setBackground(ripple(Color.TRANSPARENT, 9));
+        generateKey.setOnClickListener(v -> {
+            tap(v);
+            generateEncryptionSecret();
+        });
+        LinearLayout.LayoutParams generateParams = new LinearLayout.LayoutParams(-1, dp(44));
+        generateParams.topMargin = dp(4);
+        section.addView(generateKey, generateParams);
+        return section;
+    }
+
+    private View buildNetworkSettings() {
+        LinearLayout section = page();
+        dnsInput = settingInput("DNS-сервер", dnsServer, InputType.TYPE_CLASS_PHONE);
+        section.addView(settingRow(R.drawable.ic_public, "DNS-сервер", dnsInput));
+        mtuInput = settingInput("MTU", String.valueOf(mtu), InputType.TYPE_CLASS_NUMBER);
+        LinearLayout.LayoutParams mtuParams = matchWrap();
+        mtuParams.topMargin = dp(8);
+        section.addView(settingRow(R.drawable.ic_settings, "MTU пакета", mtuInput), mtuParams);
+        return section;
+    }
+
+    private View buildInterfaceSettings() {
+        LinearLayout section = page();
+        Switch themeSwitch = settingSwitch(R.drawable.ic_dark_mode, "Тёмная тема",
+                "До первого выбора используется тема телефона", darkMode);
+        themeSwitch.setOnCheckedChangeListener((button, checked) -> {
+            tap(button);
+            switchTheme(checked);
+        });
+        section.addView((View) themeSwitch.getTag());
+        Switch scrollSwitch = settingSwitch(R.drawable.ic_terminal, "Автопрокрутка логов",
+                "Показывать последние события", autoScroll);
+        scrollSwitch.setOnCheckedChangeListener((button, checked) -> {
+            tap(button);
+            autoScroll = checked;
+            getPreferences(MODE_PRIVATE).edit().putBoolean("auto_scroll", checked).apply();
+        });
+        LinearLayout.LayoutParams scrollSettingParams = matchWrap();
+        scrollSettingParams.topMargin = dp(8);
+        section.addView((View) scrollSwitch.getTag(), scrollSettingParams);
+        return section;
+    }
+
+    private View buildAppsSettings() {
+        LinearLayout section = page();
+        TextView hint = text(
+                "Выберите, какие приложения используют VPN-туннель. По умолчанию — все приложения, кроме OpenFlux.",
+                12, secondary, false);
+        section.addView(hint, matchWrap());
+
+        RadioGroup modeGroup = new RadioGroup(this);
+        modeGroup.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams modeGroupParams = matchWrap();
+        modeGroupParams.topMargin = dp(12);
+        section.addView(modeGroup, modeGroupParams);
+
+        RadioButton offButton = modeRadio("Все приложения");
+        RadioButton whitelistButton = modeRadio("Только выбранные (белый список)");
+        RadioButton blacklistButton = modeRadio("Все, кроме выбранных (чёрный список)");
+        modeGroup.addView(offButton);
+        modeGroup.addView(whitelistButton);
+        modeGroup.addView(blacklistButton);
+        if (AppFilter.MODE_WHITELIST.equals(appFilterMode)) whitelistButton.setChecked(true);
+        else if (AppFilter.MODE_BLACKLIST.equals(appFilterMode)) blacklistButton.setChecked(true);
+        else offButton.setChecked(true);
+
+        LinearLayout listContainer = new LinearLayout(this);
+        listContainer.setOrientation(LinearLayout.VERTICAL);
+        listContainer.setVisibility(AppFilter.MODE_OFF.equals(appFilterMode) ? View.GONE : View.VISIBLE);
+        LinearLayout.LayoutParams listContainerParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+        listContainerParams.topMargin = dp(14);
+
+        ListView appListView = new ListView(this);
+        appListView.setDivider(null);
+        appListView.setAdapter(new AppListAdapter(loadInstalledAppsCached()));
+        listContainer.addView(appListView, new LinearLayout.LayoutParams(-1, -1));
+        section.addView(listContainer, listContainerParams);
+
+        modeGroup.setOnCheckedChangeListener((group, checkedId) -> {
+            tap(group);
+            if (checkedId == whitelistButton.getId()) appFilterMode = AppFilter.MODE_WHITELIST;
+            else if (checkedId == blacklistButton.getId()) appFilterMode = AppFilter.MODE_BLACKLIST;
+            else appFilterMode = AppFilter.MODE_OFF;
+            setViewVisibleAnimated(listContainer, !AppFilter.MODE_OFF.equals(appFilterMode));
+            persistAppFilter();
+        });
+
+        return section;
+    }
+
+    private void setViewVisibleAnimated(View view, boolean visible) {
+        view.animate().cancel();
+        if (visible) {
+            view.setVisibility(View.VISIBLE);
+            view.setAlpha(0f);
+            view.setTranslationY(dp(10));
+            view.animate().alpha(1f).translationY(0f).setDuration(220)
+                    .setInterpolator(new DecelerateInterpolator()).start();
+        } else {
+            view.animate().alpha(0f).translationY(dp(10)).setDuration(150)
+                    .withEndAction(() -> view.setVisibility(View.GONE)).start();
+        }
+    }
+
+    private RadioButton modeRadio(String labelValue) {
+        RadioButton button = new RadioButton(this);
+        button.setId(View.generateViewId());
+        button.setText(labelValue);
+        button.setTextColor(text);
+        button.setTextSize(14);
+        button.setPadding(dp(6), dp(10), dp(6), dp(10));
+        button.setButtonTintList(ColorStateList.valueOf(accent));
+        return button;
+    }
+
+    private List<AppEntry> loadInstalledAppsCached() {
+        if (installedAppsCache == null) installedAppsCache = loadInstalledApps();
+        return installedAppsCache;
+    }
+
+    private List<AppEntry> loadInstalledApps() {
+        Intent launcherIntent = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+        List<ResolveInfo> resolved = getPackageManager().queryIntentActivities(launcherIntent, 0);
+        LinkedHashMap<String, AppEntry> byPackage = new LinkedHashMap<>();
+        for (ResolveInfo info : resolved) {
+            String packageName = info.activityInfo.packageName;
+            if (packageName.equals(getPackageName()) || byPackage.containsKey(packageName)) continue;
+            String label = info.loadLabel(getPackageManager()).toString();
+            Drawable icon = info.loadIcon(getPackageManager());
+            byPackage.put(packageName, new AppEntry(packageName, label, icon));
+        }
+        List<AppEntry> apps = new ArrayList<>(byPackage.values());
+        Collections.sort(apps, Comparator.comparing(entry -> entry.label.toLowerCase()));
+        return apps;
+    }
+
+    private void persistAppFilter() {
+        appFilterPrefs.edit()
+                .putString(AppFilter.KEY_MODE, appFilterMode)
+                .putStringSet(AppFilter.KEY_PACKAGES, new HashSet<>(selectedApps))
+                .apply();
+    }
+
+    private View buildAppRow() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(10), dp(8), dp(10), dp(8));
+        row.setBackground(ripple(Color.TRANSPARENT, 8));
+        ImageView icon = new ImageView(this);
+        row.addView(icon, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        TextView labelView = text("", 14, text, false);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        labelParams.leftMargin = dp(12);
+        row.addView(labelView, labelParams);
+        CheckBox checkBox = new CheckBox(this);
+        checkBox.setButtonTintList(ColorStateList.valueOf(accent));
+        row.addView(checkBox, new LinearLayout.LayoutParams(-2, -2));
+        return row;
+    }
+
+    private static final class AppEntry {
+        final String packageName;
+        final String label;
+        final Drawable icon;
+
+        AppEntry(String packageName, String label, Drawable icon) {
+            this.packageName = packageName;
+            this.label = label;
+            this.icon = icon;
+        }
+    }
+
+    private static final class AppRowHolder {
+        final ImageView icon;
+        final TextView label;
+        final CheckBox checkBox;
+
+        AppRowHolder(View row) {
+            LinearLayout layout = (LinearLayout) row;
+            icon = (ImageView) layout.getChildAt(0);
+            label = (TextView) layout.getChildAt(1);
+            checkBox = (CheckBox) layout.getChildAt(2);
+        }
+    }
+
+    private final class AppListAdapter extends BaseAdapter {
+        private final List<AppEntry> apps;
+
+        AppListAdapter(List<AppEntry> apps) {
+            this.apps = apps;
+        }
+
+        @Override public int getCount() {
+            return apps.size();
+        }
+
+        @Override public Object getItem(int position) {
+            return apps.get(position);
+        }
+
+        @Override public long getItemId(int position) {
+            return position;
+        }
+
+        @Override public View getView(int position, View convertView, ViewGroup parent) {
+            View row;
+            AppRowHolder holder;
+            if (convertView != null && convertView.getTag() instanceof AppRowHolder) {
+                row = convertView;
+                holder = (AppRowHolder) row.getTag();
+            } else {
+                row = buildAppRow();
+                holder = new AppRowHolder(row);
+                row.setTag(holder);
+            }
+            AppEntry entry = apps.get(position);
+            holder.icon.setImageDrawable(entry.icon);
+            holder.label.setText(entry.label);
+            holder.checkBox.setOnCheckedChangeListener(null);
+            holder.checkBox.setChecked(selectedApps.contains(entry.packageName));
+            holder.checkBox.setOnCheckedChangeListener((button, checked) -> {
+                tap(button);
+                if (checked) selectedApps.add(entry.packageName);
+                else selectedApps.remove(entry.packageName);
+                persistAppFilter();
+            });
+            row.setOnClickListener(v -> holder.checkBox.setChecked(!holder.checkBox.isChecked()));
+            return row;
+        }
     }
 
     private View buildUrlField() {
@@ -487,7 +842,10 @@ public final class MainActivity extends Activity {
         field.addView(urlInput, new FrameLayout.LayoutParams(-1, -1));
         visibilityButton = iconButton(urlVisible ? R.drawable.ic_visibility_off : R.drawable.ic_visibility,
                 urlVisible ? "Скрыть ссылку" : "Показать ссылку");
-        visibilityButton.setOnClickListener(v -> toggleUrlVisibility());
+        visibilityButton.setOnClickListener(v -> {
+            tap(v);
+            toggleUrlVisibility();
+        });
         FrameLayout.LayoutParams eye = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.END | Gravity.CENTER_VERTICAL);
         eye.rightMargin = dp(4);
         field.addView(visibilityButton, eye);
@@ -505,7 +863,10 @@ public final class MainActivity extends Activity {
         encryptionVisibilityButton = iconButton(
                 encryptionVisible ? R.drawable.ic_visibility_off : R.drawable.ic_visibility,
                 encryptionVisible ? "Скрыть ключ" : "Показать ключ");
-        encryptionVisibilityButton.setOnClickListener(v -> toggleEncryptionVisibility());
+        encryptionVisibilityButton.setOnClickListener(v -> {
+            tap(v);
+            toggleEncryptionVisibility();
+        });
         FrameLayout.LayoutParams eye = new FrameLayout.LayoutParams(
                 dp(48), dp(48), Gravity.END | Gravity.CENTER_VERTICAL);
         eye.rightMargin = dp(4);
@@ -602,12 +963,16 @@ public final class MainActivity extends Activity {
     private void switchTheme(boolean checked) {
         if (darkMode == checked) return;
         captureSettings();
-        darkMode = checked;
-        getPreferences(MODE_PRIVATE).edit().putBoolean("dark_mode", darkMode).apply();
-        applyPalette();
-        configureSystemBars();
-        buildShell();
-        showPage(currentPage);
+        View oldRoot = root;
+        oldRoot.animate().cancel();
+        oldRoot.animate().alpha(0.15f).setDuration(110).withEndAction(() -> {
+            darkMode = checked;
+            getPreferences(MODE_PRIVATE).edit().putBoolean("dark_mode", darkMode).apply();
+            applyPalette();
+            configureSystemBars();
+            buildShell();
+            showPage(currentPage);
+        }).start();
     }
 
     private void toggleUrlVisibility() {
@@ -730,6 +1095,7 @@ public final class MainActivity extends Activity {
         statusView.setText(state);
         vpnButtonText.setText(running ? "Остановить VPN" : "Запустить VPN");
         int stateColor;
+        boolean transitional = false;
         if ("Подключено".equals(state)) {
             stateColor = darkMode ? Color.rgb(129, 201, 149) : Color.rgb(24, 128, 56);
             statusDetail.setText("Трафик направляется через OpenFlux");
@@ -739,18 +1105,57 @@ public final class MainActivity extends Activity {
         } else if (state != null && (state.contains("Подключ") || state.contains("Останав"))) {
             stateColor = darkMode ? Color.rgb(253, 214, 99) : Color.rgb(249, 171, 0);
             statusDetail.setText("Подождите несколько секунд…");
+            transitional = true;
         } else {
             stateColor = Color.rgb(154, 160, 166);
             statusDetail.setText("VPN сейчас не используется");
         }
+        if (state != null && !state.equals(lastAnnouncedState)) {
+            if ("Подключено".equals(state)) vibrateSuccess();
+            else if ("Ошибка".equals(state)) vibrateError();
+            lastAnnouncedState = state;
+        }
+
         statusDot.setBackground(rounded(stateColor, Color.TRANSPARENT, 0, 8));
-        vpnButton.setBackground(buttonBackground(running ? Color.rgb(217, 48, 37) : Color.rgb(26, 115, 232),
-                running ? Color.rgb(183, 28, 28) : Color.rgb(23, 78, 166)));
+        setStatusDotPulsing(transitional);
+
+        int vpnFill = running ? Color.rgb(217, 48, 37) : Color.rgb(26, 115, 232);
+        int vpnPressed = running ? Color.rgb(183, 28, 28) : Color.rgb(23, 78, 166);
+        animateVpnButtonFill(vpnFill, vpnPressed);
+
         String error = OpenFluxVpnService.getLastError();
         if (error != null && !error.isEmpty() && !error.equals(lastShownError)) {
             lastShownError = error;
             appendLog("Ошибка: " + error);
         }
+    }
+
+    private void setStatusDotPulsing(boolean pulsing) {
+        if (statusDot == null) return;
+        if (pulsing) {
+            if (dotPulse != null && dotPulse.isRunning()) return;
+            statusDot.setAlpha(1f);
+            dotPulse = ObjectAnimator.ofFloat(statusDot, "alpha", 1f, 0.28f);
+            dotPulse.setDuration(650);
+            dotPulse.setRepeatMode(ValueAnimator.REVERSE);
+            dotPulse.setRepeatCount(ValueAnimator.INFINITE);
+            dotPulse.start();
+        } else if (dotPulse != null) {
+            dotPulse.cancel();
+            dotPulse = null;
+            statusDot.setAlpha(1f);
+        }
+    }
+
+    private void animateVpnButtonFill(int fill, int pressed) {
+        if (vpnButton == null) return;
+        if (lastVpnButtonFill == fill) return;
+        int from = lastVpnButtonFill == -1 ? fill : lastVpnButtonFill;
+        lastVpnButtonFill = fill;
+        ValueAnimator animator = ValueAnimator.ofArgb(from, fill);
+        animator.setDuration(260);
+        animator.addUpdateListener(a -> vpnButton.setBackground(buttonBackground((int) a.getAnimatedValue(), pressed)));
+        animator.start();
     }
 
     private void updatePing() {
@@ -759,6 +1164,7 @@ public final class MainActivity extends Activity {
         if (!connected) {
             lastPingRequestAt = 0;
             lastPingSequence = 0;
+            lastCountry = "";
             setPingPanelVisible(false);
             return;
         }
@@ -776,7 +1182,21 @@ public final class MainActivity extends Activity {
         if (milliseconds < 0) return;
         if (pingHistory.size() >= 32) pingHistory.remove(0);
         pingHistory.add((float) milliseconds);
-        if (pingValue != null) pingValue.setText("Пинг до VDS: " + milliseconds + " мс");
+        String country = Mobile.serverCountry();
+        boolean countryJustArrived = country != null && !country.isEmpty() && lastCountry.isEmpty();
+        if (country != null && !country.isEmpty()) lastCountry = country;
+        if (pingValue != null) {
+            String value = "Пинг до VDS: " + milliseconds + " мс";
+            if (!lastCountry.isEmpty()) value += "  ·  " + lastCountry;
+            pingValue.setText(value);
+            if (countryJustArrived) {
+                pingValue.animate().cancel();
+                pingValue.setScaleX(0.92f);
+                pingValue.setScaleY(0.92f);
+                pingValue.animate().scaleX(1f).scaleY(1f).setDuration(260)
+                        .setInterpolator(new OvershootInterpolator(3f)).start();
+            }
+        }
         if (pingGraph != null) pingGraph.addSample(milliseconds);
     }
 
@@ -871,6 +1291,30 @@ public final class MainActivity extends Activity {
     private RippleDrawable buttonBackground(int fill, int pressed) {
         return new RippleDrawable(ColorStateList.valueOf(pressed), rounded(fill, Color.TRANSPARENT, 0, 9),
                 rounded(Color.WHITE, Color.TRANSPARENT, 0, 9));
+    }
+
+    // tap gives a light click haptic for a direct user interaction (button
+    // press, toggle, list selection). Respects the system's haptic feedback
+    // setting automatically and needs no permission.
+    private void tap(View view) {
+        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+    }
+
+    // vibrateSuccess/vibrateError are for state changes that aren't a direct
+    // touch response (e.g. the tunnel finishing connecting a second later),
+    // so they go through the Vibrator instead of View.performHapticFeedback.
+    private void vibrateSuccess() {
+        if (vibrator == null || !vibrator.hasVibrator()) return;
+        if (Build.VERSION.SDK_INT >= 29) {
+            vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK));
+        } else {
+            vibrator.vibrate(VibrationEffect.createOneShot(35, VibrationEffect.DEFAULT_AMPLITUDE));
+        }
+    }
+
+    private void vibrateError() {
+        if (vibrator == null || !vibrator.hasVibrator()) return;
+        vibrator.vibrate(VibrationEffect.createWaveform(new long[]{0, 45, 60, 45}, -1));
     }
 
     private LinearLayout.LayoutParams matchWrap() { return new LinearLayout.LayoutParams(-1, -2); }
