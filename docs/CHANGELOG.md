@@ -6,6 +6,9 @@ All notable changes to this fork are documented here.
 
 ### Added
 
+- a beginner-friendly, step-by-step VPS deployment guide in English and
+  Russian ([docs/GUIDE.md](GUIDE.md), [docs/GUIDE.ru.md](GUIDE.ru.md)),
+  linked from both READMEs.
 - CI now cross-compiles Linux `amd64`/`arm64` server/client binaries and
   uploads them as a build artifact; GitHub Releases now attach the same
   binaries (with checksums) alongside the Android APKs.
