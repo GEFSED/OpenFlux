@@ -11,8 +11,9 @@ It preserves the upstream Git history and remains licensed under GPL-3.0-or-late
 - a second Android connection mode, Proxy (SOCKS5), alongside the VPN mode,
   with optional local-network access and SOCKS5 authentication;
 - encrypted Android Keystore storage for the document URL and shared secret;
-- mandatory end-to-end AES-256-GCM transport encryption with scrypt key
+- optional end-to-end AES-256-GCM transport encryption with scrypt key
   derivation, wire-compatible with upstream's exit-node and client binaries;
+  leave the key unset to talk to a plain, unencrypted upstream exit node;
 - a live upload/download speed indicator in the connection notification;
 - safer VDS deployment using root-only URL/key files instead of process arguments;
 - removal of the non-functional iOS prototype.

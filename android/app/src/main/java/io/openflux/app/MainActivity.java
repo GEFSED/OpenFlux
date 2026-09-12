@@ -553,12 +553,16 @@ public final class MainActivity extends Activity {
 
         boolean documentConfigured = isValidDocumentUrl(documentUrl);
         boolean encryptionConfigured = encryptionSecret != null && encryptionSecret.length() >= 16;
+        boolean encryptionTooShort = encryptionSecret != null && !encryptionSecret.isEmpty()
+                && encryptionSecret.length() < 16;
         String transportTitle = documentConfigured ? "Yandex Docs" : "Документ не указан";
         String transportDetail = !documentConfigured
                 ? "Укажите HTTPS-ссылку во вкладке «Настройки»"
+                : encryptionTooShort
+                ? "Ключ шифрования короче 16 символов"
                 : encryptionConfigured
                 ? "Документ и сквозное шифрование настроены"
-                : "Укажите ключ сквозного шифрования";
+                : "Документ настроен, шифрование отключено";
         LinearLayout transport = cardRow(R.drawable.ic_link, transportTitle, transportDetail);
         transport.setClickable(true);
         transport.setFocusable(true);
@@ -1261,7 +1265,9 @@ public final class MainActivity extends Activity {
         encryptionParams.topMargin = dp(8);
         section.addView(buildEncryptionField(), encryptionParams);
         TextView encryptionHint = text(
-                "Одинаковый секрет (минимум 16 символов) должен быть настроен на телефоне и VDS.",
+                "Необязательно: оставьте пустым, чтобы подключаться без сквозного шифрования "
+                        + "(например, к обычному exit-node апстрима). Если заполняете - нужен "
+                        + "одинаковый секрет (минимум 16 символов) на телефоне и VDS.",
                 11, secondary, false);
         LinearLayout.LayoutParams encryptionHintParams = matchWrap();
         encryptionHintParams.topMargin = dp(5);
@@ -1550,7 +1556,7 @@ public final class MainActivity extends Activity {
     private View buildEncryptionField() {
         FrameLayout field = new FrameLayout(this);
         field.setBackground(rounded(surface, border, 1, 10));
-        encryptionInput = settingInput("Ключ сквозного шифрования", encryptionSecret,
+        encryptionInput = settingInput("Ключ сквозного шифрования (необязательно)", encryptionSecret,
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         encryptionInput.setTransformationMethod(encryptionVisible ? null : PasswordTransformationMethod.getInstance());
         encryptionInput.setPadding(dp(16), 0, dp(56), 0);
@@ -1768,8 +1774,8 @@ public final class MainActivity extends Activity {
             openSettingsDetail(SETTINGS_TRANSPORT);
             return;
         }
-        if (encryptionSecret == null || encryptionSecret.length() < 16) {
-            Toast.makeText(this, "Укажите ключ шифрования: минимум 16 символов", Toast.LENGTH_LONG).show();
+        if (encryptionSecret != null && !encryptionSecret.isEmpty() && encryptionSecret.length() < 16) {
+            Toast.makeText(this, "Ключ шифрования должен быть не короче 16 символов, либо оставьте поле пустым", Toast.LENGTH_LONG).show();
             openSettingsDetail(SETTINGS_TRANSPORT);
             return;
         }

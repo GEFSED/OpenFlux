@@ -38,7 +38,7 @@ func StartProxy(documentURL, encryptionSecret, listenAddr, username, password st
 	if documentURL == "" {
 		return "Ссылка на документ не указана"
 	}
-	if len(encryptionSecret) < 16 {
+	if encryptionSecret != "" && len(encryptionSecret) < 16 {
 		return "Ключ шифрования должен содержать не менее 16 символов"
 	}
 
@@ -54,13 +54,18 @@ func StartProxy(documentURL, encryptionSecret, listenAddr, username, password st
 	appendLog("[ANDROID] Запуск прокси-транспорта Yandex Docs")
 
 	config := transport.DefaultConfig()
-	encrypted, err := transport.NewEncryptedTransport(
-		yandex.NewYandexDocsTransport(documentURL, config), encryptionSecret, documentURL, false,
-	)
-	if err != nil {
-		return err.Error()
+	var inner transport.Transport = yandex.NewYandexDocsTransport(documentURL, config)
+	if encryptionSecret != "" {
+		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, documentURL, false)
+		if err != nil {
+			return err.Error()
+		}
+		inner = encrypted
+		appendLog("[ANDROID] Шифрование прокси-транспорта: AES-256-GCM включено")
+	} else {
+		appendLog("[ANDROID] Шифрование прокси-транспорта отключено (ключ не задан)")
 	}
-	trans := transport.NewCompressedTransport(encrypted)
+	trans := transport.NewCompressedTransport(inner)
 	if err := trans.Start(); err != nil {
 		appendLog(fmt.Sprintf("[ANDROID] Ошибка запуска прокси: %v", err))
 		return err.Error()

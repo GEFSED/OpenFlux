@@ -33,10 +33,12 @@ func main() {
 	client := flag.Bool("client", false, "Run as client")
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
 	socksAddr := flag.String("socks5", ":1080", "SOCKS5 address")
-	transportType := flag.String("transport", "yandex", "Transport type (yandex, google, custom)")
+	transportType := flag.String("transport", "yandex", "Transport type (yandex, vyandex, oneme)")
 	flag.StringVar(&globalDocUrl, "url", "", "Document URL. Required for Yandex.Docs transport")
 	urlFile := flag.String("url-file", "", "Read the document URL from a file")
-	encryptionKeyFile := flag.String("encryption-key-file", "", "Read the shared encryption secret from a file")
+	encryptionKeyFile := flag.String("encryption-key-file", "",
+		"Optional: encrypt the transport with AES-256-GCM using a shared secret read from this file. "+
+			"Both peers must use the same secret; unset means unencrypted, unchanged behavior")
 	flag.StringVar(&maxToken, "maxToken", "", "MAX Web token. If u use MAX transport")
 	flag.StringVar(&maxUid, "maxUid", "", "MAX call user id. If u use MAX transport")
 	flag.StringVar(&localIP, "local-ip", "", "Egress IP for exit node (scoped RST drop)")
@@ -66,32 +68,53 @@ func main() {
 	log.Printf("Transport: %s", *transportType)
 
 	config := transport.DefaultConfig()
-	var trans transport.Transport
+	var inner transport.Transport
 
 	switch *transportType {
+	case "vyandex":
+		var err error
+		globalDocUrl, err = readRequiredOption(globalDocUrl, *urlFile, "document URL")
+		if err != nil {
+			log.Fatal(err)
+		}
+		inner = yandex.NewYandexVolgaTransport(globalDocUrl, config)
 	case "yandex":
 		var err error
 		globalDocUrl, err = readRequiredOption(globalDocUrl, *urlFile, "document URL")
 		if err != nil {
 			log.Fatal(err)
 		}
-		secret, err := readRequiredOption("", *encryptionKeyFile, "encryption key")
-		if err != nil {
-			log.Fatal(err)
-		}
-		encrypted, err := transport.NewEncryptedTransport(
-			yandex.NewYandexDocsTransport(globalDocUrl, config), secret, globalDocUrl, *exitNode,
-		)
-		if err != nil {
-			log.Fatalf("Configure encrypted transport: %v", err)
-		}
-		trans = transport.NewCompressedTransport(encrypted)
+		inner = yandex.NewYandexDocsTransport(globalDocUrl, config)
 	case "oneme":
 		uidint, _ := strconv.ParseInt(maxUid, 10, 64)
-		trans = transport.NewCompressedTransport(oneme.NewOneMeTransport(*exitNode, maxToken, uidint, config))
+		inner = oneme.NewOneMeTransport(*exitNode, maxToken, uidint, config)
 	default:
 		log.Fatalf("Unknown transport type: %s", *transportType)
 	}
+
+	if *encryptionKeyFile != "" {
+		secretBytes, err := os.ReadFile(*encryptionKeyFile)
+		if err != nil {
+			log.Fatalf("Read encryption key file: %v", err)
+		}
+		// The context is just a public KDF salt (domain separation between
+		// unrelated sessions using the same secret), not a secret itself -
+		// the document URL is a convenient, already-shared identifier.
+		context := *transportType
+		if globalDocUrl != "" {
+			context = globalDocUrl
+		}
+		encrypted, err := transport.NewEncryptedTransport(inner, strings.TrimSpace(string(secretBytes)), context, *exitNode)
+		if err != nil {
+			log.Fatalf("Configure encrypted transport: %v", err)
+		}
+		inner = encrypted
+		log.Printf("Transport encryption: AES-256-GCM enabled")
+	} else {
+		log.Printf("Transport encryption: disabled (no --encryption-key-file given)")
+	}
+
+	trans := transport.NewCompressedTransport(inner)
 
 	if err := trans.Start(); err != nil {
 		log.Fatalf("Failed to start transport: %v", err)

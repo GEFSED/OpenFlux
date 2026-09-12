@@ -38,7 +38,7 @@ func Start(documentURL, encryptionSecret string) string {
 	if documentURL == "" {
 		return "Ссылка на документ не указана"
 	}
-	if len(encryptionSecret) < 16 {
+	if encryptionSecret != "" && len(encryptionSecret) < 16 {
 		return "Ключ шифрования должен содержать не менее 16 символов"
 	}
 
@@ -57,16 +57,21 @@ func Start(documentURL, encryptionSecret string) string {
 	appendLog("[ANDROID] Запуск транспорта Yandex Docs")
 
 	config := transport.DefaultConfig()
-	encrypted, err := transport.NewEncryptedTransport(
-		yandex.NewYandexDocsTransport(documentURL, config), encryptionSecret, documentURL, false,
-	)
-	if err != nil {
-		client.mu.Lock()
-		client.running = false
-		client.mu.Unlock()
-		return err.Error()
+	var inner transport.Transport = yandex.NewYandexDocsTransport(documentURL, config)
+	if encryptionSecret != "" {
+		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, documentURL, false)
+		if err != nil {
+			client.mu.Lock()
+			client.running = false
+			client.mu.Unlock()
+			return err.Error()
+		}
+		inner = encrypted
+		appendLog("[ANDROID] Шифрование транспорта: AES-256-GCM включено")
+	} else {
+		appendLog("[ANDROID] Шифрование транспорта отключено (ключ не задан)")
 	}
-	trans := transport.NewCompressedTransport(encrypted)
+	trans := transport.NewCompressedTransport(inner)
 	trans.Receive(func(data []byte) {
 		packet := append([]byte(nil), data...)
 		client.mu.Lock()
