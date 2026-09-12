@@ -2,6 +2,75 @@
 
 All notable changes to this fork are documented here.
 
+## 0.5.0 - 2026-09-12
+
+### Added
+
+- a second connection mode for Android: **Proxy (SOCKS5)**, alongside the
+  existing system-wide VPN mode. It reuses the same encrypted document
+  transport and the same userspace TCP/IP stack (gVisor) the desktop CLI's
+  SOCKS5 client already used, wired through `gomobile` - no protocol or
+  exit-node changes were needed for this mode by itself. Unlike VPN mode it
+  needs no VPN permission prompt and runs as a plain foreground service.
+- **DNS resolution via the exit node**: both VPN and Proxy mode can relay DNS
+  queries through the encrypted tunnel to the exit node, which asks the
+  configured upstream over plain UDP from its own network - the query never
+  touches the client's local network. New symmetric `frameDNSRequest`/
+  `frameDNSResponse` frames on the existing encrypted channel. A
+  per-connection setting lets you choose server-side or local resolution
+  instead (useful with an exit node that hasn't been updated yet, or when
+  local resolution is simply faster).
+- the DNS-server field now accepts a hostname as well as an IP (e.g.
+  `dns.google`, not just `1.1.1.1`) for both resolution modes.
+- **local-network access and authentication for Proxy mode**: an opt-in
+  toggle exposes the SOCKS5 listener on `0.0.0.0` instead of loopback only,
+  so another device on the same Wi-Fi/LAN can use it, plus optional SOCKS5
+  username/password authentication (RFC 1929, constant-time credential
+  check) with a one-tap credential generator. A `socks://` share link and QR
+  code are shown for pairing another device.
+- the SOCKS5 server now replies with a proper protocol-level error (RFC 1928
+  address-not-supported / command-not-supported) instead of silently closing
+  the connection on an IPv6 address or a non-CONNECT command, so a client
+  fails fast instead of hanging. Full IPv6/UDP-ASSOCIATE delivery is not yet
+  implemented - the exit node's raw-socket internet path is currently
+  IPv4/TCP-only.
+- Settings navigation was redone as a vertical, phone-Settings-style list
+  (icon + label, tap to drill in, back via the top-left arrow or the system
+  back button/gesture) instead of a horizontal tab strip, with a new
+  **About** section linking to the upstream repository and this fork.
+- the app-version badge (previously a static "BETA" pill) now shows the
+  installed version and checks GitHub for a newer release at startup,
+  turning green ("up to date") or amber ("update available").
+- the pinned connection notification now shows live upload/download speed
+  (updated every second) with a **Disconnect** action button, for both
+  modes.
+- connection status now tracks the transport honestly after the initial
+  handshake: if the encrypted transport drops and silently retries mid
+  session, the UI switches back to "Connecting..." instead of continuing to
+  show a stale "Connected", and back again once it recovers.
+- shortcuts to two OS-level reliability settings: a battery-optimization
+  exemption prompt (foreground services survive OEM battery managers much
+  better with it granted), and a link to Android's Always-on VPN /
+  "Block connections without VPN" settings screen for VPN mode.
+- the Home screen's active-parameters card now lists every relevant setting
+  for the current mode (mode, DNS server and resolution location, MTU or
+  local port, app filter, LAN/auth status), not just two of them.
+- runtime `POST_NOTIFICATIONS` permission is now requested on Android 13+;
+  without it the app worked fine but silently showed no notification at all.
+- animated UI buttons no longer stack/duplicate their scale animation when
+  tapped rapidly or repeatedly (a shared `bounce()` helper cancels and
+  replaces any in-flight animation on the same view instead of layering a
+  new one on top).
+
+### Changed
+
+- Android application version is now 0.5.0 (version code 5).
+- the keyboard no longer resizes the whole window (shrinking the bottom
+  navigation and the Save button up into view); it now pans instead, so
+  those stay in place and are simply covered while a field is focused.
+- the per-app VPN filter's hint now notes it only applies to VPN mode, since
+  Proxy mode has no system-wide capture to filter.
+
 ## 0.4.0 - 2026-09-12
 
 ### Added
@@ -39,7 +108,7 @@ All notable changes to this fork are documented here.
   backoff and bounded WebSocket dial for the `yandex` transport; SOCKS5
   `Bind`/`Close` lifecycle plus a bounds-check fix for malformed domain
   requests; the MAX transport no longer kills the whole process
-  (`os.Exit(1)`) when its connection drops — fatal when embedded as an
+  (`os.Exit(1)`) when its connection drops - fatal when embedded as an
   Android library; panic recovery (`utils.SafeGo`) around background
   goroutines in the transport, tunnel and SOCKS5 layers; a `--local-ip` flag
   to scope the exit node's RST-drop iptables rule to a dedicated egress IP

@@ -9,12 +9,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/scrypt"
+
+	"universal-bypass-tool/utils"
 )
 
 // maxCountryBytes bounds the optional country name piggybacked on ping-pong
@@ -29,7 +32,20 @@ const (
 	frameData         = byte(0)
 	framePingRequest  = byte(1)
 	framePingResponse = byte(2)
+	frameDNSRequest   = byte(3)
+	frameDNSResponse  = byte(4)
 )
+
+// dnsRequestTimeout bounds how long ResolveDNS waits for the peer's answer
+// before giving up; a slow or unresponsive upstream resolver on the exit node
+// must never hang the caller (a SOCKS5 CONNECT or a captured TUN DNS packet)
+// forever.
+const dnsRequestTimeout = 5 * time.Second
+
+// maxDNSMessage bounds a relayed DNS message. Real UDP DNS is capped at 512
+// bytes without EDNS0 and rarely exceeds a few KB even with it; this is a
+// defensive ceiling against a hostile or broken peer, not a protocol limit.
+const maxDNSMessage = 4096
 
 var encryptedMagic = [3]byte{'O', 'F', 'X'}
 
@@ -50,6 +66,8 @@ type EncryptedTransport struct {
 	lastPingMs    atomic.Int64
 	pingSequence  atomic.Int64
 	country       atomic.Value // string
+	dnsMu         sync.Mutex
+	pendingDNS    map[uint64]chan []byte
 }
 
 // NewEncryptedTransport creates a directional AES-256-GCM transport. Both
@@ -93,6 +111,7 @@ func NewEncryptedTransport(inner Transport, secret, context string, exitNode boo
 		recvDirection: receiveDirection,
 		seen:          make(map[string]struct{}),
 		pendingPings:  make(map[uint64]time.Time),
+		pendingDNS:    make(map[uint64]chan []byte),
 	}, nil
 }
 
@@ -177,8 +196,140 @@ func (e *EncryptedTransport) Receive(callback func([]byte)) {
 					}
 				}
 			}
+		case frameDNSRequest:
+			e.handleDNSRequest(plaintext)
+		case frameDNSResponse:
+			e.handleDNSResponse(plaintext)
 		}
 	})
+}
+
+// ResolveDNS relays a raw DNS message to whoever is on the other end of this
+// encrypted transport (in practice, the exit node), which forwards it
+// verbatim to upstream over UDP and returns the raw answer. Both VPN mode
+// (a real query captured from the TUN device) and Proxy mode (a synthetic
+// A-record query for a SOCKS5 CONNECT hostname) use this so DNS resolution
+// happens on the exit node's network instead of leaking to the client's own,
+// possibly censored or monitored, network.
+func (e *EncryptedTransport) ResolveDNS(upstream string, query []byte) ([]byte, error) {
+	if len(upstream) > 255 {
+		return nil, errors.New("upstream address too long")
+	}
+	if len(query) == 0 || len(query) > maxDNSMessage {
+		return nil, errors.New("dns query size out of range")
+	}
+
+	var tokenBytes [8]byte
+	if _, err := rand.Read(tokenBytes[:]); err != nil {
+		return nil, fmt.Errorf("create dns token: %w", err)
+	}
+	token := binary.BigEndian.Uint64(tokenBytes[:])
+	reply := make(chan []byte, 1)
+	e.dnsMu.Lock()
+	e.pendingDNS[token] = reply
+	e.dnsMu.Unlock()
+	defer func() {
+		e.dnsMu.Lock()
+		delete(e.pendingDNS, token)
+		e.dnsMu.Unlock()
+	}()
+
+	frame := make([]byte, 0, 1+8+1+len(upstream)+len(query))
+	frame = append(frame, frameDNSRequest)
+	frame = append(frame, tokenBytes[:]...)
+	frame = append(frame, byte(len(upstream)))
+	frame = append(frame, upstream...)
+	frame = append(frame, query...)
+	if err := e.sendFrame(frame); err != nil {
+		return nil, err
+	}
+
+	select {
+	case answer := <-reply:
+		return answer, nil
+	case <-time.After(dnsRequestTimeout):
+		return nil, errors.New("dns resolution timed out (is the exit node up to date?)")
+	}
+}
+
+// handleDNSRequest answers a DNS relay request. It always runs, symmetric to
+// how ping requests are answered: in practice only the exit node ever
+// receives one, since only ResolveDNS's caller (the client) originates them.
+// The upstream UDP round trip runs in its own goroutine so a slow resolver
+// cannot stall this transport's shared receive loop.
+func (e *EncryptedTransport) handleDNSRequest(plaintext []byte) {
+	if len(plaintext) < 10 {
+		return
+	}
+	tokenBytes := append([]byte(nil), plaintext[1:9]...)
+	upstreamLen := int(plaintext[9])
+	if 10+upstreamLen > len(plaintext) {
+		return
+	}
+	upstream := string(plaintext[10 : 10+upstreamLen])
+	query := append([]byte(nil), plaintext[10+upstreamLen:]...)
+
+	utils.SafeGo("encrypted.answerDNS", func() {
+		answer, err := relayDNSQuery(upstream, query)
+		if err != nil {
+			utils.Debugf("[DNS] relay to %s failed: %v", upstream, err)
+			return
+		}
+		response := make([]byte, 0, 9+len(answer))
+		response = append(response, frameDNSResponse)
+		response = append(response, tokenBytes...)
+		response = append(response, answer...)
+		if err := e.sendFrame(response); err != nil {
+			utils.Debugf("[DNS] send answer failed: %v", err)
+		}
+	})
+}
+
+func (e *EncryptedTransport) handleDNSResponse(plaintext []byte) {
+	if len(plaintext) < 9 {
+		return
+	}
+	token := binary.BigEndian.Uint64(plaintext[1:9])
+	e.dnsMu.Lock()
+	reply, ok := e.pendingDNS[token]
+	e.dnsMu.Unlock()
+	if !ok {
+		return
+	}
+	answer := append([]byte(nil), plaintext[9:]...)
+	select {
+	case reply <- answer:
+	default:
+	}
+}
+
+// relayDNSQuery forwards a raw DNS message to upstream (host or host:port;
+// port defaults to 53) over plain UDP and returns the raw response. This is
+// a byte-transparent relay with no DNS parsing, so it faithfully answers
+// whatever record type the original caller asked for.
+func relayDNSQuery(upstream string, query []byte) ([]byte, error) {
+	if upstream == "" {
+		upstream = "1.1.1.1"
+	}
+	addr := upstream
+	if _, _, err := net.SplitHostPort(upstream); err != nil {
+		addr = net.JoinHostPort(upstream, "53")
+	}
+	conn, err := net.DialTimeout("udp", addr, dnsRequestTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("dial upstream: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(dnsRequestTimeout))
+	if _, err := conn.Write(query); err != nil {
+		return nil, fmt.Errorf("write query: %w", err)
+	}
+	buf := make([]byte, maxDNSMessage)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return nil, fmt.Errorf("read answer: %w", err)
+	}
+	return buf[:n], nil
 }
 
 // Ping measures a round trip through the encrypted document transport and the
