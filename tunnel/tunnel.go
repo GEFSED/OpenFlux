@@ -1,15 +1,12 @@
 package tunnel
 
 import (
-	"crypto/rand"
-	"encoding/binary"
 	"fmt"
 	"net"
 	"strconv"
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/net/dns/dnsmessage"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
@@ -29,17 +26,6 @@ type TCPTunnel struct {
 	rawEP       *RawSocketEndpoint
 	startTime   time.Time
 	packetCount atomic.Uint64
-	dnsResolve  func(query []byte) ([]byte, error)
-}
-
-// SetDNSResolver makes DialTCP resolve hostnames through resolve instead of
-// the local system resolver, so DNS never leaves this process's own network
-// directly. Intended to be backed by EncryptedTransport.ResolveDNS, which
-// relays the query to the exit node over the same tunnel. Without a resolver
-// configured, DialTCP falls back to local resolution (today's behavior),
-// so existing callers (the desktop CLI) are unaffected until they opt in.
-func (t *TCPTunnel) SetDNSResolver(resolve func(query []byte) ([]byte, error)) {
-	t.dnsResolve = resolve
 }
 
 // TCP buffer size range for gvisor stacks. Big by default (exit node on a VPS);
@@ -197,11 +183,8 @@ func (t *TCPTunnel) DialTCP(address string) (net.Conn, error) {
 	return conn, err
 }
 
-// resolveIPv4 resolves host to an IPv4 address. When a DNS resolver has been
-// configured via SetDNSResolver, the lookup is relayed through the tunnel
-// (normally to the exit node, which asks its own upstream over UDP) instead
-// of using this process's local resolver; without one, it falls back to the
-// system resolver exactly as before.
+// resolveIPv4 resolves host to an IPv4 address using the local system
+// resolver (for a literal IP this is just a parse, no lookup).
 func (t *TCPTunnel) resolveIPv4(host string) (net.IP, error) {
 	if literal := net.ParseIP(host); literal != nil {
 		if ip4 := literal.To4(); ip4 != nil {
@@ -210,68 +193,15 @@ func (t *TCPTunnel) resolveIPv4(host string) (net.IP, error) {
 		return nil, fmt.Errorf("IPv6 not supported")
 	}
 
-	if t.dnsResolve == nil {
-		tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(host, "0"))
-		if err != nil {
-			return nil, fmt.Errorf("resolve: %w", err)
-		}
-		ip4 := tcpAddr.IP.To4()
-		if ip4 == nil {
-			return nil, fmt.Errorf("IPv6 not supported")
-		}
-		return ip4, nil
-	}
-
-	ip4, err := resolveHostnameViaTunnel(t.dnsResolve, host)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", net.JoinHostPort(host, "0"))
 	if err != nil {
-		return nil, fmt.Errorf("resolve %s via tunnel: %w", host, err)
+		return nil, fmt.Errorf("resolve: %w", err)
+	}
+	ip4 := tcpAddr.IP.To4()
+	if ip4 == nil {
+		return nil, fmt.Errorf("IPv6 not supported")
 	}
 	return ip4, nil
-}
-
-// resolveHostnameViaTunnel builds a minimal A-record query, sends it through
-// resolve (a relay to the exit node's own DNS resolution), and extracts the
-// first IPv4 answer.
-func resolveHostnameViaTunnel(resolve func([]byte) ([]byte, error), host string) (net.IP, error) {
-	var idBytes [2]byte
-	if _, err := rand.Read(idBytes[:]); err != nil {
-		return nil, fmt.Errorf("create dns id: %w", err)
-	}
-	name, err := dnsmessage.NewName(host + ".")
-	if err != nil {
-		return nil, fmt.Errorf("invalid hostname: %w", err)
-	}
-	query := dnsmessage.Message{
-		Header: dnsmessage.Header{
-			ID:               binary.BigEndian.Uint16(idBytes[:]),
-			RecursionDesired: true,
-		},
-		Questions: []dnsmessage.Question{{
-			Name:  name,
-			Type:  dnsmessage.TypeA,
-			Class: dnsmessage.ClassINET,
-		}},
-	}
-	packed, err := query.Pack()
-	if err != nil {
-		return nil, fmt.Errorf("build dns query: %w", err)
-	}
-
-	raw, err := resolve(packed)
-	if err != nil {
-		return nil, err
-	}
-
-	var response dnsmessage.Message
-	if err := response.Unpack(raw); err != nil {
-		return nil, fmt.Errorf("parse dns response: %w", err)
-	}
-	for _, answer := range response.Answers {
-		if a, ok := answer.Body.(*dnsmessage.AResource); ok {
-			return net.IP(a.A[:]), nil
-		}
-	}
-	return nil, fmt.Errorf("no A record for %s", host)
 }
 
 func (t *TCPTunnel) ListenTCP(port uint16) (net.Listener, error) {

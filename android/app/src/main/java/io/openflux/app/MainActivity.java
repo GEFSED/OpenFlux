@@ -30,7 +30,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
-import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
@@ -106,8 +105,6 @@ public final class MainActivity extends Activity {
     private static final String MODE_VPN = "vpn";
     private static final String MODE_PROXY = "proxy";
     private static final int DEFAULT_PROXY_PORT = 1080;
-    private static final String DNS_RESOLVE_SERVER = "server";
-    private static final String DNS_RESOLVE_CLIENT = "client";
     private static final String MAIN_REPO_URL = "https://github.com/p1neappleXpress/OpenFlux";
     private static final String FORK_REPO_URL = "https://github.com/damnurmum/OpenFlux-Android";
     private static final String FORK_REPO_SLUG = "damnurmum/OpenFlux-Android";
@@ -146,9 +143,6 @@ public final class MainActivity extends Activity {
     private TextView statusDot;
     private TextView statusView;
     private TextView statusDetail;
-    private LinearLayout pingPanel;
-    private TextView pingValue;
-    private PingGraphView pingGraph;
     private TextView logView;
     private ScrollView logScroll;
     private LinearLayout vpnButton;
@@ -159,7 +153,6 @@ public final class MainActivity extends Activity {
     private int mtu;
     private String connectionMode = MODE_VPN;
     private int proxyPort = DEFAULT_PROXY_PORT;
-    private String dnsResolveMode = DNS_RESOLVE_SERVER;
     private boolean proxyLanAccess;
     private boolean proxyAuthEnabled;
     private String proxyUsername = "";
@@ -169,11 +162,6 @@ public final class MainActivity extends Activity {
     private boolean encryptionVisible;
     private boolean proxyPasswordVisible;
     private SecureSettings secureSettings;
-    private final ArrayList<Float> pingHistory = new ArrayList<>();
-    private long lastPingRequestAt;
-    private long lastPingSequence;
-    private boolean pingPanelShown;
-    private String lastCountry = "";
     private boolean shellAnimated;
     private ObjectAnimator dotPulse;
     private int lastVpnButtonFill = -1;
@@ -193,7 +181,6 @@ public final class MainActivity extends Activity {
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
             updateStatus();
-            updatePing();
             String pending = Mobile.readLogs();
             if (pending != null && !pending.isEmpty()) appendLog(pending);
             handler.postDelayed(this, 500);
@@ -214,8 +201,6 @@ public final class MainActivity extends Activity {
         mtu = prefs.getInt("mtu", DEFAULT_MTU);
         connectionMode = MODE_PROXY.equals(prefs.getString("connection_mode", MODE_VPN)) ? MODE_PROXY : MODE_VPN;
         proxyPort = prefs.getInt("proxy_port", DEFAULT_PROXY_PORT);
-        dnsResolveMode = DNS_RESOLVE_CLIENT.equals(prefs.getString("dns_resolve_mode", DNS_RESOLVE_SERVER))
-                ? DNS_RESOLVE_CLIENT : DNS_RESOLVE_SERVER;
         proxyLanAccess = prefs.getBoolean("proxy_lan_access", false);
         proxyAuthEnabled = prefs.getBoolean("proxy_auth_enabled", false);
         proxyUsername = prefs.getString("proxy_username", "");
@@ -595,20 +580,6 @@ public final class MainActivity extends Activity {
         status.addView(statusDot, dot);
         LinearLayout statusCopy = new LinearLayout(this);
         statusCopy.setOrientation(LinearLayout.VERTICAL);
-        pingPanelShown = false;
-        pingPanel = new LinearLayout(this);
-        pingPanel.setOrientation(LinearLayout.VERTICAL);
-        pingPanel.setVisibility(View.GONE);
-        pingPanel.setAlpha(0f);
-        pingValue = text("Пинг до VDS: -", 13, accent, true);
-        pingPanel.addView(pingValue);
-        pingGraph = new PingGraphView(this, accent, border);
-        pingGraph.setHistory(pingHistory);
-        LinearLayout.LayoutParams graphParams = new LinearLayout.LayoutParams(-1, dp(48));
-        graphParams.topMargin = dp(5);
-        graphParams.bottomMargin = dp(9);
-        pingPanel.addView(pingGraph, graphParams);
-        statusCopy.addView(pingPanel, new LinearLayout.LayoutParams(-1, -2));
         statusView = text("Остановлено", 17, text, true);
         statusDetail = text("VPN сейчас не используется", 13, secondary, false);
         statusCopy.addView(statusView);
@@ -658,7 +629,6 @@ public final class MainActivity extends Activity {
             return new String[][]{
                     {"Режим", "Прокси (SOCKS5)"},
                     {"DNS-сервер", dnsServer},
-                    {"Резолв DNS", DNS_RESOLVE_CLIENT.equals(dnsResolveMode) ? "Локально" : "На сервере"},
                     {"Локальный порт", String.valueOf(proxyPort)},
                     {"Доступ", proxyAccessSummary()},
             };
@@ -666,7 +636,6 @@ public final class MainActivity extends Activity {
         return new String[][]{
                 {"Режим", "VPN (весь трафик)"},
                 {"DNS-сервер", dnsServer},
-                {"Резолв DNS", DNS_RESOLVE_CLIENT.equals(dnsResolveMode) ? "Локально" : "На сервере"},
                 {"MTU пакета", String.valueOf(mtu)},
                 {"Приложения", appFilterSummary()},
         };
@@ -1322,29 +1291,8 @@ public final class MainActivity extends Activity {
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         section.addView(settingRow(R.drawable.ic_public, "DNS-сервер", dnsInput));
         section.addView(fieldHint(
-                "Для чего: сюда уходят запросы «какой IP у сайта». "
-                        + "Можно указать IP (1.1.1.1) или доменное имя (dns.google)."));
-
-        RadioGroup dnsModeGroup = new RadioGroup(this);
-        dnsModeGroup.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams dnsModeGroupParams = matchWrap();
-        dnsModeGroupParams.topMargin = dp(10);
-        section.addView(dnsModeGroup, dnsModeGroupParams);
-        RadioButton serverOption = modeRadio("Резолвить на сервере - через туннель");
-        RadioButton clientOption = modeRadio("Резолвить локально на устройстве");
-        dnsModeGroup.addView(serverOption);
-        dnsModeGroup.addView(clientOption);
-        if (DNS_RESOLVE_CLIENT.equals(dnsResolveMode)) clientOption.setChecked(true);
-        else serverOption.setChecked(true);
-        dnsModeGroup.setOnCheckedChangeListener((group, checkedId) -> {
-            tap(group);
-            dnsResolveMode = checkedId == clientOption.getId() ? DNS_RESOLVE_CLIENT : DNS_RESOLVE_SERVER;
-            persistSettings();
-        });
-        section.addView(fieldHint(
-                "На сервере - провайдер не видит домены, но нужен exit node с поддержкой "
-                        + "релея DNS. Локально - быстрее и работает с любым exit node, но "
-                        + "провайдер видит, к каким доменам вы обращаетесь."));
+                "Для чего: сюда уходят запросы «какой IP у сайта», резолвится локально на "
+                        + "устройстве. Можно указать IP (1.1.1.1) или доменное имя (dns.google)."));
 
         mtuInput = settingInput("MTU", String.valueOf(mtu), InputType.TYPE_CLASS_NUMBER);
         LinearLayout.LayoutParams mtuParams = matchWrap();
@@ -1781,7 +1729,6 @@ public final class MainActivity extends Activity {
                 .putString("dns_server", dnsServer)
                 .putInt("mtu", mtu)
                 .putString("connection_mode", connectionMode)
-                .putString("dns_resolve_mode", dnsResolveMode)
                 .putInt("proxy_port", proxyPort)
                 .putBoolean("proxy_lan_access", proxyLanAccess)
                 .putBoolean("proxy_auth_enabled", proxyAuthEnabled)
@@ -1854,7 +1801,6 @@ public final class MainActivity extends Activity {
         intent.putExtra(OpenFluxVpnService.EXTRA_DOCUMENT_URL, documentUrl);
         intent.putExtra(OpenFluxVpnService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
         intent.putExtra(OpenFluxVpnService.EXTRA_DNS_SERVER, dnsServer);
-        intent.putExtra(OpenFluxVpnService.EXTRA_RESOLVE_ON_SERVER, DNS_RESOLVE_SERVER.equals(dnsResolveMode));
         intent.putExtra(OpenFluxVpnService.EXTRA_MTU, mtu);
         startForegroundService(intent);
         appendLog("Запуск VPN…");
@@ -1866,8 +1812,6 @@ public final class MainActivity extends Activity {
         intent.putExtra(OpenFluxProxyService.EXTRA_DOCUMENT_URL, documentUrl);
         intent.putExtra(OpenFluxProxyService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
         intent.putExtra(OpenFluxProxyService.EXTRA_PORT, proxyPort);
-        intent.putExtra(OpenFluxProxyService.EXTRA_DNS_SERVER, dnsServer);
-        intent.putExtra(OpenFluxProxyService.EXTRA_RESOLVE_ON_SERVER, DNS_RESOLVE_SERVER.equals(dnsResolveMode));
         intent.putExtra(OpenFluxProxyService.EXTRA_LAN_ACCESS, proxyLanAccess);
         if (proxyLanAccess && proxyAuthEnabled) {
             intent.putExtra(OpenFluxProxyService.EXTRA_USERNAME, proxyUsername);
@@ -1950,65 +1894,6 @@ public final class MainActivity extends Activity {
         animator.setDuration(260);
         animator.addUpdateListener(a -> vpnButton.setBackground(buttonBackground((int) a.getAnimatedValue(), pressed)));
         animator.start();
-    }
-
-    private void updatePing() {
-        boolean proxyMode = isProxyMode();
-        boolean connected = isConnectionRunning() && "Подключено".equals(connectionStatus());
-        if (!connected) {
-            lastPingRequestAt = 0;
-            lastPingSequence = 0;
-            lastCountry = "";
-            setPingPanelVisible(false);
-            return;
-        }
-
-        setPingPanelVisible(true);
-        long now = SystemClock.elapsedRealtime();
-        if (now - lastPingRequestAt >= 2000) {
-            lastPingRequestAt = now;
-            if (proxyMode) Mobile.proxyPing(); else Mobile.ping();
-        }
-        long sequence = proxyMode ? Mobile.proxyPingSequence() : Mobile.pingSequence();
-        if (sequence == 0 || sequence == lastPingSequence) return;
-        lastPingSequence = sequence;
-        long milliseconds = proxyMode ? Mobile.proxyPingMillis() : Mobile.pingMillis();
-        if (milliseconds < 0) return;
-        if (pingHistory.size() >= 32) pingHistory.remove(0);
-        pingHistory.add((float) milliseconds);
-        String country = proxyMode ? Mobile.proxyServerCountry() : Mobile.serverCountry();
-        boolean countryJustArrived = country != null && !country.isEmpty() && lastCountry.isEmpty();
-        if (country != null && !country.isEmpty()) lastCountry = country;
-        if (pingValue != null) {
-            String value = "Пинг до VDS: " + milliseconds + " мс";
-            if (!lastCountry.isEmpty()) value += "  ·  " + lastCountry;
-            pingValue.setText(value);
-            if (countryJustArrived) {
-                pingValue.animate().cancel();
-                pingValue.setScaleX(0.92f);
-                pingValue.setScaleY(0.92f);
-                pingValue.animate().scaleX(1f).scaleY(1f).setDuration(260)
-                        .setInterpolator(new OvershootInterpolator(3f)).start();
-            }
-        }
-        if (pingGraph != null) pingGraph.addSample(milliseconds);
-    }
-
-    private void setPingPanelVisible(boolean visible) {
-        if (pingPanel == null || pingPanelShown == visible) return;
-        pingPanelShown = visible;
-        pingPanel.animate().cancel();
-        if (visible) {
-            pingPanel.setVisibility(View.VISIBLE);
-            pingPanel.setAlpha(0f);
-            pingPanel.setTranslationY(dp(8));
-            pingPanel.animate().alpha(1f).translationY(0f).setDuration(450).start();
-        } else {
-            pingPanel.animate().alpha(0f).translationY(dp(8)).setDuration(220)
-                    .withEndAction(() -> {
-                        if (!pingPanelShown && pingPanel != null) pingPanel.setVisibility(View.GONE);
-                    }).start();
-        }
     }
 
     // getLocalIpAddress finds this device's IPv4 address on whatever network

@@ -19,7 +19,6 @@ type packetClient struct {
 	mu        sync.Mutex
 	running   bool
 	transport transport.Transport
-	encrypted *transport.EncryptedTransport
 	packets   [][]byte
 	logs      []string
 }
@@ -51,7 +50,6 @@ func Start(documentURL, encryptionSecret string) string {
 	client.running = true
 	client.packets = nil
 	client.logs = nil
-	client.encrypted = nil
 	client.mu.Unlock()
 
 	utils.EnableDebug()
@@ -93,7 +91,6 @@ func Start(documentURL, encryptionSecret string) string {
 
 	client.mu.Lock()
 	client.transport = trans
-	client.encrypted = encrypted
 	client.mu.Unlock()
 	return ""
 }
@@ -103,81 +100,12 @@ func Stop() {
 	trans := client.transport
 	client.running = false
 	client.transport = nil
-	client.encrypted = nil
 	client.packets = nil
 	client.mu.Unlock()
 	appendLog("[ANDROID] Остановка транспорта")
 	if trans != nil {
 		_ = trans.Stop()
 	}
-}
-
-func Ping() string {
-	client.mu.Lock()
-	encrypted := client.encrypted
-	running := client.running
-	client.mu.Unlock()
-	if !running || encrypted == nil {
-		return "Транспорт не запущен"
-	}
-	if err := encrypted.Ping(); err != nil {
-		return err.Error()
-	}
-	return ""
-}
-
-func PingMillis() int64 {
-	client.mu.Lock()
-	encrypted := client.encrypted
-	client.mu.Unlock()
-	if encrypted == nil {
-		return -1
-	}
-	return encrypted.LastPingMillis()
-}
-
-func PingSequence() int64 {
-	client.mu.Lock()
-	encrypted := client.encrypted
-	client.mu.Unlock()
-	if encrypted == nil {
-		return 0
-	}
-	return encrypted.PingSequence()
-}
-
-// ServerCountry returns the exit node's country name as learned from the
-// encrypted ping protocol, or "" if it hasn't arrived yet.
-func ServerCountry() string {
-	client.mu.Lock()
-	encrypted := client.encrypted
-	client.mu.Unlock()
-	if encrypted == nil {
-		return ""
-	}
-	return encrypted.LastCountry()
-}
-
-// ResolveDNS relays a raw DNS query (as captured from the TUN device's
-// outgoing UDP packets) through the encrypted transport to the exit node,
-// which forwards it to dnsServer over UDP and returns the raw answer. This
-// keeps DNS resolution off the client's own network entirely, matching what
-// Proxy mode already does. Returns nil if the transport isn't running or the
-// exit node didn't answer in time (e.g. it hasn't been updated yet).
-func ResolveDNS(query []byte, dnsServer string) []byte {
-	client.mu.Lock()
-	encrypted := client.encrypted
-	running := client.running
-	client.mu.Unlock()
-	if !running || encrypted == nil {
-		return nil
-	}
-	answer, err := encrypted.ResolveDNS(dnsServer, query)
-	if err != nil {
-		appendLog(fmt.Sprintf("[ANDROID] DNS через туннель: %v", err))
-		return nil
-	}
-	return answer
 }
 
 func IsConnected() bool {

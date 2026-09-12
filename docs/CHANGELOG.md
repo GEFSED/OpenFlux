@@ -2,6 +2,49 @@
 
 All notable changes to this fork are documented here.
 
+## 0.5.1 - 2026-09-12
+
+### Changed
+
+- `main` is realigned to be wire-compatible with the current upstream
+  `p1neappleXpress/OpenFlux` exit-node and client binaries again. See
+  [docs/UPSTREAM_DIFF.md](UPSTREAM_DIFF.md) for the full comparison that led
+  to this.
+
+The previous `EncryptedTransport` added a 1-byte frame-type tag ahead of
+every packet to multiplex ping and DNS-relay traffic into the same
+encrypted channel. Upstream's transport (including the version merged from
+this fork's own earlier PR) has no such tag, so a client on one side could
+not talk to an exit node on the other without every packet's IP header
+getting corrupted by the stray byte - not just the newer features, any data
+at all. That divergence dates back to when ping support was first added, not
+just this week's DNS-relay work.
+
+To fix this, `main` drops everything that depended on the frame protocol:
+
+- **ping graph and exit-node country display** (Home screen) - relied on
+  `framePingRequest`/`framePingResponse`;
+- **"resolve DNS on the server" option** - relied on the new
+  `frameDNSRequest`/`frameDNSResponse` frames added this week. DNS
+  resolution on Android is local-only again, exactly as it was before this
+  week's tunnel-relay work, for both VPN and Proxy mode.
+
+Everything else added since 0.4.0 is untouched and stays fully functional
+with an unmodified upstream binary, since none of it touches the client<->
+exit-node wire protocol: Proxy (SOCKS5) mode, local-network access and SOCKS5
+authentication with a share link and QR code, the vertical Settings
+navigation and About section, the GitHub update-check badge, live
+upload/download speed and a Disconnect action in the notification, honest
+connection-health tracking, the battery-optimization and Always-on VPN
+shortcuts, the fuller active-parameters list, the `POST_NOTIFICATIONS`
+request, and the animation-duplication fix.
+
+The full previous feature set (frame protocol, ping graph, country display,
+server-side DNS relay) is preserved on the `experimental` branch for anyone
+running both ends with this fork's own exit-node binary.
+
+- Android application version is now 0.5.1 (version code 6).
+
 ## 0.5.0 - 2026-09-12
 
 ### Added

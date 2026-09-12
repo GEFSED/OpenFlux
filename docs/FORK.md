@@ -10,13 +10,20 @@ It preserves the upstream Git history and remains licensed under GPL-3.0-or-late
   phone-Settings-style vertical navigation;
 - a second Android connection mode, Proxy (SOCKS5), alongside the VPN mode,
   with optional local-network access and SOCKS5 authentication;
-- DNS resolution relayed through the encrypted tunnel to the exit node (or
-  locally, per a user setting) instead of leaving the client's network directly;
 - encrypted Android Keystore storage for the document URL and shared secret;
-- mandatory end-to-end AES-256-GCM transport encryption with scrypt key derivation;
-- authenticated encrypted ping frames and an animated latency graph;
+- mandatory end-to-end AES-256-GCM transport encryption with scrypt key
+  derivation, wire-compatible with upstream's exit-node and client binaries;
 - a live upload/download speed indicator in the connection notification;
 - safer VDS deployment using root-only URL/key files instead of process arguments;
 - removal of the non-functional iOS prototype.
+
+## Branches
+
+`main` stays wire-compatible with the current upstream exit-node and client
+binaries. A separate `experimental` branch carries features that need a
+matching exit node running this fork's own code (a framed transport protocol
+multiplexing ping/DNS-relay traffic into the encrypted channel): the ping
+graph, exit-node country display, and server-side DNS relay. See
+[UPSTREAM_DIFF.md](UPSTREAM_DIFF.md) for the full comparison.
 
 The fork is experimental and is not endorsed by or affiliated with Yandex.
