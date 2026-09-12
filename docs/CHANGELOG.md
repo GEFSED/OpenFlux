@@ -2,6 +2,23 @@
 
 All notable changes to this fork are documented here.
 
+## 0.5.3 - 2026-09-12
+
+### Fixed
+
+- crash on connect introduced in 0.5.2: `OpenFluxVpnService` and
+  `OpenFluxProxyService` still rejected an empty encryption key with
+  `stopSelf()` before ever calling `startForeground()`. Since encryption is
+  now optional, leaving the key field empty (as the UI itself now suggests)
+  hit that path on every connect attempt, and Android kills a foreground
+  service that doesn't call `startForeground()` in time with
+  `ForegroundServiceDidNotStartInTimeException` - crashing the whole app.
+  Both services now call `startForeground()` immediately in
+  `onStartCommand`, before any validation that could stop the service early,
+  and their encryption-key check now matches the optional behavior (only
+  rejects a key that's set but shorter than 16 characters).
+- Android application version is now 0.5.3 (version code 8).
+
 ## 0.5.2 - 2026-09-12
 
 ### Changed
