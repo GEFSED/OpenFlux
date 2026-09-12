@@ -1,0 +1,135 @@
+package io.openflux.app;
+
+import android.app.PendingIntent;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.graphics.drawable.Icon;
+import android.net.VpnService;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.service.quicksettings.Tile;
+import android.service.quicksettings.TileService;
+
+import java.util.List;
+
+// Quick Settings tile that toggles whichever connection mode (VPN or Proxy)
+// is currently selected in the app, using whichever profile is currently
+// selected there. VPN mode needs Android's one-time VPN consent dialog,
+// which a TileService cannot show itself, so if that permission hasn't been
+// granted yet (or no profile is configured) the tile opens the app instead
+// of failing silently.
+public final class OpenFluxTileService extends TileService {
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable refresh = new Runnable() {
+        @Override public void run() {
+            updateTile();
+            handler.postDelayed(this, 1000);
+        }
+    };
+
+    @Override public void onStartListening() {
+        super.onStartListening();
+        handler.removeCallbacks(refresh);
+        handler.post(refresh);
+    }
+
+    @Override public void onStopListening() {
+        handler.removeCallbacks(refresh);
+        super.onStopListening();
+    }
+
+    @Override public void onClick() {
+        super.onClick();
+        boolean proxyMode = isProxyMode();
+        boolean running = proxyMode ? OpenFluxProxyService.isRunning() : OpenFluxVpnService.isRunning();
+        if (running) {
+            Intent stop = new Intent(this, proxyMode ? OpenFluxProxyService.class : OpenFluxVpnService.class);
+            stop.setAction(proxyMode ? OpenFluxProxyService.ACTION_STOP : OpenFluxVpnService.ACTION_STOP);
+            startService(stop);
+            updateTile();
+            return;
+        }
+        if (!proxyMode && VpnService.prepare(this) != null) {
+            // First-time VPN consent can only be granted through an activity.
+            openApp();
+            return;
+        }
+        if (!startConnection(proxyMode)) {
+            openApp();
+            return;
+        }
+        updateTile();
+    }
+
+    private boolean isProxyMode() {
+        SharedPreferences prefs = getSharedPreferences(MainActivity.SETTINGS_PREFS_NAME, MODE_PRIVATE);
+        return "proxy".equals(prefs.getString("connection_mode", "vpn"));
+    }
+
+    private boolean startConnection(boolean proxyMode) {
+        SecureSettings secureSettings = new SecureSettings(this);
+        ProfileStore profileStore = new ProfileStore(secureSettings);
+        List<Profile> profiles = profileStore.load();
+        long selectedId = profileStore.getSelectedId();
+        Profile selected = null;
+        for (Profile p : profiles) {
+            if (p.id == selectedId) { selected = p; break; }
+        }
+        if (selected == null || selected.documentUrl == null || selected.documentUrl.isEmpty()) return false;
+
+        SharedPreferences prefs = getSharedPreferences(MainActivity.SETTINGS_PREFS_NAME, MODE_PRIVATE);
+        if (proxyMode) {
+            boolean lanAccess = prefs.getBoolean("proxy_lan_access", false);
+            boolean authEnabled = prefs.getBoolean("proxy_auth_enabled", false);
+            Intent intent = new Intent(this, OpenFluxProxyService.class);
+            intent.setAction(OpenFluxProxyService.ACTION_START);
+            intent.putExtra(OpenFluxProxyService.EXTRA_DOCUMENT_URL, selected.documentUrl);
+            intent.putExtra(OpenFluxProxyService.EXTRA_ENCRYPTION_SECRET, selected.encryptionSecret);
+            intent.putExtra(OpenFluxProxyService.EXTRA_TRANSPORT_TYPE, selected.transportType);
+            intent.putExtra(OpenFluxProxyService.EXTRA_PORT, prefs.getInt("proxy_port", 1080));
+            intent.putExtra(OpenFluxProxyService.EXTRA_LAN_ACCESS, lanAccess);
+            if (lanAccess && authEnabled) {
+                intent.putExtra(OpenFluxProxyService.EXTRA_USERNAME, prefs.getString("proxy_username", ""));
+                intent.putExtra(OpenFluxProxyService.EXTRA_PASSWORD, secureSettings.getString("proxy_password", ""));
+            }
+            startForegroundService(intent);
+        } else {
+            Intent intent = new Intent(this, OpenFluxVpnService.class);
+            intent.setAction(OpenFluxVpnService.ACTION_START);
+            intent.putExtra(OpenFluxVpnService.EXTRA_DOCUMENT_URL, selected.documentUrl);
+            intent.putExtra(OpenFluxVpnService.EXTRA_ENCRYPTION_SECRET, selected.encryptionSecret);
+            intent.putExtra(OpenFluxVpnService.EXTRA_TRANSPORT_TYPE, selected.transportType);
+            intent.putExtra(OpenFluxVpnService.EXTRA_DNS_SERVER, prefs.getString("dns_server", "1.1.1.1"));
+            intent.putExtra(OpenFluxVpnService.EXTRA_MTU, prefs.getInt("mtu", 1400));
+            startForegroundService(intent);
+        }
+        return true;
+    }
+
+    private void openApp() {
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        if (Build.VERSION.SDK_INT >= 34) {
+            PendingIntent pendingIntent = PendingIntent.getActivity(
+                    this, 0, intent, PendingIntent.FLAG_IMMUTABLE);
+            startActivityAndCollapse(pendingIntent);
+        } else {
+            startActivityAndCollapse(intent);
+        }
+    }
+
+    private void updateTile() {
+        Tile tile = getQsTile();
+        if (tile == null) return;
+        boolean proxyMode = isProxyMode();
+        boolean running = proxyMode ? OpenFluxProxyService.isRunning() : OpenFluxVpnService.isRunning();
+        tile.setIcon(Icon.createWithResource(this, R.drawable.ic_openflux_notification));
+        tile.setLabel("OpenFlux");
+        tile.setState(running ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
+        if (Build.VERSION.SDK_INT >= 29) {
+            tile.setSubtitle(proxyMode ? "Прокси" : "VPN");
+        }
+        tile.updateTile();
+    }
+}

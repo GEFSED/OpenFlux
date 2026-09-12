@@ -36,6 +36,7 @@ public final class OpenFluxVpnService extends VpnService {
     public static final String ACTION_STOP = "io.openflux.app.STOP";
     public static final String EXTRA_DOCUMENT_URL = "document_url";
     public static final String EXTRA_ENCRYPTION_SECRET = "encryption_secret";
+    public static final String EXTRA_TRANSPORT_TYPE = "transport_type";
     public static final String EXTRA_DNS_SERVER = "dns_server";
     public static final String EXTRA_MTU = "mtu";
 
@@ -44,6 +45,10 @@ public final class OpenFluxVpnService extends VpnService {
     private static volatile boolean running;
     private static volatile String status = "Остановлено";
     private static volatile String lastError = "";
+    // Lives on the service, not the Activity: MainActivity can be destroyed
+    // and recreated (low memory, long time away) while this foreground
+    // service keeps running, and the uptime shown on Home must survive that.
+    private static volatile long connectedAtMillis;
 
     private final ExecutorService workers = Executors.newCachedThreadPool();
     private final Object outputLock = new Object();
@@ -102,6 +107,7 @@ public final class OpenFluxVpnService extends VpnService {
     public static boolean isRunning() { return running; }
     public static String getStatus() { return status; }
     public static String getLastError() { return lastError; }
+    public static long getConnectedAtMillis() { return connectedAtMillis; }
 
     private static String formatSpeed(long bytesPerSecond) {
         if (bytesPerSecond < 1024) return bytesPerSecond + " Б/с";
@@ -158,6 +164,9 @@ public final class OpenFluxVpnService extends VpnService {
             stopSelf();
             return START_NOT_STICKY;
         }
+        String transportTypeExtra = intent.getStringExtra(EXTRA_TRANSPORT_TYPE);
+        final String transportType = transportTypeExtra == null || transportTypeExtra.isEmpty()
+                ? "yandex" : transportTypeExtra;
         if (dnsServer == null || dnsServer.trim().isEmpty()) dnsServer = "1.1.1.1";
         int mtu = Math.max(576, Math.min(1500, intent.getIntExtra(EXTRA_MTU, 1400)));
 
@@ -168,13 +177,13 @@ public final class OpenFluxVpnService extends VpnService {
         int session = generation.incrementAndGet();
         String selectedDns = dnsServer;
         int selectedMtu = mtu;
-        workers.execute(() -> startTunnel(url, encryptionSecret, selectedDns, selectedMtu, session));
+        workers.execute(() -> startTunnel(transportType, url, encryptionSecret, selectedDns, selectedMtu, session));
         return START_STICKY;
     }
 
-    private void startTunnel(String url, String encryptionSecret, String dnsServer, int mtu, int session) {
+    private void startTunnel(String transportType, String url, String encryptionSecret, String dnsServer, int mtu, int session) {
         if (!isCurrent(session)) return;
-        String error = Mobile.start(url, encryptionSecret);
+        String error = Mobile.start(transportType, url, encryptionSecret);
         if (error != null && !error.isEmpty()) {
             fail(session, error);
             return;
@@ -219,6 +228,7 @@ public final class OpenFluxVpnService extends VpnService {
 
         if (!isCurrent(session)) return;
         status = "Подключено";
+        if (connectedAtMillis == 0L) connectedAtMillis = System.currentTimeMillis();
         startSpeedUpdates();
         FileInputStream input = tunnelInput;
         FileOutputStream output = tunnelOutput;
@@ -418,6 +428,7 @@ public final class OpenFluxVpnService extends VpnService {
         if (!isCurrent(session)) return;
         lastError = message == null ? "Неизвестная ошибка" : message;
         status = "Ошибка";
+        connectedAtMillis = 0L;
         generation.incrementAndGet();
         active = false;
         stopSpeedUpdates();
@@ -438,6 +449,7 @@ public final class OpenFluxVpnService extends VpnService {
         running = false;
         status = "Остановлено";
         lastError = "";
+        connectedAtMillis = 0L;
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
@@ -450,6 +462,7 @@ public final class OpenFluxVpnService extends VpnService {
         Mobile.stop();
         running = false;
         if (!"Ошибка".equals(status)) status = "Остановлено";
+        connectedAtMillis = 0L;
         workers.shutdownNow();
         super.onDestroy();
     }

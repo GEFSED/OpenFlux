@@ -32,9 +32,13 @@ func appendLog(message string) {
 	}
 }
 
-// Start connects the packet transport. It returns an empty string on success
-// and a user-readable error on failure.
-func Start(documentURL, encryptionSecret string) string {
+// Start connects the packet transport. transportType is "yandex" (default
+// when empty) or "vyandex"; documentURL is required for both. It returns an
+// empty string on success and a user-readable error on failure.
+func Start(transportType, documentURL, encryptionSecret string) string {
+	if transportType == "" {
+		transportType = "yandex"
+	}
 	if documentURL == "" {
 		return "Ссылка на документ не указана"
 	}
@@ -54,10 +58,15 @@ func Start(documentURL, encryptionSecret string) string {
 
 	utils.EnableDebug()
 	utils.SetLogSink(appendLog)
-	appendLog("[ANDROID] Запуск транспорта Yandex Docs")
+	appendLog(fmt.Sprintf("[ANDROID] Запуск транспорта %s", transportType))
 
 	config := transport.DefaultConfig()
-	var inner transport.Transport = yandex.NewYandexDocsTransport(documentURL, config)
+	var inner transport.Transport
+	if transportType == "vyandex" {
+		inner = yandex.NewYandexVolgaTransport(documentURL, config)
+	} else {
+		inner = yandex.NewYandexDocsTransport(documentURL, config)
+	}
 	if encryptionSecret != "" {
 		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, documentURL, false)
 		if err != nil {
@@ -87,7 +96,7 @@ func Start(documentURL, encryptionSecret string) string {
 	})
 
 	if err := trans.Start(); err != nil {
-		appendLog(fmt.Sprintf("[ANDROID] Ошибка запуска: %v", err))
+		appendLog(fmt.Sprintf("[ERROR] Ошибка запуска: %v", err))
 		client.mu.Lock()
 		client.running = false
 		client.mu.Unlock()

@@ -34,7 +34,10 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.text.InputType;
+import android.text.Spannable;
+import android.text.SpannableStringBuilder;
 import android.text.method.PasswordTransformationMethod;
+import android.text.style.ForegroundColorSpan;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
@@ -47,10 +50,12 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.PopupWindow;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
@@ -76,6 +81,8 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.WeakHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.WriterException;
@@ -89,19 +96,28 @@ import android.util.Base64;
 import io.openflux.bridge.mobile.Mobile;
 
 public final class MainActivity extends Activity {
+    // Named explicitly (instead of the implicit per-Activity-class file from
+    // getPreferences()) so OpenFluxTileService can read the connection mode
+    // and network settings without depending on Activity.getPreferences()'s
+    // undocumented file-naming behavior.
+    static final String SETTINGS_PREFS_NAME = "openflux_settings";
     private static final int VPN_PERMISSION_REQUEST = 42;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 43;
     private static final String DEFAULT_DNS = "1.1.1.1";
     private static final int DEFAULT_MTU = 1400;
     private static final int PAGE_HOME = 0;
-    private static final int PAGE_LOGS = 1;
-    private static final int PAGE_SETTINGS = 2;
-    private static final int SETTINGS_TRANSPORT = 0;
+    private static final int PAGE_PROFILES = 1;
+    private static final int PAGE_LOGS = 2;
+    private static final int PAGE_SETTINGS = 3;
+    private static final int SETTINGS_MODE = 0;
     private static final int SETTINGS_NETWORK = 1;
     private static final int SETTINGS_APPS = 2;
     private static final int SETTINGS_INTERFACE = 3;
     private static final int SETTINGS_ABOUT = 4;
-    private static final int SETTINGS_MODE = 5;
+    private static final String[] PROFILE_ICON_KEYS = {
+            "ic_public", "ic_link", "ic_lock", "ic_key", "ic_power",
+            "ic_person", "ic_swap", "ic_terminal", "ic_apps", "ic_settings",
+    };
     private static final String MODE_VPN = "vpn";
     private static final String MODE_PROXY = "proxy";
     private static final int DEFAULT_PROXY_PORT = 1080;
@@ -116,8 +132,9 @@ public final class MainActivity extends Activity {
     private boolean darkMode;
     private boolean urlVisible;
     private boolean autoScroll = true;
+    private boolean showSensitiveLogs = true;
     private int currentPage = PAGE_HOME;
-    private int settingsSubTab = SETTINGS_TRANSPORT;
+    private int settingsSubTab = SETTINGS_MODE;
     private boolean settingsDetailOpen;
     private int background;
     private int surface;
@@ -149,6 +166,17 @@ public final class MainActivity extends Activity {
     private TextView vpnButtonText;
     private String documentUrl;
     private String encryptionSecret;
+    private String transportType = "yandex";
+    private ProfileStore profileStore;
+    private List<Profile> profiles = new ArrayList<>();
+    private long selectedProfileId = -1;
+    private boolean profileEditorOpen;
+    private Long editingProfileId;
+    private String editorIcon = "ic_public";
+    private String editorTransportType = "yandex";
+    private EditText profileNameInput;
+    private PopupWindow profileDropdown;
+    private TextView uptimeView;
     private String dnsServer;
     private int mtu;
     private String connectionMode = MODE_VPN;
@@ -190,13 +218,18 @@ public final class MainActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         vibrator = getSystemService(Vibrator.class);
-        SharedPreferences prefs = getPreferences(MODE_PRIVATE);
+        SharedPreferences prefs = getSharedPreferences(SETTINGS_PREFS_NAME, MODE_PRIVATE);
         secureSettings = new SecureSettings(this);
         // Older prototype builds used plain preferences. Remove those values:
         // connection credentials now live only in the Keystore-backed store.
         prefs.edit().remove("document_url").remove("connection_document_url").apply();
         documentUrl = secureSettings.getString("document_url", "");
         encryptionSecret = secureSettings.getString("encryption_secret", "");
+        profileStore = new ProfileStore(secureSettings);
+        profiles = profileStore.load();
+        selectedProfileId = profileStore.getSelectedId();
+        migrateLegacyProfileIfNeeded();
+        applySelectedProfileToFields();
         dnsServer = prefs.getString("dns_server", DEFAULT_DNS);
         mtu = prefs.getInt("mtu", DEFAULT_MTU);
         connectionMode = MODE_PROXY.equals(prefs.getString("connection_mode", MODE_VPN)) ? MODE_PROXY : MODE_VPN;
@@ -206,6 +239,7 @@ public final class MainActivity extends Activity {
         proxyUsername = prefs.getString("proxy_username", "");
         proxyPassword = secureSettings.getString("proxy_password", "");
         autoScroll = prefs.getBoolean("auto_scroll", true);
+        showSensitiveLogs = prefs.getBoolean("show_sensitive_logs", true);
         darkMode = prefs.contains("dark_mode")
                 ? prefs.getBoolean("dark_mode", isSystemDark())
                 : isSystemDark();
@@ -243,6 +277,10 @@ public final class MainActivity extends Activity {
     @Override public void onBackPressed() {
         if (currentPage == PAGE_SETTINGS && settingsDetailOpen) {
             closeSettingsDetail();
+            return;
+        }
+        if (currentPage == PAGE_PROFILES && profileEditorOpen) {
+            closeProfileEditor();
             return;
         }
         super.onBackPressed();
@@ -456,6 +494,7 @@ public final class MainActivity extends Activity {
         nav.setPadding(dp(4), dp(5), dp(4), dp(3));
         nav.setBackground(rounded(surface, border, 1, 16));
         nav.addView(navItem(R.drawable.ic_home, "Главная", PAGE_HOME), weighted());
+        nav.addView(navItem(R.drawable.ic_public, "Профили", PAGE_PROFILES), weighted());
         nav.addView(navItem(R.drawable.ic_terminal, "Логи", PAGE_LOGS), weighted());
         nav.addView(navItem(R.drawable.ic_settings, "Настройки", PAGE_SETTINGS), weighted());
         return nav;
@@ -482,7 +521,8 @@ public final class MainActivity extends Activity {
         titleParams.topMargin = dp(2);
         item.addView(title, titleParams);
         item.setOnClickListener(v -> {
-            if (page != currentPage) tap(v);
+            if (page == currentPage) return;
+            tap(v);
             showPage(page);
         });
         return item;
@@ -491,8 +531,10 @@ public final class MainActivity extends Activity {
     private void showPage(int page) {
         captureSettings();
         if (page != PAGE_SETTINGS) settingsDetailOpen = false;
+        if (page != PAGE_PROFILES) profileEditorOpen = false;
         currentPage = page;
         View pageView = page == PAGE_HOME ? buildHomePage()
+                : page == PAGE_PROFILES ? buildProfilesPage()
                 : page == PAGE_LOGS ? buildLogsPage() : buildSettingsPage();
         crossfadeContent(pageView);
         LinearLayout oldNav = (LinearLayout) root.getChildAt(root.getChildCount() - 1);
@@ -533,6 +575,215 @@ public final class MainActivity extends Activity {
         showPage(PAGE_SETTINGS);
     }
 
+    // migrateLegacyProfileIfNeeded turns a pre-0.6.0 install's single global
+    // document URL / secret into the first profile, so an existing user's
+    // connection keeps working without having to re-enter anything.
+    private void migrateLegacyProfileIfNeeded() {
+        if (!profiles.isEmpty()) return;
+        if (!isValidDocumentUrl(documentUrl)) return;
+        Profile migrated = new Profile();
+        migrated.id = System.currentTimeMillis();
+        migrated.name = "Профиль 1";
+        migrated.icon = "ic_public";
+        migrated.transportType = "yandex";
+        migrated.documentUrl = documentUrl;
+        migrated.encryptionSecret = encryptionSecret;
+        profiles.add(migrated);
+        selectedProfileId = migrated.id;
+        profileStore.save(profiles);
+        profileStore.setSelectedId(selectedProfileId);
+    }
+
+    private Profile selectedProfile() {
+        for (Profile p : profiles) if (p.id == selectedProfileId) return p;
+        return null;
+    }
+
+    // applySelectedProfileToFields refreshes the plain documentUrl/
+    // encryptionSecret/transportType fields that toggleConnection/startVpn/
+    // startProxy already read, from whichever profile is currently selected.
+    private void applySelectedProfileToFields() {
+        Profile p = selectedProfile();
+        if (p != null) {
+            documentUrl = p.documentUrl;
+            encryptionSecret = p.encryptionSecret;
+            transportType = p.transportType;
+        } else {
+            documentUrl = "";
+            encryptionSecret = "";
+            transportType = "yandex";
+        }
+    }
+
+    private int profileIconRes(String key) {
+        if (key == null) return R.drawable.ic_public;
+        switch (key) {
+            case "ic_link": return R.drawable.ic_link;
+            case "ic_lock": return R.drawable.ic_lock;
+            case "ic_key": return R.drawable.ic_key;
+            case "ic_power": return R.drawable.ic_power;
+            case "ic_person": return R.drawable.ic_person;
+            case "ic_swap": return R.drawable.ic_swap;
+            case "ic_terminal": return R.drawable.ic_terminal;
+            case "ic_apps": return R.drawable.ic_apps;
+            case "ic_settings": return R.drawable.ic_settings;
+            case "ic_public":
+            default: return R.drawable.ic_public;
+        }
+    }
+
+    private String transportLabel(String type) {
+        return "vyandex".equals(type) ? "Yandex Docs (Volga)" : "Yandex Docs";
+    }
+
+    private void selectProfile(long id) {
+        selectedProfileId = id;
+        profileStore.setSelectedId(id);
+        applySelectedProfileToFields();
+        showPage(PAGE_HOME);
+    }
+
+    private void openProfileEditor(Profile existing) {
+        editingProfileId = existing != null ? existing.id : null;
+        editorIcon = existing != null ? existing.icon : "ic_public";
+        editorTransportType = existing != null ? existing.transportType : "yandex";
+        profileEditorOpen = true;
+        showPage(PAGE_PROFILES);
+    }
+
+    private void closeProfileEditor() {
+        profileEditorOpen = false;
+        showPage(PAGE_PROFILES);
+    }
+
+    private void saveProfileFromEditor(String name, String docUrl, String secret) {
+        if (name.isEmpty()) {
+            Toast.makeText(this, "Укажите название профиля", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!isValidDocumentUrl(docUrl)) {
+            Toast.makeText(this, "Укажите корректную HTTPS-ссылку на документ", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!secret.isEmpty() && secret.length() < 16) {
+            Toast.makeText(this, "Ключ шифрования должен быть не короче 16 символов, либо оставьте поле пустым",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        Profile target = null;
+        if (editingProfileId != null) {
+            for (Profile p : profiles) if (p.id == editingProfileId) { target = p; break; }
+        }
+        boolean isNew = target == null;
+        if (isNew) {
+            target = new Profile();
+            target.id = System.currentTimeMillis();
+            profiles.add(target);
+        }
+        target.name = name;
+        target.icon = editorIcon;
+        target.transportType = editorTransportType;
+        target.documentUrl = docUrl;
+        target.encryptionSecret = secret;
+        profileStore.save(profiles);
+        if (isNew && selectedProfile() == null) selectProfile(target.id);
+        if (target.id == selectedProfileId) applySelectedProfileToFields();
+        Toast.makeText(this, "Профиль сохранён", Toast.LENGTH_SHORT).show();
+        closeProfileEditor();
+    }
+
+    private void deleteProfile(Profile profile) {
+        if (isConnectionRunning() && profile.id == selectedProfileId) {
+            Toast.makeText(this, "Нельзя удалить активный профиль во время подключения", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Удалить профиль?")
+                .setMessage("«" + profile.name + "» будет удалён без возможности восстановления.")
+                .setNegativeButton("Отмена", null)
+                .setPositiveButton("Удалить", (dialog, which) -> {
+                    profiles.remove(profile);
+                    profileStore.save(profiles);
+                    if (profile.id == selectedProfileId) {
+                        selectedProfileId = profiles.isEmpty() ? -1 : profiles.get(0).id;
+                        profileStore.setSelectedId(selectedProfileId);
+                        applySelectedProfileToFields();
+                    }
+                    Toast.makeText(this, "Профиль удалён", Toast.LENGTH_SHORT).show();
+                    profileEditorOpen = false;
+                    showPage(PAGE_PROFILES);
+                })
+                .show();
+    }
+
+    private void showProfileDropdown(View anchor) {
+        if (profiles.isEmpty()) {
+            showPage(PAGE_PROFILES);
+            return;
+        }
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setBackground(rounded(surface, border, 1, 12));
+        content.setPadding(dp(4), dp(4), dp(4), dp(4));
+        for (Profile p : profiles) {
+            boolean selected = p.id == selectedProfileId;
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(12), dp(10), dp(12), dp(10));
+            row.setBackground(ripple(Color.TRANSPARENT, 8));
+            row.setClickable(true);
+            row.addView(icon(profileIconRes(p.icon), selected ? accent : secondary),
+                    new LinearLayout.LayoutParams(dp(22), dp(22)));
+            TextView nameView = text(p.name, 14, text, selected);
+            LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(0, -2, 1f);
+            nameParams.leftMargin = dp(12);
+            nameParams.rightMargin = dp(8);
+            row.addView(nameView, nameParams);
+            if (selected) row.addView(icon(R.drawable.ic_check, accent), new LinearLayout.LayoutParams(dp(18), dp(18)));
+            row.setOnClickListener(v -> {
+                tap(v);
+                selectProfile(p.id);
+                if (profileDropdown != null) profileDropdown.dismiss();
+            });
+            content.addView(row);
+        }
+        PopupWindow popup = new PopupWindow(content, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        popup.setElevation(dp(8));
+        popup.setOutsideTouchable(true);
+        popup.setFocusable(true);
+        profileDropdown = popup;
+        popup.setOnDismissListener(() -> profileDropdown = null);
+        popup.showAsDropDown(anchor, 0, dp(4));
+    }
+
+    private View buildProfileSelectorRow() {
+        Profile p = selectedProfile();
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(16), dp(14), dp(16), dp(14));
+        row.setBackground(rounded(surface, border, 1, 11));
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.addView(icon(p != null ? profileIconRes(p.icon) : R.drawable.ic_public, accent),
+                new LinearLayout.LayoutParams(dp(26), dp(26)));
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        copyParams.leftMargin = dp(14);
+        copy.addView(text(p != null ? p.name : "Профиль не выбран", 15, text, true));
+        copy.addView(text(p != null ? transportLabel(p.transportType) : "Нажмите, чтобы создать профиль",
+                12, secondary, false));
+        row.addView(copy, copyParams);
+        row.addView(icon(R.drawable.ic_chevron_right, hint), new LinearLayout.LayoutParams(dp(20), dp(20)));
+        row.setOnClickListener(v -> {
+            bounce(v);
+            if (profiles.isEmpty()) showPage(PAGE_PROFILES);
+            else showProfileDropdown(v);
+        });
+        return row;
+    }
+
     private View buildHomePage() {
         if (dotPulse != null) {
             dotPulse.cancel();
@@ -551,27 +802,6 @@ public final class MainActivity extends Activity {
         introParams.topMargin = dp(4);
         page.addView(intro, introParams);
 
-        boolean documentConfigured = isValidDocumentUrl(documentUrl);
-        boolean encryptionConfigured = encryptionSecret != null && encryptionSecret.length() >= 16;
-        boolean encryptionTooShort = encryptionSecret != null && !encryptionSecret.isEmpty()
-                && encryptionSecret.length() < 16;
-        String transportTitle = documentConfigured ? "Yandex Docs" : "Документ не указан";
-        String transportDetail = !documentConfigured
-                ? "Укажите HTTPS-ссылку во вкладке «Настройки»"
-                : encryptionTooShort
-                ? "Ключ шифрования короче 16 символов"
-                : encryptionConfigured
-                ? "Документ и сквозное шифрование настроены"
-                : "Документ настроен, шифрование отключено";
-        LinearLayout transport = cardRow(R.drawable.ic_link, transportTitle, transportDetail);
-        transport.setClickable(true);
-        transport.setFocusable(true);
-        transport.setOnClickListener(v -> openSettingsDetail(SETTINGS_TRANSPORT));
-        LinearLayout.LayoutParams transportParams = matchWrap();
-        transportParams.topMargin = dp(28);
-        page.addView(transport, transportParams);
-        staggerIn(transport, 30);
-
         LinearLayout status = new LinearLayout(this);
         status.setOrientation(LinearLayout.HORIZONTAL);
         status.setGravity(Gravity.CENTER_VERTICAL);
@@ -589,10 +819,18 @@ public final class MainActivity extends Activity {
         statusCopy.addView(statusView);
         statusCopy.addView(statusDetail);
         status.addView(statusCopy, new LinearLayout.LayoutParams(0, -2, 1f));
+        uptimeView = text("", 13, secondary, true);
+        status.addView(uptimeView, new LinearLayout.LayoutParams(-2, -2));
         LinearLayout.LayoutParams statusParams = matchWrap();
-        statusParams.topMargin = dp(14);
+        statusParams.topMargin = dp(28);
         page.addView(status, statusParams);
-        staggerIn(status, 80);
+        staggerIn(status, 30);
+
+        LinearLayout.LayoutParams selectorParams = matchWrap();
+        selectorParams.topMargin = dp(14);
+        View profileSelector = buildProfileSelectorRow();
+        page.addView(profileSelector, selectorParams);
+        staggerIn(profileSelector, 80);
 
         vpnButton = new LinearLayout(this);
         vpnButton.setOrientation(LinearLayout.HORIZONTAL);
@@ -707,7 +945,7 @@ public final class MainActivity extends Activity {
         noteParams.topMargin = dp(4);
         page.addView(note, noteParams);
 
-        logView = text(logs, 12, logColor, false);
+        logView = text(colorizeLogs(logs), 12, logColor, false);
         logView.setTypeface(Typeface.MONOSPACE);
         logView.setTextIsSelectable(true);
         logView.setPadding(dp(14), dp(12), dp(14), dp(12));
@@ -797,9 +1035,8 @@ public final class MainActivity extends Activity {
             case SETTINGS_APPS: return "Приложения";
             case SETTINGS_INTERFACE: return "Вид";
             case SETTINGS_ABOUT: return "О проекте";
-            case SETTINGS_MODE: return "Режим работы";
-            case SETTINGS_TRANSPORT:
-            default: return "Транспорт";
+            case SETTINGS_MODE:
+            default: return "Режим работы";
         }
     }
 
@@ -811,9 +1048,6 @@ public final class MainActivity extends Activity {
         list.setBackground(rounded(surface, border, 1, 12));
         list.addView(settingsListRow(R.drawable.ic_swap, "Режим работы",
                 MODE_PROXY.equals(connectionMode) ? "Прокси (SOCKS5)" : "VPN (весь трафик)", SETTINGS_MODE));
-        addDivider(list);
-        list.addView(settingsListRow(R.drawable.ic_link, "Транспорт",
-                "Ссылка на документ и шифрование", SETTINGS_TRANSPORT));
         addDivider(list);
         list.addView(settingsListRow(R.drawable.ic_public, "Сеть",
                 "DNS-сервер и MTU", SETTINGS_NETWORK));
@@ -876,10 +1110,8 @@ public final class MainActivity extends Activity {
             case SETTINGS_ABOUT:
                 return wrapScroll(buildAboutSettings());
             case SETTINGS_MODE:
-                return wrapScroll(buildModeSettings());
-            case SETTINGS_TRANSPORT:
             default:
-                return wrapScroll(buildTransportSettings());
+                return wrapScroll(buildModeSettings());
         }
     }
 
@@ -1257,13 +1489,143 @@ public final class MainActivity extends Activity {
         return scroll;
     }
 
-    private View buildTransportSettings() {
+    private View buildProfilesPage() {
+        LinearLayout page = page();
+        if (profileEditorOpen) {
+            page.addView(buildProfileEditorHeader());
+            LinearLayout.LayoutParams editorParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+            editorParams.topMargin = dp(16);
+            page.addView(wrapScroll(buildProfileEditor()), editorParams);
+            return page;
+        }
+
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout titles = new LinearLayout(this);
+        titles.setOrientation(LinearLayout.VERTICAL);
+        titles.addView(text("Профили", 25, text, true));
+        titles.addView(text("Наборы параметров для разных серверов", 12, secondary, false), matchWrap());
+        header.addView(titles, new LinearLayout.LayoutParams(0, -2, 1f));
+        ImageButton addButton = iconButton(R.drawable.ic_add, "Добавить профиль");
+        addButton.setOnClickListener(v -> {
+            tap(v);
+            openProfileEditor(null);
+        });
+        header.addView(addButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        page.addView(header);
+
+        if (profiles.isEmpty()) {
+            TextView empty = text("Пока нет ни одного профиля. Нажмите + и добавьте первый.", 13, secondary, false);
+            LinearLayout.LayoutParams emptyParams = matchWrap();
+            emptyParams.topMargin = dp(24);
+            page.addView(empty, emptyParams);
+            return wrapScroll(page);
+        }
+
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setBackground(rounded(surface, border, 1, 12));
+        for (int i = 0; i < profiles.size(); i++) {
+            list.addView(buildProfileListRow(profiles.get(i)));
+            if (i < profiles.size() - 1) addDivider(list, 0);
+        }
+        LinearLayout.LayoutParams listParams = matchWrap();
+        listParams.topMargin = dp(20);
+        page.addView(list, listParams);
+        return wrapScroll(page);
+    }
+
+    private View buildProfileListRow(Profile p) {
+        boolean selected = p.id == selectedProfileId;
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(16), dp(10), dp(6), dp(10));
+        row.setBackground(ripple(Color.TRANSPARENT, 0));
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.addView(icon(profileIconRes(p.icon), selected ? accent : secondary),
+                new LinearLayout.LayoutParams(dp(24), dp(24)));
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        copyParams.leftMargin = dp(16);
+        copy.addView(text(p.name, 15, text, selected));
+        copy.addView(text(transportLabel(p.transportType) + (selected ? " · активен" : ""), 12, secondary, false));
+        row.addView(copy, copyParams);
+        ImageButton editButton = iconButton(R.drawable.ic_settings, "Изменить профиль «" + p.name + "»");
+        editButton.setOnClickListener(v -> {
+            tap(v);
+            openProfileEditor(p);
+        });
+        row.addView(editButton, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        ImageButton deleteButton = iconButton(R.drawable.ic_delete, "Удалить профиль «" + p.name + "»");
+        deleteButton.setOnClickListener(v -> {
+            tap(v);
+            deleteProfile(p);
+        });
+        row.addView(deleteButton, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        row.setOnClickListener(v -> {
+            bounce(v);
+            selectProfile(p.id);
+        });
+        return row;
+    }
+
+    private View buildProfileEditorHeader() {
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        ImageButton back = iconButton(R.drawable.ic_arrow_back, "Назад к профилям");
+        back.setOnClickListener(v -> {
+            bounce(v);
+            closeProfileEditor();
+        });
+        LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(dp(44), dp(44));
+        backParams.rightMargin = dp(6);
+        header.addView(back, backParams);
+        header.addView(text(editingProfileId != null ? "Изменить профиль" : "Новый профиль", 22, text, true),
+                new LinearLayout.LayoutParams(0, -2, 1f));
+        return header;
+    }
+
+    private View buildProfileEditor() {
+        Profile existing = null;
+        if (editingProfileId != null) {
+            for (Profile p : profiles) if (p.id == editingProfileId) { existing = p; break; }
+        }
+        String initialUrl = existing != null ? existing.documentUrl : "";
+        String initialSecret = existing != null ? existing.encryptionSecret : "";
+
         LinearLayout section = page();
-        section.addView(buildUrlField(), new LinearLayout.LayoutParams(-1, dp(56)));
+
+        FrameLayout nameField = new FrameLayout(this);
+        nameField.setBackground(rounded(surface, border, 1, 10));
+        profileNameInput = settingInput("Название профиля", existing != null ? existing.name : "",
+                InputType.TYPE_CLASS_TEXT);
+        profileNameInput.setPadding(dp(16), 0, dp(16), 0);
+        nameField.addView(profileNameInput, new FrameLayout.LayoutParams(-1, -1));
+        section.addView(nameField, new LinearLayout.LayoutParams(-1, dp(56)));
+
+        TextView iconLabel = label("ЗНАЧОК");
+        LinearLayout.LayoutParams iconLabelParams = matchWrap();
+        iconLabelParams.topMargin = dp(18);
+        iconLabelParams.bottomMargin = dp(8);
+        section.addView(iconLabel, iconLabelParams);
+        section.addView(buildIconPicker(), matchWrap());
+
+        TextView transportTypeLabel = label("ТРАНСПОРТ");
+        LinearLayout.LayoutParams transportTypeLabelParams = matchWrap();
+        transportTypeLabelParams.topMargin = dp(18);
+        transportTypeLabelParams.bottomMargin = dp(8);
+        section.addView(transportTypeLabel, transportTypeLabelParams);
+        section.addView(buildTransportTypeSelector(), matchWrap());
+
+        LinearLayout.LayoutParams urlParams = new LinearLayout.LayoutParams(-1, dp(56));
+        urlParams.topMargin = dp(18);
+        section.addView(buildUrlField(initialUrl), urlParams);
 
         LinearLayout.LayoutParams encryptionParams = new LinearLayout.LayoutParams(-1, dp(56));
         encryptionParams.topMargin = dp(8);
-        section.addView(buildEncryptionField(), encryptionParams);
+        section.addView(buildEncryptionField(initialSecret), encryptionParams);
         TextView encryptionHint = text(
                 "Необязательно: оставьте пустым, чтобы подключаться без сквозного шифрования "
                         + "(например, к обычному exit-node апстрима). Если заполняете - нужен "
@@ -1288,7 +1650,99 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams generateParams = new LinearLayout.LayoutParams(-1, dp(44));
         generateParams.topMargin = dp(4);
         section.addView(generateKey, generateParams);
+
+        Button save = new Button(this);
+        save.setText("Сохранить профиль");
+        save.setAllCaps(false);
+        save.setTextColor(Color.WHITE);
+        save.setTextSize(15);
+        save.setTypeface(Typeface.DEFAULT_BOLD);
+        save.setStateListAnimator(null);
+        save.setBackground(buttonBackground(Color.rgb(26, 115, 232), Color.rgb(23, 78, 166)));
+        save.setOnClickListener(v -> {
+            bounce(v);
+            String name = profileNameInput.getText().toString().trim();
+            String url = urlInput.getText().toString().trim();
+            String secret = encryptionInput.getText().toString().trim();
+            saveProfileFromEditor(name, url, secret);
+        });
+        LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(-1, dp(52));
+        saveParams.topMargin = dp(22);
+        section.addView(save, saveParams);
+
+        if (existing != null) {
+            Profile toDelete = existing;
+            Button delete = new Button(this);
+            delete.setText("Удалить профиль");
+            delete.setAllCaps(false);
+            delete.setTextColor(darkMode ? Color.rgb(242, 139, 130) : Color.rgb(217, 48, 37));
+            delete.setTextSize(14);
+            delete.setStateListAnimator(null);
+            delete.setBackground(ripple(Color.TRANSPARENT, 9));
+            delete.setOnClickListener(v -> {
+                tap(v);
+                deleteProfile(toDelete);
+            });
+            LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(-1, dp(44));
+            deleteParams.topMargin = dp(6);
+            deleteParams.bottomMargin = dp(12);
+            section.addView(delete, deleteParams);
+        }
         return section;
+    }
+
+    private View buildIconPicker() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        View[] cells = new View[PROFILE_ICON_KEYS.length];
+        ImageView[] iconViews = new ImageView[PROFILE_ICON_KEYS.length];
+        for (int i = 0; i < PROFILE_ICON_KEYS.length; i++) {
+            FrameLayout cell = new FrameLayout(this);
+            ImageView iconView = icon(profileIconRes(PROFILE_ICON_KEYS[i]), secondary);
+            cells[i] = cell;
+            iconViews[i] = iconView;
+            cell.addView(iconView, new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER));
+            cell.setClickable(true);
+            LinearLayout.LayoutParams cellParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+            cellParams.rightMargin = dp(8);
+            row.addView(cell, cellParams);
+        }
+        Runnable refreshCells = () -> {
+            for (int i = 0; i < PROFILE_ICON_KEYS.length; i++) {
+                boolean selected = PROFILE_ICON_KEYS[i].equals(editorIcon);
+                cells[i].setBackground(rounded(selected ? accent : surface, border, 1, 10));
+                iconViews[i].setImageTintList(ColorStateList.valueOf(selected ? Color.WHITE : secondary));
+            }
+        };
+        refreshCells.run();
+        for (int i = 0; i < PROFILE_ICON_KEYS.length; i++) {
+            String key = PROFILE_ICON_KEYS[i];
+            cells[i].setOnClickListener(v -> {
+                tap(v);
+                editorIcon = key;
+                refreshCells.run();
+            });
+        }
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.addView(row, new HorizontalScrollView.LayoutParams(-2, -2));
+        return scroll;
+    }
+
+    private View buildTransportTypeSelector() {
+        RadioGroup group = new RadioGroup(this);
+        group.setOrientation(LinearLayout.VERTICAL);
+        RadioButton yandexButton = modeRadio("Yandex Docs");
+        RadioButton vyandexButton = modeRadio("Yandex Docs (Volga, экспериментальный)");
+        group.addView(yandexButton);
+        group.addView(vyandexButton);
+        if ("vyandex".equals(editorTransportType)) vyandexButton.setChecked(true);
+        else yandexButton.setChecked(true);
+        group.setOnCheckedChangeListener((g, checkedId) -> {
+            tap(g);
+            editorTransportType = checkedId == vyandexButton.getId() ? "vyandex" : "yandex";
+        });
+        return group;
     }
 
     private View buildNetworkSettings() {
@@ -1335,11 +1789,24 @@ public final class MainActivity extends Activity {
         scrollSwitch.setOnCheckedChangeListener((button, checked) -> {
             tap(button);
             autoScroll = checked;
-            getPreferences(MODE_PRIVATE).edit().putBoolean("auto_scroll", checked).apply();
+            getSharedPreferences(SETTINGS_PREFS_NAME, MODE_PRIVATE).edit().putBoolean("auto_scroll", checked).apply();
         });
         LinearLayout.LayoutParams scrollSettingParams = matchWrap();
         scrollSettingParams.topMargin = dp(8);
         section.addView((View) scrollSwitch.getTag(), scrollSettingParams);
+
+        Switch showSensitiveSwitch = settingSwitch(R.drawable.ic_lock, "Данные в логах",
+                "Показывать ссылки, IP и WSS адреса. При выключении скрываются под HIDDEN-URL",
+                showSensitiveLogs);
+        showSensitiveSwitch.setOnCheckedChangeListener((button, checked) -> {
+            tap(button);
+            showSensitiveLogs = checked;
+            getSharedPreferences(SETTINGS_PREFS_NAME, MODE_PRIVATE).edit()
+                    .putBoolean("show_sensitive_logs", checked).apply();
+        });
+        LinearLayout.LayoutParams showSensitiveParams = matchWrap();
+        showSensitiveParams.topMargin = dp(8);
+        section.addView((View) showSensitiveSwitch.getTag(), showSensitiveParams);
         return section;
     }
 
@@ -1533,10 +2000,10 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private View buildUrlField() {
+    private View buildUrlField(String initialValue) {
         FrameLayout field = new FrameLayout(this);
         field.setBackground(rounded(surface, border, 1, 10));
-        urlInput = settingInput("HTTPS-ссылка на документ", documentUrl,
+        urlInput = settingInput("HTTPS-ссылка на документ", initialValue,
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         urlInput.setTransformationMethod(urlVisible ? null : PasswordTransformationMethod.getInstance());
         urlInput.setPadding(dp(16), 0, dp(56), 0);
@@ -1553,10 +2020,10 @@ public final class MainActivity extends Activity {
         return field;
     }
 
-    private View buildEncryptionField() {
+    private View buildEncryptionField(String initialValue) {
         FrameLayout field = new FrameLayout(this);
         field.setBackground(rounded(surface, border, 1, 10));
-        encryptionInput = settingInput("Ключ сквозного шифрования (необязательно)", encryptionSecret,
+        encryptionInput = settingInput("Ключ сквозного шифрования (необязательно)", initialValue,
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         encryptionInput.setTransformationMethod(encryptionVisible ? null : PasswordTransformationMethod.getInstance());
         encryptionInput.setPadding(dp(16), 0, dp(56), 0);
@@ -1648,7 +2115,7 @@ public final class MainActivity extends Activity {
         oldRoot.animate().cancel();
         oldRoot.animate().alpha(0.15f).setDuration(110).withEndAction(() -> {
             darkMode = checked;
-            getPreferences(MODE_PRIVATE).edit().putBoolean("dark_mode", darkMode).apply();
+            getSharedPreferences(SETTINGS_PREFS_NAME, MODE_PRIVATE).edit().putBoolean("dark_mode", darkMode).apply();
             applyPalette();
             configureSystemBars();
             buildShell();
@@ -1682,13 +2149,12 @@ public final class MainActivity extends Activity {
     private void generateEncryptionSecret() {
         byte[] random = new byte[32];
         new SecureRandom().nextBytes(random);
-        encryptionSecret = Base64.encodeToString(
+        String generated = Base64.encodeToString(
                 random, Base64.NO_WRAP | Base64.NO_PADDING | Base64.URL_SAFE);
         if (encryptionInput != null) {
-            encryptionInput.setText(encryptionSecret);
+            encryptionInput.setText(generated);
             encryptionInput.setSelection(encryptionInput.length());
         }
-        persistSettings();
         Toast.makeText(this, "Создан ключ на 256 бит. Передайте его на VDS.", Toast.LENGTH_LONG).show();
     }
 
@@ -1697,6 +2163,7 @@ public final class MainActivity extends Activity {
         persistSettings();
         urlInput = null;
         encryptionInput = null;
+        profileNameInput = null;
         dnsInput = null;
         mtuInput = null;
         proxyPortInput = null;
@@ -1707,8 +2174,6 @@ public final class MainActivity extends Activity {
     }
 
     private void readSettingsFromViews() {
-        if (urlInput != null) documentUrl = urlInput.getText().toString().trim();
-        if (encryptionInput != null) encryptionSecret = encryptionInput.getText().toString().trim();
         if (dnsInput != null) dnsServer = dnsInput.getText().toString().trim();
         if (mtuInput != null) {
             try { mtu = Integer.parseInt(mtuInput.getText().toString()); }
@@ -1730,7 +2195,7 @@ public final class MainActivity extends Activity {
         secureSettings.putString("document_url", documentUrl);
         secureSettings.putString("encryption_secret", encryptionSecret);
         secureSettings.putString("proxy_password", proxyPassword);
-        getPreferences(MODE_PRIVATE).edit()
+        getSharedPreferences(SETTINGS_PREFS_NAME, MODE_PRIVATE).edit()
                 .remove("connection_document_url")
                 .putString("dns_server", dnsServer)
                 .putInt("mtu", mtu)
@@ -1741,6 +2206,7 @@ public final class MainActivity extends Activity {
                 .putString("proxy_username", proxyUsername)
                 .putBoolean("auto_scroll", autoScroll)
                 .putBoolean("dark_mode", darkMode)
+                .putBoolean("show_sensitive_logs", showSensitiveLogs)
                 .commit();
     }
 
@@ -1770,13 +2236,13 @@ public final class MainActivity extends Activity {
             return;
         }
         if (!isValidDocumentUrl(documentUrl)) {
-            Toast.makeText(this, "Укажите корректную HTTPS-ссылку в настройках", Toast.LENGTH_LONG).show();
-            openSettingsDetail(SETTINGS_TRANSPORT);
+            Toast.makeText(this, "Выберите или создайте профиль с корректной HTTPS-ссылкой", Toast.LENGTH_LONG).show();
+            showPage(PAGE_PROFILES);
             return;
         }
         if (encryptionSecret != null && !encryptionSecret.isEmpty() && encryptionSecret.length() < 16) {
-            Toast.makeText(this, "Ключ шифрования должен быть не короче 16 символов, либо оставьте поле пустым", Toast.LENGTH_LONG).show();
-            openSettingsDetail(SETTINGS_TRANSPORT);
+            Toast.makeText(this, "Ключ шифрования профиля должен быть не короче 16 символов, либо пустым", Toast.LENGTH_LONG).show();
+            showPage(PAGE_PROFILES);
             return;
         }
         if (isProxyMode() && proxyLanAccess && proxyAuthEnabled
@@ -1798,7 +2264,7 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == VPN_PERMISSION_REQUEST && resultCode == RESULT_OK) startVpn();
-        else if (requestCode == VPN_PERMISSION_REQUEST) appendLog("Разрешение на создание VPN не выдано");
+        else if (requestCode == VPN_PERMISSION_REQUEST) appendLog("[ERROR] Разрешение на создание VPN не выдано");
     }
 
     private void startVpn() {
@@ -1806,6 +2272,7 @@ public final class MainActivity extends Activity {
         intent.setAction(OpenFluxVpnService.ACTION_START);
         intent.putExtra(OpenFluxVpnService.EXTRA_DOCUMENT_URL, documentUrl);
         intent.putExtra(OpenFluxVpnService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
+        intent.putExtra(OpenFluxVpnService.EXTRA_TRANSPORT_TYPE, transportType);
         intent.putExtra(OpenFluxVpnService.EXTRA_DNS_SERVER, dnsServer);
         intent.putExtra(OpenFluxVpnService.EXTRA_MTU, mtu);
         startForegroundService(intent);
@@ -1817,6 +2284,7 @@ public final class MainActivity extends Activity {
         intent.setAction(OpenFluxProxyService.ACTION_START);
         intent.putExtra(OpenFluxProxyService.EXTRA_DOCUMENT_URL, documentUrl);
         intent.putExtra(OpenFluxProxyService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
+        intent.putExtra(OpenFluxProxyService.EXTRA_TRANSPORT_TYPE, transportType);
         intent.putExtra(OpenFluxProxyService.EXTRA_PORT, proxyPort);
         intent.putExtra(OpenFluxProxyService.EXTRA_LAN_ACCESS, proxyLanAccess);
         if (proxyLanAccess && proxyAuthEnabled) {
@@ -1838,6 +2306,10 @@ public final class MainActivity extends Activity {
                 : (proxyMode ? "Запустить прокси" : "Запустить VPN"));
         int stateColor;
         boolean transitional = false;
+        long connectedAt = proxyMode ? OpenFluxProxyService.getConnectedAtMillis() : OpenFluxVpnService.getConnectedAtMillis();
+        if (uptimeView != null) {
+            uptimeView.setText(connectedAt == 0L ? "" : formatUptime(System.currentTimeMillis() - connectedAt));
+        }
         if ("Подключено".equals(state)) {
             stateColor = darkMode ? Color.rgb(129, 201, 149) : Color.rgb(24, 128, 56);
             statusDetail.setText(proxyMode
@@ -1855,8 +2327,12 @@ public final class MainActivity extends Activity {
             statusDetail.setText(proxyMode ? "Прокси сейчас не используется" : "VPN сейчас не используется");
         }
         if (state != null && !state.equals(lastAnnouncedState)) {
-            if ("Подключено".equals(state)) vibrateSuccess();
-            else if ("Ошибка".equals(state)) vibrateError();
+            if ("Подключено".equals(state)) {
+                vibrateSuccess();
+                appendLog("[SUCCESS] Подключено (" + (proxyMode ? "прокси" : "VPN") + ")");
+            } else if ("Ошибка".equals(state)) {
+                vibrateError();
+            }
             lastAnnouncedState = state;
         }
 
@@ -1870,8 +2346,18 @@ public final class MainActivity extends Activity {
         String error = connectionLastError();
         if (error != null && !error.isEmpty() && !error.equals(lastShownError)) {
             lastShownError = error;
-            appendLog("Ошибка: " + error);
+            appendLog("[ERROR] " + error);
         }
+    }
+
+    private String formatUptime(long millis) {
+        long totalSeconds = millis / 1000;
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+        return hours > 0
+                ? String.format(java.util.Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+                : String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds);
     }
 
     private void setStatusDotPulsing(boolean pulsing) {
@@ -1931,14 +2417,101 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private static final String HIDDEN_URL_LABEL = "HIDDEN-URL";
+    private static final Pattern SENSITIVE_URL_PATTERN = Pattern.compile("(?i)\\b(?:https?|wss?)://\\S+");
+    private static final Pattern SENSITIVE_IP_PATTERN = Pattern.compile("\\b(?:\\d{1,3}\\.){3}\\d{1,3}(?::\\d{1,5})?\\b");
+    // Catches bare hostnames without a scheme (e.g. the "WebSocket connected
+    // to <host>" debug line, which logs transport.YandexDocsInfo.Host on its
+    // own, never as a full wss:// URL). Yandex's own internal hostnames use
+    // underscores in a label (e.g. "ota5..._vla_808_....sas.yp-c.yandex.net"),
+    // which isn't valid DNS but does show up in these logs, so labels allow
+    // '_' too - otherwise the match breaks there and only the tail after the
+    // last underscore gets hidden.
+    private static final Pattern SENSITIVE_HOST_PATTERN =
+            Pattern.compile("\\b(?:[a-zA-Z0-9_](?:[a-zA-Z0-9_-]*[a-zA-Z0-9_])?\\.)+[a-zA-Z]{2,}\\b");
+
     private void appendLog(String value) {
+        value = redactSensitive(value);
+        String timestamp = "[" + new java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+                .format(new java.util.Date()) + "]";
+        String[] incoming = value.split("\n", -1);
+        StringBuilder stamped = new StringBuilder();
+        for (int i = 0; i < incoming.length; i++) {
+            if (i > 0) stamped.append('\n');
+            stamped.append(timestamp).append(' ').append(incoming[i]);
+        }
+        value = stamped.toString();
         if (!logs.isEmpty()) logs += "\n";
         logs += value;
         if (logs.length() > 60000) logs = logs.substring(logs.length() - 40000);
         if (logView != null) {
-            logView.setText(logs);
+            logView.setText(colorizeLogs(logs));
             if (autoScroll && logScroll != null) logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
         }
+    }
+
+    // Document URLs are effectively passwords (docs/GUIDE*.md: "this link is
+    // equivalent to your VPN password"), and the transport's own debug lines
+    // ([YDOCS]/[VOLGA]) print full URLs, WebSocket endpoints and resolved IPs
+    // verbatim for diagnostics. Opt-in (off by default, Settings -> "Вид")
+    // since it makes the log noisier and less useful for real debugging -
+    // strips anything URL- or IP-shaped before the line ever reaches the
+    // stored/displayed log text, so a screenshot or copy-paste can't leak it.
+    private String redactSensitive(String value) {
+        if (showSensitiveLogs) return value;
+        value = SENSITIVE_URL_PATTERN.matcher(value).replaceAll(HIDDEN_URL_LABEL);
+        value = SENSITIVE_IP_PATTERN.matcher(value).replaceAll(HIDDEN_URL_LABEL);
+        value = SENSITIVE_HOST_PATTERN.matcher(value).replaceAll(HIDDEN_URL_LABEL);
+        return value;
+    }
+
+    private static final Pattern LOG_TAG_PATTERN =
+            Pattern.compile("^(?:\\[\\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\] )?(\\[[A-Z0-9_]+\\])");
+
+    // Colors the leading [TAG] of each log line so errors/successes/the
+    // Yandex Docs transport's own debug tag stand out at a glance instead of
+    // blending into a wall of monospace text.
+    private int logTagColor(String tag) {
+        switch (tag) {
+            case "[ERROR]":
+            case "[PANIC]":
+                return darkMode ? Color.rgb(242, 139, 130) : Color.rgb(217, 48, 37);
+            case "[SUCCESS]":
+                return darkMode ? Color.rgb(129, 201, 149) : Color.rgb(24, 128, 56);
+            case "[YDOCS]":
+                return darkMode ? Color.rgb(253, 214, 99) : Color.rgb(249, 171, 0);
+            case "[ANDROID]":
+            case "[VOLGA]":
+            case "[MAX]":
+                return accent;
+            default:
+                return logColor;
+        }
+    }
+
+    private CharSequence colorizeLogs(String rawLogs) {
+        SpannableStringBuilder builder = new SpannableStringBuilder();
+        String[] lines = rawLogs.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            int start = builder.length();
+            builder.append(line);
+            Matcher matcher = LOG_TAG_PATTERN.matcher(line);
+            if (matcher.find()) {
+                builder.setSpan(new ForegroundColorSpan(logTagColor(matcher.group(1))),
+                        start + matcher.start(1), start + matcher.end(1), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+            int hiddenColor = darkMode ? Color.rgb(242, 139, 130) : Color.rgb(217, 48, 37);
+            int searchFrom = 0;
+            int idx;
+            while ((idx = line.indexOf(HIDDEN_URL_LABEL, searchFrom)) >= 0) {
+                builder.setSpan(new ForegroundColorSpan(hiddenColor),
+                        start + idx, start + idx + HIDDEN_URL_LABEL.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+                searchFrom = idx + HIDDEN_URL_LABEL.length();
+            }
+            if (i < lines.length - 1) builder.append("\n");
+        }
+        return builder;
     }
 
     private LinearLayout page() {
@@ -1947,7 +2520,7 @@ public final class MainActivity extends Activity {
         return page;
     }
 
-    private TextView text(String value, int size, int color, boolean bold) {
+    private TextView text(CharSequence value, int size, int color, boolean bold) {
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextSize(size);
