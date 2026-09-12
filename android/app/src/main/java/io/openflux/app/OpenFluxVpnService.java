@@ -37,7 +37,6 @@ public final class OpenFluxVpnService extends VpnService {
     public static final String EXTRA_DOCUMENT_URL = "document_url";
     public static final String EXTRA_ENCRYPTION_SECRET = "encryption_secret";
     public static final String EXTRA_DNS_SERVER = "dns_server";
-    public static final String EXTRA_RESOLVE_ON_SERVER = "resolve_on_server";
     public static final String EXTRA_MTU = "mtu";
 
     private static final String CHANNEL_ID = "openflux_vpn";
@@ -152,7 +151,6 @@ public final class OpenFluxVpnService extends VpnService {
             return START_NOT_STICKY;
         }
         if (dnsServer == null || dnsServer.trim().isEmpty()) dnsServer = "1.1.1.1";
-        boolean resolveOnServer = intent.getBooleanExtra(EXTRA_RESOLVE_ON_SERVER, true);
         int mtu = Math.max(576, Math.min(1500, intent.getIntExtra(EXTRA_MTU, 1400)));
 
         createNotificationChannel();
@@ -164,12 +162,11 @@ public final class OpenFluxVpnService extends VpnService {
         int session = generation.incrementAndGet();
         String selectedDns = dnsServer;
         int selectedMtu = mtu;
-        workers.execute(() -> startTunnel(url, encryptionSecret, selectedDns, resolveOnServer, selectedMtu, session));
+        workers.execute(() -> startTunnel(url, encryptionSecret, selectedDns, selectedMtu, session));
         return START_STICKY;
     }
 
-    private void startTunnel(String url, String encryptionSecret, String dnsServer, boolean resolveOnServer,
-            int mtu, int session) {
+    private void startTunnel(String url, String encryptionSecret, String dnsServer, int mtu, int session) {
         if (!isCurrent(session)) return;
         String error = Mobile.start(url, encryptionSecret);
         if (error != null && !error.isEmpty()) {
@@ -219,7 +216,7 @@ public final class OpenFluxVpnService extends VpnService {
         startSpeedUpdates();
         FileInputStream input = tunnelInput;
         FileOutputStream output = tunnelOutput;
-        workers.execute(() -> readOutgoingPackets(session, input, dnsServer, resolveOnServer));
+        workers.execute(() -> readOutgoingPackets(session, input, dnsServer));
         workers.execute(() -> writeIncomingPackets(session, output));
     }
 
@@ -266,7 +263,7 @@ public final class OpenFluxVpnService extends VpnService {
         }
     }
 
-    private void readOutgoingPackets(int session, FileInputStream input, String dnsServer, boolean resolveOnServer) {
+    private void readOutgoingPackets(int session, FileInputStream input, String dnsServer) {
         byte[] buffer = new byte[32767];
         try {
             while (isCurrent(session)) {
@@ -274,7 +271,7 @@ public final class OpenFluxVpnService extends VpnService {
                 if (length <= 0) continue;
                 byte[] packet = Arrays.copyOf(buffer, length);
                 if (isIpv4UdpDns(packet)) {
-                    workers.execute(() -> forwardDns(session, outputFor(session), packet, dnsServer, resolveOnServer));
+                    workers.execute(() -> forwardDns(session, outputFor(session), packet, dnsServer));
                 } else if (isIpv4Tcp(packet)) {
                     String error = Mobile.send(packet);
                     if (error != null && !error.isEmpty() && isCurrent(session)) {
@@ -307,14 +304,9 @@ public final class OpenFluxVpnService extends VpnService {
         }
     }
 
-    // forwardDns answers the captured query either through the encrypted
-    // document transport (Mobile.resolveDNS asks dnsServer from the exit
-    // node's own network - resolution never leaves this device) or, if the
-    // user chose local resolving in Settings, by relaying it directly from
-    // here over plain UDP - same wire relay, just run on-device instead of
-    // on the exit node.
-    private void forwardDns(int session, FileOutputStream output, byte[] request, String dnsServer,
-            boolean resolveOnServer) {
+    // forwardDns answers the captured query by relaying it to dnsServer over
+    // plain UDP directly from this device.
+    private void forwardDns(int session, FileOutputStream output, byte[] request, String dnsServer) {
         int ipHeader = (request[0] & 0x0f) * 4;
         int dnsOffset = ipHeader + 8;
         int udpLength = unsignedShort(request, ipHeader + 4);
@@ -322,13 +314,9 @@ public final class OpenFluxVpnService extends VpnService {
 
         byte[] query = Arrays.copyOfRange(request, dnsOffset, ipHeader + udpLength);
         try {
-            byte[] answer = resolveOnServer ? Mobile.resolveDNS(query, dnsServer) : queryLocalDns(query, dnsServer);
+            byte[] answer = queryLocalDns(query, dnsServer);
             if (answer == null || answer.length == 0) {
-                if (isCurrent(session)) {
-                    lastError = resolveOnServer
-                            ? "DNS: сервер не ответил (обновите VDS до версии с поддержкой DNS?)"
-                            : "DNS: локальный сервер не ответил";
-                }
+                if (isCurrent(session)) lastError = "DNS: сервер не ответил";
                 return;
             }
             inject(session, output, buildDnsResponse(request, answer));
@@ -337,10 +325,7 @@ public final class OpenFluxVpnService extends VpnService {
         }
     }
 
-    // queryLocalDns relays the raw DNS message to dnsServer over plain UDP
-    // directly from this device - the same byte-transparent relay the exit
-    // node performs for server-side resolution, just run locally when the
-    // user picked "Резолвить локально на устройстве".
+    // queryLocalDns relays the raw DNS message to dnsServer over plain UDP.
     private byte[] queryLocalDns(byte[] query, String dnsServer) throws IOException {
         try (DatagramSocket socket = new DatagramSocket()) {
             socket.setSoTimeout(5000);

@@ -13,9 +13,8 @@ the source code or APK.
   proxy that other apps can be pointed at manually, optionally exposed to the
   local network with authentication;
 - IPv4/TCP traffic is forwarded through OpenFlux and the exit node;
-- DNS is relayed through the encrypted tunnel to the exit node by default (any
-  DNS server address or hostname, not just a fixed provider list), with a
-  setting to resolve locally on the device instead;
+- the DNS-server field accepts any IP address or hostname (not a fixed
+  provider list), resolved locally on the device;
 - the foreground service keeps the tunnel alive while the screen is off, and
   shows live upload/download speed in its notification;
 - the URL and secret are encrypted using an Android Keystore-backed key;

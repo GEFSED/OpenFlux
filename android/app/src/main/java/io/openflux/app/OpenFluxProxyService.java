@@ -29,8 +29,6 @@ public final class OpenFluxProxyService extends Service {
     public static final String EXTRA_DOCUMENT_URL = "document_url";
     public static final String EXTRA_ENCRYPTION_SECRET = "encryption_secret";
     public static final String EXTRA_PORT = "port";
-    public static final String EXTRA_DNS_SERVER = "dns_server";
-    public static final String EXTRA_RESOLVE_ON_SERVER = "resolve_on_server";
     public static final String EXTRA_LAN_ACCESS = "lan_access";
     public static final String EXTRA_USERNAME = "username";
     public static final String EXTRA_PASSWORD = "password";
@@ -134,9 +132,6 @@ public final class OpenFluxProxyService extends Service {
             return START_NOT_STICKY;
         }
         int port = intent.getIntExtra(EXTRA_PORT, 1080);
-        String dnsServer = intent.getStringExtra(EXTRA_DNS_SERVER);
-        if (dnsServer == null || dnsServer.trim().isEmpty()) dnsServer = "1.1.1.1";
-        boolean resolveOnServer = intent.getBooleanExtra(EXTRA_RESOLVE_ON_SERVER, true);
         boolean lanAccess = intent.getBooleanExtra(EXTRA_LAN_ACCESS, false);
         String username = intent.getStringExtra(EXTRA_USERNAME);
         String password = intent.getStringExtra(EXTRA_PASSWORD);
@@ -151,19 +146,17 @@ public final class OpenFluxProxyService extends Service {
         lastError = "";
         activePort = port;
         int session = generation.incrementAndGet();
-        String selectedDns = dnsServer;
         String selectedUser = username;
         String selectedPassword = password;
-        workers.execute(() -> startProxyTransport(url, encryptionSecret, bindHost, port, selectedDns,
-                resolveOnServer, selectedUser, selectedPassword, session));
+        workers.execute(() -> startProxyTransport(url, encryptionSecret, bindHost, port,
+                selectedUser, selectedPassword, session));
         return START_STICKY;
     }
 
     private void startProxyTransport(String url, String encryptionSecret, String bindHost, int port,
-            String dnsServer, boolean resolveOnServer, String username, String password, int session) {
+            String username, String password, int session) {
         if (!isCurrent(session)) return;
-        String error = Mobile.startProxy(url, encryptionSecret, bindHost + ":" + port, dnsServer,
-                username, password, resolveOnServer);
+        String error = Mobile.startProxy(url, encryptionSecret, bindHost + ":" + port, username, password);
         if (error != null && !error.isEmpty()) {
             fail(session, error);
             return;

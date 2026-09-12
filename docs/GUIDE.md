@@ -210,14 +210,12 @@ The server side is done. Now let's set up the phone.
      picked one yet, tap **"Generate secure key"**, copy the value, and paste
      it into the `encryption-key` file on the server (Step 3.2).
 5. You can leave **Network** (DNS server, MTU) alone - the defaults work for
-   most setups. DNS is resolved by your own exit node by default, so it never
-   leaves your phone's network directly.
+   most setups.
 6. Go back to the **Home** tab and tap **"Start VPN"**. Android will show its
    standard system prompt to set up a VPN connection - confirm it (this is a
    generic Android dialog, not something specific to OpenFlux).
-7. If everything's set up correctly, the status switches to **"Connected"**
-   and a ping graph to your VDS appears. If something's off, open the
-   **Logs** tab for the technical details.
+7. If everything's set up correctly, the status switches to **"Connected"**.
+   If something's off, open the **Logs** tab for the technical details.
 
 Done - your phone's traffic now goes through your own server.
 

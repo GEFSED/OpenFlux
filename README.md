@@ -21,7 +21,11 @@
 
 > This repository is an experimental, independently maintained fork of
 > [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux).
-> See [FORK.md](docs/FORK.md) for the differences from upstream.
+> See [FORK.md](docs/FORK.md) for the differences from upstream. `main` is
+> wire-compatible with current upstream exit-node/client binaries; a separate
+> `experimental` branch carries additional features (ping graph, exit-node
+> country, server-side DNS relay) that need this fork's own exit node - see
+> [docs/UPSTREAM_DIFF.md](docs/UPSTREAM_DIFF.md).
 
 OpenFlux is a research TCP tunnel with pluggable transports. This fork adds an
 Android VPN client and mandatory end-to-end encryption for the Yandex Docs
@@ -45,12 +49,11 @@ Android VPN or SOCKS5 client -> encrypted document transport -> Linux exit node 
   SOCKS5 authentication, plus a `socks://` share link and QR code;
 - Android 11-style UI with connection controls, logs and a phone-Settings-style
   vertical settings navigation;
-- AES-256-GCM authenticated encryption with a key derived using scrypt;
+- AES-256-GCM authenticated encryption with a key derived using scrypt,
+  wire-compatible with upstream's exit-node and client binaries;
 - Android Keystore-backed storage for the document URL and shared secret;
-- DNS resolved through the encrypted tunnel by the exit node by default (any
-  server, IP or hostname), or locally on the device if preferred;
-- encrypted latency checks, a live ping graph, and the exit node's country
-  once it's known;
+- DNS-server field accepts any IP or hostname (not a fixed provider list),
+  resolved locally on the device;
 - per-app VPN routing (whitelist or blacklist which apps use the tunnel);
 - a pinned notification with live upload/download speed and a disconnect
   action, for both connection modes;
