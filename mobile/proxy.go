@@ -34,7 +34,10 @@ type proxyState struct {
 // is non-empty, the SOCKS5 server requires that username/password (e.g. for
 // a proxy bound to 0.0.0.0 and reachable from the local network); an empty
 // username leaves it open, as appropriate for a loopback-only bind.
-func StartProxy(documentURL, encryptionSecret, listenAddr, username, password string) string {
+func StartProxy(transportType, documentURL, encryptionSecret, listenAddr, username, password string) string {
+	if transportType == "" {
+		transportType = "yandex"
+	}
 	if documentURL == "" {
 		return "Ссылка на документ не указана"
 	}
@@ -51,10 +54,15 @@ func StartProxy(documentURL, encryptionSecret, listenAddr, username, password st
 
 	utils.EnableDebug()
 	utils.SetLogSink(appendLog)
-	appendLog("[ANDROID] Запуск прокси-транспорта Yandex Docs")
+	appendLog(fmt.Sprintf("[ANDROID] Запуск прокси-транспорта %s", transportType))
 
 	config := transport.DefaultConfig()
-	var inner transport.Transport = yandex.NewYandexDocsTransport(documentURL, config)
+	var inner transport.Transport
+	if transportType == "vyandex" {
+		inner = yandex.NewYandexVolgaTransport(documentURL, config)
+	} else {
+		inner = yandex.NewYandexDocsTransport(documentURL, config)
+	}
 	if encryptionSecret != "" {
 		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, documentURL, false)
 		if err != nil {
@@ -67,7 +75,7 @@ func StartProxy(documentURL, encryptionSecret, listenAddr, username, password st
 	}
 	trans := transport.NewCompressedTransport(inner)
 	if err := trans.Start(); err != nil {
-		appendLog(fmt.Sprintf("[ANDROID] Ошибка запуска прокси: %v", err))
+		appendLog(fmt.Sprintf("[ERROR] Ошибка запуска прокси: %v", err))
 		return err.Error()
 	}
 
@@ -78,7 +86,7 @@ func StartProxy(documentURL, encryptionSecret, listenAddr, username, password st
 	}
 	if err := server.Bind(); err != nil {
 		_ = trans.Stop()
-		appendLog(fmt.Sprintf("[ANDROID] Не удалось занять %s: %v", listenAddr, err))
+		appendLog(fmt.Sprintf("[ERROR] Не удалось занять %s: %v", listenAddr, err))
 		return fmt.Sprintf("Порт %s уже занят", listenAddr)
 	}
 
@@ -95,11 +103,11 @@ func StartProxy(documentURL, encryptionSecret, listenAddr, username, password st
 		stillRunning := proxy.running
 		proxy.mu.Unlock()
 		if stillRunning && err != nil {
-			appendLog(fmt.Sprintf("[ANDROID] Прокси остановлен: %v", err))
+			appendLog(fmt.Sprintf("[ERROR] Прокси остановлен: %v", err))
 		}
 	})
 
-	appendLog(fmt.Sprintf("[ANDROID] SOCKS5-прокси слушает %s", listenAddr))
+	appendLog(fmt.Sprintf("[SUCCESS] SOCKS5-прокси слушает %s", listenAddr))
 	return ""
 }
 

@@ -28,6 +28,7 @@ public final class OpenFluxProxyService extends Service {
     public static final String ACTION_STOP = "io.openflux.app.PROXY_STOP";
     public static final String EXTRA_DOCUMENT_URL = "document_url";
     public static final String EXTRA_ENCRYPTION_SECRET = "encryption_secret";
+    public static final String EXTRA_TRANSPORT_TYPE = "transport_type";
     public static final String EXTRA_PORT = "port";
     public static final String EXTRA_LAN_ACCESS = "lan_access";
     public static final String EXTRA_USERNAME = "username";
@@ -39,6 +40,10 @@ public final class OpenFluxProxyService extends Service {
     private static volatile String status = "Остановлено";
     private static volatile String lastError = "";
     private static volatile int activePort;
+    // Lives on the service, not the Activity: MainActivity can be destroyed
+    // and recreated (low memory, long time away) while this foreground
+    // service keeps running, and the uptime shown on Home must survive that.
+    private static volatile long connectedAtMillis;
 
     private final ExecutorService workers = Executors.newSingleThreadExecutor();
     private final AtomicInteger generation = new AtomicInteger();
@@ -86,6 +91,7 @@ public final class OpenFluxProxyService extends Service {
     public static String getStatus() { return status; }
     public static String getLastError() { return lastError; }
     public static int getActivePort() { return activePort; }
+    public static long getConnectedAtMillis() { return connectedAtMillis; }
 
     private static String formatSpeed(long bytesPerSecond) {
         if (bytesPerSecond < 1024) return bytesPerSecond + " Б/с";
@@ -139,6 +145,9 @@ public final class OpenFluxProxyService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+        String transportTypeExtra = intent.getStringExtra(EXTRA_TRANSPORT_TYPE);
+        final String transportType = transportTypeExtra == null || transportTypeExtra.isEmpty()
+                ? "yandex" : transportTypeExtra;
         int port = intent.getIntExtra(EXTRA_PORT, 1080);
         boolean lanAccess = intent.getBooleanExtra(EXTRA_LAN_ACCESS, false);
         String username = intent.getStringExtra(EXTRA_USERNAME);
@@ -154,15 +163,15 @@ public final class OpenFluxProxyService extends Service {
         int session = generation.incrementAndGet();
         String selectedUser = username;
         String selectedPassword = password;
-        workers.execute(() -> startProxyTransport(url, encryptionSecret, bindHost, port,
+        workers.execute(() -> startProxyTransport(transportType, url, encryptionSecret, bindHost, port,
                 selectedUser, selectedPassword, session));
         return START_STICKY;
     }
 
-    private void startProxyTransport(String url, String encryptionSecret, String bindHost, int port,
+    private void startProxyTransport(String transportType, String url, String encryptionSecret, String bindHost, int port,
             String username, String password, int session) {
         if (!isCurrent(session)) return;
-        String error = Mobile.startProxy(url, encryptionSecret, bindHost + ":" + port, username, password);
+        String error = Mobile.startProxy(transportType, url, encryptionSecret, bindHost + ":" + port, username, password);
         if (error != null && !error.isEmpty()) {
             fail(session, error);
             return;
@@ -182,6 +191,7 @@ public final class OpenFluxProxyService extends Service {
         }
 
         status = "Подключено";
+        if (connectedAtMillis == 0L) connectedAtMillis = System.currentTimeMillis();
         startSpeedUpdates();
     }
 
@@ -193,6 +203,7 @@ public final class OpenFluxProxyService extends Service {
         if (generation.get() != session) return;
         lastError = message == null ? "Неизвестная ошибка" : message;
         status = "Ошибка";
+        connectedAtMillis = 0L;
         generation.incrementAndGet();
         stopSpeedUpdates();
         Mobile.stopProxy();
@@ -209,6 +220,7 @@ public final class OpenFluxProxyService extends Service {
         running = false;
         status = "Остановлено";
         lastError = "";
+        connectedAtMillis = 0L;
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
@@ -219,6 +231,7 @@ public final class OpenFluxProxyService extends Service {
         Mobile.stopProxy();
         running = false;
         if (!"Ошибка".equals(status)) status = "Остановлено";
+        connectedAtMillis = 0L;
         workers.shutdownNow();
         super.onDestroy();
     }

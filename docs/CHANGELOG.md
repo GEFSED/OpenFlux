@@ -2,6 +2,44 @@
 
 All notable changes to this fork are documented here.
 
+## 0.6.0 - 2026-09-13
+
+### Added
+
+- **connection profiles**: save several named connection configurations
+  (transport type, document URL, encryption key, an icon) and switch
+  between them - a new "Профили" tab (second in the bottom navigation),
+  a dropdown selector with icons above the Home connect button, and an
+  add/edit screen with an icon picker and a Yandex Docs / Yandex Docs
+  (Volga) transport choice. Existing installs migrate their single saved
+  URL/key into a first profile automatically. `mobile.Start`/
+  `mobile.StartProxy` now take a `transportType` parameter so the Android
+  bridge can actually select `vyandex`, not just `yandex`.
+- **Quick Settings tile**: toggles the connection mode currently selected
+  in the app for the active profile, without opening it. Opens the app
+  instead of failing silently when VPN consent hasn't been granted yet or
+  no profile is configured.
+- **colorized, timestamped logs**: each line gets a `[HH:mm:ss.SSS]`
+  prefix; known tags are colored (`[ERROR]`/`[PANIC]` red, `[SUCCESS]`
+  green, `[YDOCS]` yellow, `[ANDROID]`/`[VOLGA]`/`[MAX]` accent).
+- **"Данные в логах" setting** (Settings -> "Вид", on by default): turning
+  it off masks URLs, WebSocket endpoints, bare hostnames and IP addresses
+  in the log text with `HIDDEN-URL` before the line is ever stored, not
+  just visually - a screenshot or copy-paste of the Logs tab can't leak
+  them either.
+
+### Fixed
+
+- the connection uptime counter reset to zero if the app was reopened
+  after Android killed the backgrounded Activity (common after being away
+  for a while) even though the VPN/Proxy service itself never stopped.
+  The "connected since" timestamp now lives on the service (which
+  survives Activity recreation), not on the Activity.
+- tapping the already-active bottom navigation tab replayed the page
+  crossfade/icon-pop animation for no reason; it's now a no-op.
+- the divider between rows in the Profiles list was indented under the
+  icon (matching the Settings list); it now runs edge to edge.
+
 ## 0.5.3 - 2026-09-12
 
 ### Fixed
