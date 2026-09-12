@@ -1,26 +1,39 @@
 package io.openflux.app;
 
+import android.Manifest;
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
+import android.animation.PropertyValuesHolder;
 import android.animation.ValueAnimator;
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
+import android.net.Uri;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.provider.Settings;
 import android.text.InputType;
 import android.text.method.PasswordTransformationMethod;
 import android.view.Gravity;
@@ -46,6 +59,15 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.Inet4Address;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -54,6 +76,14 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.WeakHashMap;
+
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.WriterException;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.QRCodeWriter;
+
+import org.json.JSONObject;
 
 import android.util.Base64;
 
@@ -61,6 +91,7 @@ import io.openflux.bridge.mobile.Mobile;
 
 public final class MainActivity extends Activity {
     private static final int VPN_PERMISSION_REQUEST = 42;
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 43;
     private static final String DEFAULT_DNS = "1.1.1.1";
     private static final int DEFAULT_MTU = 1400;
     private static final int PAGE_HOME = 0;
@@ -70,6 +101,19 @@ public final class MainActivity extends Activity {
     private static final int SETTINGS_NETWORK = 1;
     private static final int SETTINGS_APPS = 2;
     private static final int SETTINGS_INTERFACE = 3;
+    private static final int SETTINGS_ABOUT = 4;
+    private static final int SETTINGS_MODE = 5;
+    private static final String MODE_VPN = "vpn";
+    private static final String MODE_PROXY = "proxy";
+    private static final int DEFAULT_PROXY_PORT = 1080;
+    private static final String DNS_RESOLVE_SERVER = "server";
+    private static final String DNS_RESOLVE_CLIENT = "client";
+    private static final String MAIN_REPO_URL = "https://github.com/p1neappleXpress/OpenFlux";
+    private static final String FORK_REPO_URL = "https://github.com/damnurmum/OpenFlux-Android";
+    private static final String FORK_REPO_SLUG = "damnurmum/OpenFlux-Android";
+    private static final int VERSION_CHECK_PENDING = 0;
+    private static final int VERSION_CHECK_LATEST = 1;
+    private static final int VERSION_CHECK_OUTDATED = 2;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean darkMode;
@@ -77,6 +121,7 @@ public final class MainActivity extends Activity {
     private boolean autoScroll = true;
     private int currentPage = PAGE_HOME;
     private int settingsSubTab = SETTINGS_TRANSPORT;
+    private boolean settingsDetailOpen;
     private int background;
     private int surface;
     private int text;
@@ -92,8 +137,12 @@ public final class MainActivity extends Activity {
     private EditText encryptionInput;
     private EditText dnsInput;
     private EditText mtuInput;
+    private EditText proxyPortInput;
+    private EditText proxyUsernameInput;
+    private EditText proxyPasswordInput;
     private ImageButton visibilityButton;
     private ImageButton encryptionVisibilityButton;
+    private ImageButton proxyPasswordVisibilityButton;
     private TextView statusDot;
     private TextView statusView;
     private TextView statusDetail;
@@ -108,9 +157,17 @@ public final class MainActivity extends Activity {
     private String encryptionSecret;
     private String dnsServer;
     private int mtu;
+    private String connectionMode = MODE_VPN;
+    private int proxyPort = DEFAULT_PROXY_PORT;
+    private String dnsResolveMode = DNS_RESOLVE_SERVER;
+    private boolean proxyLanAccess;
+    private boolean proxyAuthEnabled;
+    private String proxyUsername = "";
+    private String proxyPassword = "";
     private String logs = "";
     private String lastShownError = "";
     private boolean encryptionVisible;
+    private boolean proxyPasswordVisible;
     private SecureSettings secureSettings;
     private final ArrayList<Float> pingHistory = new ArrayList<>();
     private long lastPingRequestAt;
@@ -122,6 +179,11 @@ public final class MainActivity extends Activity {
     private int lastVpnButtonFill = -1;
     private Vibrator vibrator;
     private String lastAnnouncedState = "";
+    private TextView versionBadge;
+    private String appVersion = "";
+    private String latestVersion;
+    private int versionCheckState = VERSION_CHECK_PENDING;
+    private final WeakHashMap<View, AnimatorSet> bounceAnimators = new WeakHashMap<>();
 
     private SharedPreferences appFilterPrefs;
     private String appFilterMode = AppFilter.MODE_OFF;
@@ -150,6 +212,14 @@ public final class MainActivity extends Activity {
         encryptionSecret = secureSettings.getString("encryption_secret", "");
         dnsServer = prefs.getString("dns_server", DEFAULT_DNS);
         mtu = prefs.getInt("mtu", DEFAULT_MTU);
+        connectionMode = MODE_PROXY.equals(prefs.getString("connection_mode", MODE_VPN)) ? MODE_PROXY : MODE_VPN;
+        proxyPort = prefs.getInt("proxy_port", DEFAULT_PROXY_PORT);
+        dnsResolveMode = DNS_RESOLVE_CLIENT.equals(prefs.getString("dns_resolve_mode", DNS_RESOLVE_SERVER))
+                ? DNS_RESOLVE_CLIENT : DNS_RESOLVE_SERVER;
+        proxyLanAccess = prefs.getBoolean("proxy_lan_access", false);
+        proxyAuthEnabled = prefs.getBoolean("proxy_auth_enabled", false);
+        proxyUsername = prefs.getString("proxy_username", "");
+        proxyPassword = secureSettings.getString("proxy_password", "");
         autoScroll = prefs.getBoolean("auto_scroll", true);
         darkMode = prefs.contains("dark_mode")
                 ? prefs.getBoolean("dark_mode", isSystemDark())
@@ -157,11 +227,40 @@ public final class MainActivity extends Activity {
         appFilterPrefs = getSharedPreferences(AppFilter.PREFS_NAME, MODE_PRIVATE);
         appFilterMode = appFilterPrefs.getString(AppFilter.KEY_MODE, AppFilter.MODE_OFF);
         selectedApps.addAll(appFilterPrefs.getStringSet(AppFilter.KEY_PACKAGES, Collections.emptySet()));
+        appVersion = readAppVersion();
         applyPalette();
         configureSystemBars();
         buildShell();
         showPage(PAGE_HOME);
         appendLog("Готово. При первом запуске Android запросит разрешение на VPN.");
+        checkForUpdates();
+        requestNotificationPermissionIfNeeded();
+    }
+
+    // Android 13+ requires this runtime permission to actually display any
+    // notification, including a foreground service's - without it the VPN
+    // and proxy services still run fine, they just show no ongoing
+    // notification (no status, no speed indicator) for the user to see.
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < 33) return;
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == NOTIFICATION_PERMISSION_REQUEST
+                && (grantResults.length == 0 || grantResults[0] != PackageManager.PERMISSION_GRANTED)) {
+            appendLog("Без разрешения на уведомления статус подключения не будет показан в шторке.");
+        }
+    }
+
+    @Override public void onBackPressed() {
+        if (currentPage == PAGE_SETTINGS && settingsDetailOpen) {
+            closeSettingsDetail();
+            return;
+        }
+        super.onBackPressed();
     }
 
     @Override protected void onStart() {
@@ -261,13 +360,108 @@ public final class MainActivity extends Activity {
         titles.addView(subtitle);
         header.addView(titles, titlesParams);
 
-        TextView beta = text("BETA", 10, accent, true);
-        beta.setGravity(Gravity.CENTER);
-        beta.setPadding(dp(9), dp(5), dp(9), dp(5));
-        beta.setBackground(rounded(darkMode ? Color.rgb(38, 50, 68) : Color.rgb(232, 240, 254),
-                Color.TRANSPARENT, 0, 12));
-        header.addView(beta);
+        versionBadge = text("", 10, accent, true);
+        versionBadge.setGravity(Gravity.CENTER);
+        versionBadge.setPadding(dp(9), dp(5), dp(9), dp(5));
+        header.addView(versionBadge);
+        updateVersionBadge();
         return header;
+    }
+
+    private void updateVersionBadge() {
+        if (versionBadge == null) return;
+        String base = appVersion.isEmpty() ? "-" : appVersion;
+        int fg;
+        int bg;
+        String label;
+        switch (versionCheckState) {
+            case VERSION_CHECK_LATEST:
+                fg = darkMode ? Color.rgb(129, 201, 149) : Color.rgb(24, 128, 56);
+                bg = darkMode ? Color.rgb(30, 46, 36) : Color.rgb(230, 245, 234);
+                label = base + " | Последняя версия";
+                break;
+            case VERSION_CHECK_OUTDATED:
+                fg = darkMode ? Color.rgb(253, 214, 99) : Color.rgb(249, 171, 0);
+                bg = darkMode ? Color.rgb(56, 46, 20) : Color.rgb(255, 243, 224);
+                label = base + " | Доступно обновление";
+                break;
+            case VERSION_CHECK_PENDING:
+            default:
+                fg = accent;
+                bg = darkMode ? Color.rgb(38, 50, 68) : Color.rgb(232, 240, 254);
+                label = base;
+        }
+        versionBadge.setText(label);
+        versionBadge.setTextColor(fg);
+        versionBadge.setBackground(rounded(bg, Color.TRANSPARENT, 0, 12));
+    }
+
+    private String readAppVersion() {
+        try {
+            PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return info.versionName != null ? info.versionName : "";
+        } catch (PackageManager.NameNotFoundException e) {
+            return "";
+        }
+    }
+
+    private void checkForUpdates() {
+        new Thread(() -> {
+            String latest = fetchLatestGithubVersion();
+            if (latest == null || latest.isEmpty()) return;
+            handler.post(() -> {
+                latestVersion = latest;
+                versionCheckState = compareVersions(appVersion, latest) >= 0
+                        ? VERSION_CHECK_LATEST : VERSION_CHECK_OUTDATED;
+                updateVersionBadge();
+            });
+        }).start();
+    }
+
+    private String fetchLatestGithubVersion() {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL("https://api.github.com/repos/" + FORK_REPO_SLUG + "/releases/latest");
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(5000);
+            connection.setRequestProperty("Accept", "application/vnd.github+json");
+            connection.setRequestProperty("User-Agent", "OpenFlux-Android");
+            if (connection.getResponseCode() != 200) return null;
+            StringBuilder body = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) body.append(line);
+            }
+            String tag = new JSONObject(body.toString()).optString("tag_name", "");
+            return tag.startsWith("v") ? tag.substring(1) : tag;
+        } catch (Exception ignored) {
+            return null;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private int compareVersions(String a, String b) {
+        String[] partsA = a.split("\\.");
+        String[] partsB = b.split("\\.");
+        int length = Math.max(partsA.length, partsB.length);
+        for (int i = 0; i < length; i++) {
+            int valueA = versionPart(partsA, i);
+            int valueB = versionPart(partsB, i);
+            if (valueA != valueB) return Integer.compare(valueA, valueB);
+        }
+        return 0;
+    }
+
+    private int versionPart(String[] parts, int index) {
+        if (index >= parts.length) return 0;
+        try {
+            return Integer.parseInt(parts[index].replaceAll("[^0-9]", ""));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     private View buildBottomNav() {
@@ -311,6 +505,7 @@ public final class MainActivity extends Activity {
 
     private void showPage(int page) {
         captureSettings();
+        if (page != PAGE_SETTINGS) settingsDetailOpen = false;
         currentPage = page;
         View pageView = page == PAGE_HOME ? buildHomePage()
                 : page == PAGE_LOGS ? buildLogsPage() : buildSettingsPage();
@@ -340,9 +535,16 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void showSettingsSubTab(int tab) {
-        if (tab == settingsSubTab) return;
+    private void openSettingsDetail(int tab) {
+        if (settingsDetailOpen && settingsSubTab == tab) return;
+        settingsDetailOpen = true;
         settingsSubTab = tab;
+        showPage(PAGE_SETTINGS);
+    }
+
+    private void closeSettingsDetail() {
+        if (!settingsDetailOpen) return;
+        settingsDetailOpen = false;
         showPage(PAGE_SETTINGS);
     }
 
@@ -353,10 +555,13 @@ public final class MainActivity extends Activity {
         }
         lastVpnButtonFill = -1;
 
+        boolean proxyMode = MODE_PROXY.equals(connectionMode);
         LinearLayout page = page();
         TextView heading = text("Подключение", 25, text, true);
         page.addView(heading);
-        TextView intro = text("Защищённый системный VPN-туннель через документ-транспорт.", 13, secondary, false);
+        TextView intro = text(proxyMode
+                ? "Локальный SOCKS5-прокси через документ-транспорт, без системного VPN."
+                : "Защищённый системный VPN-туннель через документ-транспорт.", 13, secondary, false);
         LinearLayout.LayoutParams introParams = matchWrap();
         introParams.topMargin = dp(4);
         page.addView(intro, introParams);
@@ -372,7 +577,7 @@ public final class MainActivity extends Activity {
         LinearLayout transport = cardRow(R.drawable.ic_link, transportTitle, transportDetail);
         transport.setClickable(true);
         transport.setFocusable(true);
-        transport.setOnClickListener(v -> showPage(PAGE_SETTINGS));
+        transport.setOnClickListener(v -> openSettingsDetail(SETTINGS_TRANSPORT));
         LinearLayout.LayoutParams transportParams = matchWrap();
         transportParams.topMargin = dp(28);
         page.addView(transport, transportParams);
@@ -395,7 +600,7 @@ public final class MainActivity extends Activity {
         pingPanel.setOrientation(LinearLayout.VERTICAL);
         pingPanel.setVisibility(View.GONE);
         pingPanel.setAlpha(0f);
-        pingValue = text("Пинг до VDS: —", 13, accent, true);
+        pingValue = text("Пинг до VDS: -", 13, accent, true);
         pingPanel.addView(pingValue);
         pingGraph = new PingGraphView(this, accent, border);
         pingGraph.setHistory(pingHistory);
@@ -424,15 +629,11 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams powerParams = new LinearLayout.LayoutParams(dp(24), dp(24));
         powerParams.rightMargin = dp(10);
         vpnButton.addView(powerIcon, powerParams);
-        vpnButtonText = text("Запустить VPN", 16, Color.WHITE, true);
+        vpnButtonText = text(proxyMode ? "Запустить прокси" : "Запустить VPN", 16, Color.WHITE, true);
         vpnButton.addView(vpnButtonText, new LinearLayout.LayoutParams(-2, -2));
         vpnButton.setOnClickListener(v -> {
-            tap(v);
-            v.animate().cancel();
-            v.animate().scaleX(0.96f).scaleY(0.96f).setDuration(80).withEndAction(() ->
-                    v.animate().scaleX(1f).scaleY(1f).setDuration(140)
-                            .setInterpolator(new OvershootInterpolator(3f)).start()).start();
-            toggleVpn();
+            bounce(v);
+            toggleConnection();
         });
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(58));
         buttonParams.topMargin = dp(16);
@@ -444,10 +645,66 @@ public final class MainActivity extends Activity {
         summaryTitleParams.topMargin = dp(30);
         summaryTitleParams.bottomMargin = dp(8);
         page.addView(summaryTitle, summaryTitleParams);
-        View activeParams = infoCard("DNS-сервер", dnsServer, "MTU пакета", String.valueOf(mtu));
-        page.addView(activeParams);
+        View activeParams = paramsCard(activeParamRows(proxyMode));
+        LinearLayout.LayoutParams activeParamsParams = matchWrap();
+        activeParamsParams.bottomMargin = dp(8);
+        page.addView(activeParams, activeParamsParams);
         staggerIn(activeParams, 180);
-        return page;
+        return wrapScroll(page);
+    }
+
+    private String[][] activeParamRows(boolean proxyMode) {
+        if (proxyMode) {
+            return new String[][]{
+                    {"Режим", "Прокси (SOCKS5)"},
+                    {"DNS-сервер", dnsServer},
+                    {"Резолв DNS", DNS_RESOLVE_CLIENT.equals(dnsResolveMode) ? "Локально" : "На сервере"},
+                    {"Локальный порт", String.valueOf(proxyPort)},
+                    {"Доступ", proxyAccessSummary()},
+            };
+        }
+        return new String[][]{
+                {"Режим", "VPN (весь трафик)"},
+                {"DNS-сервер", dnsServer},
+                {"Резолв DNS", DNS_RESOLVE_CLIENT.equals(dnsResolveMode) ? "Локально" : "На сервере"},
+                {"MTU пакета", String.valueOf(mtu)},
+                {"Приложения", appFilterSummary()},
+        };
+    }
+
+    private String proxyAccessSummary() {
+        if (!proxyLanAccess) return "Только это устройство";
+        String localIp = getLocalIpAddress();
+        String address = localIp != null ? localIp + ":" + proxyPort : "IP не определён";
+        return address + (proxyAuthEnabled ? " (с паролем)" : " (без пароля)");
+    }
+
+    private String appFilterSummary() {
+        if (AppFilter.MODE_WHITELIST.equals(appFilterMode)) return "Белый список (" + selectedApps.size() + ")";
+        if (AppFilter.MODE_BLACKLIST.equals(appFilterMode)) return "Чёрный список (" + selectedApps.size() + ")";
+        return "Все";
+    }
+
+    private View paramsCard(String[][] rows) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(rounded(surface, border, 1, 11));
+        for (int i = 0; i < rows.length; i++) {
+            card.addView(paramRow(rows[i][0], rows[i][1]));
+            if (i < rows.length - 1) addDivider(card, 0);
+        }
+        return card;
+    }
+
+    private View paramRow(String labelValue, String value) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(11), dp(14), dp(11));
+        row.addView(text(labelValue, 13, secondary, false), new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView valueView = text(value, 13, text, true);
+        valueView.setGravity(Gravity.END);
+        row.addView(valueView, new LinearLayout.LayoutParams(-2, -2));
+        return row;
     }
 
     private void staggerIn(View view, int delayMs) {
@@ -472,6 +729,11 @@ public final class MainActivity extends Activity {
         header.addView(clear, new LinearLayout.LayoutParams(dp(48), dp(48)));
         page.addView(header);
 
+        TextView note = text("Логи хранятся только до закрытия приложения.", 11, secondary, false);
+        LinearLayout.LayoutParams noteParams = matchWrap();
+        noteParams.topMargin = dp(4);
+        page.addView(note, noteParams);
+
         logView = text(logs, 12, logColor, false);
         logView.setTypeface(Typeface.MONOSPACE);
         logView.setTextIsSelectable(true);
@@ -484,77 +746,150 @@ public final class MainActivity extends Activity {
         logParams.topMargin = dp(12);
         logParams.bottomMargin = dp(10);
         page.addView(logScroll, logParams);
-        TextView note = text("Логи хранятся только до закрытия приложения.", 11, secondary, false);
-        note.setGravity(Gravity.CENTER);
-        page.addView(note);
         return page;
     }
 
     private View buildSettingsPage() {
         LinearLayout page = page();
-        page.addView(text("Настройки", 25, text, true));
-        TextView restartHint = text("Параметры сети применяются при следующем подключении.", 12, secondary, false);
-        LinearLayout.LayoutParams hintParams = matchWrap();
-        hintParams.topMargin = dp(4);
-        hintParams.bottomMargin = dp(16);
-        page.addView(restartHint, hintParams);
+        page.addView(buildSettingsHeader());
 
-        page.addView(buildSettingsTabStrip());
+        if (!settingsDetailOpen) {
+            LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+            listParams.topMargin = dp(16);
+            listParams.bottomMargin = dp(10);
+            page.addView(buildSettingsList(), listParams);
+            return page;
+        }
 
+        boolean showSave = settingsSubTab != SETTINGS_ABOUT;
         LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(-1, 0, 1f);
-        contentParams.topMargin = dp(14);
+        contentParams.topMargin = dp(16);
+        if (!showSave) contentParams.bottomMargin = dp(10);
         page.addView(buildSettingsSubTabContent(), contentParams);
 
-        Button save = new Button(this);
-        save.setText("Сохранить настройки");
-        save.setAllCaps(false);
-        save.setTextColor(Color.WHITE);
-        save.setTextSize(15);
-        save.setTypeface(Typeface.DEFAULT_BOLD);
-        save.setStateListAnimator(null);
-        save.setBackground(buttonBackground(Color.rgb(26, 115, 232), Color.rgb(23, 78, 166)));
-        save.setOnClickListener(v -> {
-            tap(v);
-            readSettingsFromViews();
-            persistSettings();
-            Toast.makeText(this, "Настройки сохранены", Toast.LENGTH_SHORT).show();
-        });
-        LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(-1, dp(52));
-        saveParams.topMargin = dp(14);
-        saveParams.bottomMargin = dp(12);
-        page.addView(save, saveParams);
+        if (showSave) {
+            Button save = new Button(this);
+            save.setText("Сохранить настройки");
+            save.setAllCaps(false);
+            save.setTextColor(Color.WHITE);
+            save.setTextSize(15);
+            save.setTypeface(Typeface.DEFAULT_BOLD);
+            save.setStateListAnimator(null);
+            save.setBackground(buttonBackground(Color.rgb(26, 115, 232), Color.rgb(23, 78, 166)));
+            save.setOnClickListener(v -> {
+                bounce(v);
+                readSettingsFromViews();
+                persistSettings();
+                Toast.makeText(this, "Настройки сохранены", Toast.LENGTH_SHORT).show();
+            });
+            LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(-1, dp(52));
+            saveParams.topMargin = dp(14);
+            saveParams.bottomMargin = dp(12);
+            page.addView(save, saveParams);
+        }
         return page;
     }
 
-    private View buildSettingsTabStrip() {
-        LinearLayout strip = new LinearLayout(this);
-        strip.setOrientation(LinearLayout.HORIZONTAL);
-        strip.setBackground(rounded(surface, border, 1, 12));
-        strip.setPadding(dp(4), dp(4), dp(4), dp(4));
-        strip.addView(settingsTabItem("Транспорт", SETTINGS_TRANSPORT), weighted());
-        strip.addView(settingsTabItem("Сеть", SETTINGS_NETWORK), weighted());
-        strip.addView(settingsTabItem("Приложения", SETTINGS_APPS), weighted());
-        strip.addView(settingsTabItem("Вид", SETTINGS_INTERFACE), weighted());
-        return strip;
+    private View buildSettingsHeader() {
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        if (settingsDetailOpen) {
+            ImageButton back = iconButton(R.drawable.ic_arrow_back, "Назад к настройкам");
+            back.setOnClickListener(v -> {
+                bounce(v);
+                closeSettingsDetail();
+            });
+            LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(dp(44), dp(44));
+            backParams.rightMargin = dp(6);
+            header.addView(back, backParams);
+            header.addView(text(settingsSectionTitle(settingsSubTab), 22, text, true),
+                    new LinearLayout.LayoutParams(0, -2, 1f));
+        } else {
+            LinearLayout titles = new LinearLayout(this);
+            titles.setOrientation(LinearLayout.VERTICAL);
+            titles.addView(text("Настройки", 25, text, true));
+            TextView hint = text("Параметры сети применяются при следующем подключении.", 12, secondary, false);
+            LinearLayout.LayoutParams hintParams = matchWrap();
+            hintParams.topMargin = dp(4);
+            titles.addView(hint, hintParams);
+            header.addView(titles, new LinearLayout.LayoutParams(0, -2, 1f));
+        }
+        return header;
     }
 
-    private View settingsTabItem(String labelValue, int tab) {
-        boolean active = tab == settingsSubTab;
-        TextView item = text(labelValue, 12, active ? Color.WHITE : secondary, active);
-        item.setGravity(Gravity.CENTER);
-        item.setPadding(dp(6), dp(9), dp(6), dp(9));
-        item.setBackground(active ? rounded(accent, Color.TRANSPARENT, 0, 9) : ripple(Color.TRANSPARENT, 9));
-        item.setOnClickListener(v -> {
-            if (tab != settingsSubTab) tap(v);
-            showSettingsSubTab(tab);
-        });
-        if (active) {
-            item.setScaleX(0.88f);
-            item.setScaleY(0.88f);
-            item.animate().scaleX(1f).scaleY(1f).setDuration(220)
-                    .setInterpolator(new OvershootInterpolator(3f)).start();
+    private String settingsSectionTitle(int tab) {
+        switch (tab) {
+            case SETTINGS_NETWORK: return "Сеть";
+            case SETTINGS_APPS: return "Приложения";
+            case SETTINGS_INTERFACE: return "Вид";
+            case SETTINGS_ABOUT: return "О проекте";
+            case SETTINGS_MODE: return "Режим работы";
+            case SETTINGS_TRANSPORT:
+            default: return "Транспорт";
         }
-        return item;
+    }
+
+    private View buildSettingsList() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setBackground(rounded(surface, border, 1, 12));
+        list.addView(settingsListRow(R.drawable.ic_swap, "Режим работы",
+                MODE_PROXY.equals(connectionMode) ? "Прокси (SOCKS5)" : "VPN (весь трафик)", SETTINGS_MODE));
+        addDivider(list);
+        list.addView(settingsListRow(R.drawable.ic_link, "Транспорт",
+                "Ссылка на документ и шифрование", SETTINGS_TRANSPORT));
+        addDivider(list);
+        list.addView(settingsListRow(R.drawable.ic_public, "Сеть",
+                "DNS-сервер и MTU", SETTINGS_NETWORK));
+        addDivider(list);
+        list.addView(settingsListRow(R.drawable.ic_apps, "Приложения",
+                "Какие приложения используют VPN", SETTINGS_APPS));
+        addDivider(list);
+        list.addView(settingsListRow(R.drawable.ic_dark_mode, "Вид",
+                "Тема и автопрокрутка логов", SETTINGS_INTERFACE));
+        addDivider(list);
+        list.addView(settingsListRow(R.drawable.ic_info, "О проекте",
+                "Репозитории проекта", SETTINGS_ABOUT));
+        scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
+        return scroll;
+    }
+
+    private void addDivider(LinearLayout parent) {
+        addDivider(parent, dp(56));
+    }
+
+    private void addDivider(LinearLayout parent, int leftMargin) {
+        View line = new View(this);
+        line.setBackgroundColor(border);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(1));
+        params.leftMargin = leftMargin;
+        parent.addView(line, params);
+    }
+
+    private View settingsListRow(int iconRes, String titleValue, String detailValue, int tab) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(16), dp(14), dp(14), dp(14));
+        row.setBackground(ripple(Color.TRANSPARENT, 0));
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.addView(icon(iconRes, accent), new LinearLayout.LayoutParams(dp(24), dp(24)));
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        copyParams.leftMargin = dp(16);
+        copy.addView(text(titleValue, 15, text, true));
+        copy.addView(text(detailValue, 12, secondary, false));
+        row.addView(copy, copyParams);
+        row.addView(icon(R.drawable.ic_chevron_right, hint), new LinearLayout.LayoutParams(dp(20), dp(20)));
+        row.setOnClickListener(v -> {
+            bounce(v);
+            openSettingsDetail(tab);
+        });
+        return row;
     }
 
     private View buildSettingsSubTabContent() {
@@ -565,9 +900,380 @@ public final class MainActivity extends Activity {
                 return buildAppsSettings();
             case SETTINGS_INTERFACE:
                 return wrapScroll(buildInterfaceSettings());
+            case SETTINGS_ABOUT:
+                return wrapScroll(buildAboutSettings());
+            case SETTINGS_MODE:
+                return wrapScroll(buildModeSettings());
             case SETTINGS_TRANSPORT:
             default:
                 return wrapScroll(buildTransportSettings());
+        }
+    }
+
+    private View buildModeSettings() {
+        LinearLayout section = page();
+        TextView hint = text(
+                "VPN направляет через системный туннель весь трафик устройства. "
+                        + "Прокси поднимает локальный SOCKS5-сервер без запроса VPN-разрешения - "
+                        + "адрес нужно указать вручную в приложениях, которые поддерживают прокси.",
+                12, secondary, false);
+        section.addView(hint, matchWrap());
+
+        RadioGroup modeGroup = new RadioGroup(this);
+        modeGroup.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams modeGroupParams = matchWrap();
+        modeGroupParams.topMargin = dp(14);
+        section.addView(modeGroup, modeGroupParams);
+
+        RadioButton vpnOption = modeRadio("VPN - весь трафик устройства");
+        RadioButton proxyOption = modeRadio("Прокси (SOCKS5) - без системного VPN");
+        modeGroup.addView(vpnOption);
+        modeGroup.addView(proxyOption);
+        if (MODE_PROXY.equals(connectionMode)) proxyOption.setChecked(true);
+        else vpnOption.setChecked(true);
+
+        boolean proxySelected = MODE_PROXY.equals(connectionMode);
+
+        proxyPortInput = settingInput("Порт", String.valueOf(proxyPort), InputType.TYPE_CLASS_NUMBER);
+        View portRow = settingRow(R.drawable.ic_swap, "Локальный порт SOCKS5", proxyPortInput);
+        setInitialVisibility(portRow, proxySelected);
+        LinearLayout.LayoutParams portParams = matchWrap();
+        portParams.topMargin = dp(14);
+        section.addView(portRow, portParams);
+
+        Switch lanSwitch = settingSwitch(R.drawable.ic_public, "Доступ из локальной сети",
+                "Прокси станет виден другим устройствам в этой же Wi-Fi/LAN", proxyLanAccess);
+        View lanRow = (View) lanSwitch.getTag();
+        setInitialVisibility(lanRow, proxySelected);
+        LinearLayout.LayoutParams lanParams = matchWrap();
+        lanParams.topMargin = dp(8);
+        section.addView(lanRow, lanParams);
+
+        String localIp = getLocalIpAddress();
+        TextView lanAddressHint = text(
+                localIp != null
+                        ? "Адрес в сети: " + localIp + ":" + proxyPort
+                        : "Не удалось определить IP - проверьте подключение к Wi-Fi",
+                13, accent, true);
+        lanAddressHint.setPadding(dp(14), dp(12), dp(14), dp(12));
+        lanAddressHint.setBackground(rounded(darkMode ? Color.rgb(38, 50, 68) : Color.rgb(232, 240, 254),
+                Color.TRANSPARENT, 0, 10));
+        setInitialVisibility(lanAddressHint, proxySelected && proxyLanAccess);
+        LinearLayout.LayoutParams lanAddressParams = matchWrap();
+        lanAddressParams.topMargin = dp(8);
+        section.addView(lanAddressHint, lanAddressParams);
+
+        Switch authSwitch = settingSwitch(R.drawable.ic_lock, "Логин и пароль",
+                "Требовать авторизацию для подключения к прокси", proxyAuthEnabled);
+        View authRow = (View) authSwitch.getTag();
+        setInitialVisibility(authRow, proxySelected && proxyLanAccess);
+        LinearLayout.LayoutParams authParams = matchWrap();
+        authParams.topMargin = dp(8);
+        section.addView(authRow, authParams);
+        View lanWarningHint = fieldHint(
+                "Без пароля прокси в локальной сети открыт для всех: любой в этой Wi-Fi сможет "
+                        + "ходить в интернет через ваш туннель.");
+        setInitialVisibility(lanWarningHint, proxySelected && proxyLanAccess);
+        section.addView(lanWarningHint);
+
+        LinearLayout credentialsBlock = new LinearLayout(this);
+        credentialsBlock.setOrientation(LinearLayout.VERTICAL);
+        setInitialVisibility(credentialsBlock, proxySelected && proxyLanAccess && proxyAuthEnabled);
+        LinearLayout.LayoutParams credentialsParams = matchWrap();
+        credentialsParams.topMargin = dp(10);
+        section.addView(credentialsBlock, credentialsParams);
+
+        proxyUsernameInput = settingInput("Логин", proxyUsername, InputType.TYPE_CLASS_TEXT);
+        credentialsBlock.addView(iconTextField(R.drawable.ic_person, proxyUsernameInput, null),
+                new LinearLayout.LayoutParams(-1, dp(56)));
+        LinearLayout.LayoutParams passwordParams = new LinearLayout.LayoutParams(-1, dp(56));
+        passwordParams.topMargin = dp(8);
+        credentialsBlock.addView(buildProxyPasswordField(), passwordParams);
+
+        Button generateCreds = new Button(this);
+        generateCreds.setText("Сгенерировать логин и пароль");
+        generateCreds.setAllCaps(false);
+        generateCreds.setTextColor(accent);
+        generateCreds.setTextSize(13);
+        generateCreds.setStateListAnimator(null);
+        generateCreds.setBackground(ripple(Color.TRANSPARENT, 9));
+        generateCreds.setOnClickListener(v -> {
+            bounce(v);
+            generateProxyCredentials();
+        });
+        LinearLayout.LayoutParams generateParams = new LinearLayout.LayoutParams(-1, dp(44));
+        generateParams.topMargin = dp(2);
+        credentialsBlock.addView(generateCreds, generateParams);
+
+        View shareCard = buildProxyShareCard();
+        setInitialVisibility(shareCard, proxySelected);
+        LinearLayout.LayoutParams shareParams = matchWrap();
+        shareParams.topMargin = dp(14);
+        section.addView(shareCard, shareParams);
+
+        TextView reliabilityTitle = label("НАДЁЖНОСТЬ");
+        LinearLayout.LayoutParams reliabilityTitleParams = matchWrap();
+        reliabilityTitleParams.topMargin = dp(26);
+        reliabilityTitleParams.bottomMargin = dp(8);
+        section.addView(reliabilityTitle, reliabilityTitleParams);
+
+        LinearLayout batteryRow = cardRow(R.drawable.ic_power, "Отключить оптимизацию батареи",
+                "Чтобы система не убивала соединение в фоне");
+        batteryRow.setClickable(true);
+        batteryRow.setFocusable(true);
+        batteryRow.setOnClickListener(v -> {
+            bounce(v);
+            requestIgnoreBatteryOptimizations();
+        });
+        section.addView(batteryRow, matchWrap());
+
+        LinearLayout alwaysOnRow = cardRow(R.drawable.ic_lock, "Настройки Always-on VPN",
+                "Включите \"Блокировать соединения без VPN\" для защиты от утечек при обрыве");
+        alwaysOnRow.setClickable(true);
+        alwaysOnRow.setFocusable(true);
+        alwaysOnRow.setOnClickListener(v -> {
+            bounce(v);
+            startActivity(new Intent(Settings.ACTION_VPN_SETTINGS));
+        });
+        setInitialVisibility(alwaysOnRow, !proxySelected);
+        LinearLayout.LayoutParams alwaysOnParams = matchWrap();
+        alwaysOnParams.topMargin = dp(8);
+        section.addView(alwaysOnRow, alwaysOnParams);
+
+        modeGroup.setOnCheckedChangeListener((group, checkedId) -> {
+            tap(group);
+            connectionMode = checkedId == proxyOption.getId() ? MODE_PROXY : MODE_VPN;
+            boolean nowProxy = MODE_PROXY.equals(connectionMode);
+            setViewVisibleAnimated(portRow, nowProxy);
+            setViewVisibleAnimated(lanRow, nowProxy);
+            setViewVisibleAnimated(lanAddressHint, nowProxy && proxyLanAccess);
+            setViewVisibleAnimated(authRow, nowProxy && proxyLanAccess);
+            setViewVisibleAnimated(lanWarningHint, nowProxy && proxyLanAccess);
+            setViewVisibleAnimated(credentialsBlock, nowProxy && proxyLanAccess && proxyAuthEnabled);
+            setViewVisibleAnimated(shareCard, nowProxy);
+            setViewVisibleAnimated(alwaysOnRow, !nowProxy);
+            persistSettings();
+        });
+
+        lanSwitch.setOnCheckedChangeListener((button, checked) -> {
+            tap(button);
+            proxyLanAccess = checked;
+            setViewVisibleAnimated(lanAddressHint, checked);
+            setViewVisibleAnimated(authRow, checked);
+            setViewVisibleAnimated(lanWarningHint, checked);
+            setViewVisibleAnimated(credentialsBlock, checked && proxyAuthEnabled);
+            persistSettings();
+        });
+
+        authSwitch.setOnCheckedChangeListener((button, checked) -> {
+            tap(button);
+            proxyAuthEnabled = checked;
+            setViewVisibleAnimated(credentialsBlock, checked);
+            persistSettings();
+        });
+
+        return section;
+    }
+
+    // buildProxyShareCard renders the socks:// link (and a QR encoding it)
+    // that another device can use to add this proxy in an app like Happ or
+    // Telegram, using whatever host/port/credentials are currently saved.
+    // It reflects state as of when this settings screen was built, not live
+    // as the user edits fields above - consistent with how other settings
+    // here only take effect after being saved/reopened.
+    private View buildProxyShareCard() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.setBackground(rounded(surface, border, 1, 11));
+        card.addView(text("Ссылка для подключения с другого устройства", 12, secondary, false));
+
+        String link = proxyShareLink();
+        TextView linkView = text(link, 14, text, true);
+        linkView.setTextIsSelectable(true);
+        LinearLayout.LayoutParams linkParams = matchWrap();
+        linkParams.topMargin = dp(6);
+        card.addView(linkView, linkParams);
+
+        Button copyButton = new Button(this);
+        copyButton.setText("Копировать ссылку");
+        copyButton.setAllCaps(false);
+        copyButton.setTextColor(accent);
+        copyButton.setTextSize(13);
+        copyButton.setStateListAnimator(null);
+        copyButton.setBackground(ripple(Color.TRANSPARENT, 9));
+        copyButton.setOnClickListener(v -> {
+            bounce(v);
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(ClipData.newPlainText("OpenFlux SOCKS5", link));
+            }
+            Toast.makeText(this, "Ссылка скопирована", Toast.LENGTH_SHORT).show();
+        });
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(-1, dp(40));
+        copyParams.topMargin = dp(2);
+        card.addView(copyButton, copyParams);
+
+        Bitmap qr = generateQrBitmap(link, dp(180));
+        if (qr != null) {
+            ImageView qrView = new ImageView(this);
+            qrView.setImageBitmap(qr);
+            LinearLayout.LayoutParams qrParams = new LinearLayout.LayoutParams(dp(180), dp(180));
+            qrParams.topMargin = dp(10);
+            qrParams.gravity = Gravity.CENTER_HORIZONTAL;
+            card.addView(qrView, qrParams);
+        }
+
+        return card;
+    }
+
+    private String proxyShareLink() {
+        String host = proxyLanAccess ? getLocalIpAddress() : null;
+        if (host == null) host = "127.0.0.1";
+        String auth = "";
+        if (proxyLanAccess && proxyAuthEnabled && !proxyUsername.isEmpty()) {
+            auth = proxyUsername + ":" + proxyPassword + "@";
+        }
+        return "socks://" + auth + host + ":" + proxyPort;
+    }
+
+    private Bitmap generateQrBitmap(String content, int sizePx) {
+        try {
+            BitMatrix matrix = new QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, sizePx, sizePx);
+            int foreground = darkMode ? Color.WHITE : Color.BLACK;
+            int background = darkMode ? Color.BLACK : Color.WHITE;
+            Bitmap bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.RGB_565);
+            for (int x = 0; x < sizePx; x++) {
+                for (int y = 0; y < sizePx; y++) {
+                    bitmap.setPixel(x, y, matrix.get(x, y) ? foreground : background);
+                }
+            }
+            return bitmap;
+        } catch (WriterException exception) {
+            return null;
+        }
+    }
+
+    private void requestIgnoreBatteryOptimizations() {
+        PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
+        if (powerManager != null && powerManager.isIgnoringBatteryOptimizations(getPackageName())) {
+            Toast.makeText(this, "Оптимизация батареи уже отключена для приложения", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + getPackageName())));
+        } catch (Exception exception) {
+            startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+        }
+    }
+
+    // setInitialVisibility sets a view's starting visibility/alpha without
+    // animating, for use when building a page (as opposed to
+    // setViewVisibleAnimated, which is for reacting to a toggle afterwards).
+    private void setInitialVisibility(View view, boolean visible) {
+        view.setVisibility(visible ? View.VISIBLE : View.GONE);
+        view.setAlpha(visible ? 1f : 0f);
+    }
+
+    private View buildProxyPasswordField() {
+        proxyPasswordInput = settingInput("Пароль", proxyPassword,
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        proxyPasswordInput.setTransformationMethod(
+                proxyPasswordVisible ? null : PasswordTransformationMethod.getInstance());
+        proxyPasswordVisibilityButton = iconButton(
+                proxyPasswordVisible ? R.drawable.ic_visibility_off : R.drawable.ic_visibility,
+                proxyPasswordVisible ? "Скрыть пароль" : "Показать пароль");
+        proxyPasswordVisibilityButton.setOnClickListener(v -> {
+            tap(v);
+            toggleProxyPasswordVisibility();
+        });
+        return iconTextField(R.drawable.ic_key, proxyPasswordInput, proxyPasswordVisibilityButton);
+    }
+
+    // iconTextField lays out a leading icon and an EditText that fills the
+    // rest of the row (with a reasonable gap between them, rather than
+    // settingRow's separate caption + far-right fixed-width value box, which
+    // doesn't read well when the "value" is itself the thing being typed),
+    // plus an optional trailing action button (e.g. a show/hide toggle).
+    private View iconTextField(int iconRes, EditText input, ImageButton trailingButton) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), 0, trailingButton != null ? dp(2) : dp(14), 0);
+        row.setBackground(rounded(surface, border, 1, 10));
+        row.addView(icon(iconRes, secondary), new LinearLayout.LayoutParams(dp(20), dp(20)));
+        input.setPadding(0, 0, 0, 0);
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(0, -1, 1f);
+        inputParams.leftMargin = dp(12);
+        row.addView(input, inputParams);
+        if (trailingButton != null) {
+            row.addView(trailingButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        }
+        return row;
+    }
+
+    private void toggleProxyPasswordVisibility() {
+        int position = proxyPasswordInput.getSelectionStart();
+        proxyPasswordVisible = !proxyPasswordVisible;
+        proxyPasswordInput.setTransformationMethod(
+                proxyPasswordVisible ? null : PasswordTransformationMethod.getInstance());
+        proxyPasswordInput.setTypeface(Typeface.DEFAULT);
+        proxyPasswordVisibilityButton.setImageResource(
+                proxyPasswordVisible ? R.drawable.ic_visibility_off : R.drawable.ic_visibility);
+        proxyPasswordVisibilityButton.setContentDescription(
+                proxyPasswordVisible ? "Скрыть пароль" : "Показать пароль");
+        proxyPasswordInput.setSelection(Math.max(0, Math.min(position, proxyPasswordInput.length())));
+    }
+
+    private void generateProxyCredentials() {
+        byte[] randomPass = new byte[16];
+        new SecureRandom().nextBytes(randomPass);
+        proxyUsername = "user" + (100 + new SecureRandom().nextInt(900));
+        proxyPassword = Base64.encodeToString(randomPass, Base64.NO_WRAP | Base64.NO_PADDING | Base64.URL_SAFE);
+        if (proxyUsernameInput != null) proxyUsernameInput.setText(proxyUsername);
+        if (proxyPasswordInput != null) {
+            proxyPasswordInput.setText(proxyPassword);
+            proxyPasswordInput.setSelection(proxyPasswordInput.length());
+        }
+        persistSettings();
+        Toast.makeText(this, "Логин и пароль созданы", Toast.LENGTH_SHORT).show();
+    }
+
+    private View buildAboutSettings() {
+        LinearLayout section = page();
+        TextView intro = text(
+                "OpenFlux - экспериментальный VPN-клиент поверх документ-транспорта. "
+                        + "Это доработанный форк общедоступного проекта под Android.",
+                13, secondary, false);
+        section.addView(intro, matchWrap());
+
+        LinearLayout.LayoutParams mainRepoParams = matchWrap();
+        mainRepoParams.topMargin = dp(20);
+        section.addView(aboutLinkRow("Основной репозиторий", "p1neappleXpress/OpenFlux", MAIN_REPO_URL),
+                mainRepoParams);
+
+        LinearLayout.LayoutParams forkParams = matchWrap();
+        forkParams.topMargin = dp(10);
+        section.addView(aboutLinkRow("Наш форк", "damnurmum/OpenFlux-Android", FORK_REPO_URL), forkParams);
+        return section;
+    }
+
+    private View aboutLinkRow(String titleValue, String detailValue, String url) {
+        LinearLayout row = cardRow(R.drawable.ic_link, titleValue, detailValue);
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setOnClickListener(v -> {
+            bounce(v);
+            openUrl(url);
+        });
+        return row;
+    }
+
+    private void openUrl(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)));
+        } catch (Exception e) {
+            Toast.makeText(this, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -612,13 +1318,53 @@ public final class MainActivity extends Activity {
 
     private View buildNetworkSettings() {
         LinearLayout section = page();
-        dnsInput = settingInput("DNS-сервер", dnsServer, InputType.TYPE_CLASS_PHONE);
+        dnsInput = settingInput("DNS-сервер", dnsServer,
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         section.addView(settingRow(R.drawable.ic_public, "DNS-сервер", dnsInput));
+        section.addView(fieldHint(
+                "Для чего: сюда уходят запросы «какой IP у сайта». "
+                        + "Можно указать IP (1.1.1.1) или доменное имя (dns.google)."));
+
+        RadioGroup dnsModeGroup = new RadioGroup(this);
+        dnsModeGroup.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams dnsModeGroupParams = matchWrap();
+        dnsModeGroupParams.topMargin = dp(10);
+        section.addView(dnsModeGroup, dnsModeGroupParams);
+        RadioButton serverOption = modeRadio("Резолвить на сервере - через туннель");
+        RadioButton clientOption = modeRadio("Резолвить локально на устройстве");
+        dnsModeGroup.addView(serverOption);
+        dnsModeGroup.addView(clientOption);
+        if (DNS_RESOLVE_CLIENT.equals(dnsResolveMode)) clientOption.setChecked(true);
+        else serverOption.setChecked(true);
+        dnsModeGroup.setOnCheckedChangeListener((group, checkedId) -> {
+            tap(group);
+            dnsResolveMode = checkedId == clientOption.getId() ? DNS_RESOLVE_CLIENT : DNS_RESOLVE_SERVER;
+            persistSettings();
+        });
+        section.addView(fieldHint(
+                "На сервере - провайдер не видит домены, но нужен exit node с поддержкой "
+                        + "релея DNS. Локально - быстрее и работает с любым exit node, но "
+                        + "провайдер видит, к каким доменам вы обращаетесь."));
+
         mtuInput = settingInput("MTU", String.valueOf(mtu), InputType.TYPE_CLASS_NUMBER);
         LinearLayout.LayoutParams mtuParams = matchWrap();
-        mtuParams.topMargin = dp(8);
+        mtuParams.topMargin = dp(16);
         section.addView(settingRow(R.drawable.ic_settings, "MTU пакета", mtuInput), mtuParams);
+        section.addView(fieldHint(
+                "Для чего: максимальный размер пакета в туннеле. Трогать не обязательно - "
+                        + "уменьшите (например, до 1280), если сайты грузятся не полностью "
+                        + "или соединение обрывается."));
         return section;
+    }
+
+    private TextView fieldHint(String value) {
+        TextView hint = text(value, 11, secondary, false);
+        LinearLayout.LayoutParams params = matchWrap();
+        params.topMargin = dp(5);
+        params.leftMargin = dp(4);
+        params.rightMargin = dp(4);
+        hint.setLayoutParams(params);
+        return hint;
     }
 
     private View buildInterfaceSettings() {
@@ -646,7 +1392,8 @@ public final class MainActivity extends Activity {
     private View buildAppsSettings() {
         LinearLayout section = page();
         TextView hint = text(
-                "Выберите, какие приложения используют VPN-туннель. По умолчанию — все приложения, кроме OpenFlux.",
+                "Выберите, какие приложения используют VPN-туннель. По умолчанию - все приложения, кроме OpenFlux. "
+                        + "Действует только в режиме VPN - в режиме прокси приложения подключаются к SOCKS5 сами.",
                 12, secondary, false);
         section.addView(hint, matchWrap());
 
@@ -891,26 +1638,6 @@ public final class MainActivity extends Activity {
         return row;
     }
 
-    private View infoCard(String leftTitle, String leftValue, String rightTitle, String rightValue) {
-        LinearLayout card = new LinearLayout(this);
-        card.setPadding(dp(16), dp(14), dp(16), dp(14));
-        card.setBackground(rounded(surface, border, 1, 11));
-        card.addView(infoColumn(leftTitle, leftValue), weighted());
-        card.addView(infoColumn(rightTitle, rightValue), weighted());
-        return card;
-    }
-
-    private View infoColumn(String titleValue, String value) {
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.addView(text(titleValue, 11, secondary, false));
-        TextView valueView = text(value, 16, text, true);
-        LinearLayout.LayoutParams valueParams = matchWrap();
-        valueParams.topMargin = dp(3);
-        column.addView(valueView, valueParams);
-        return column;
-    }
-
     private View settingRow(int iconRes, String labelValue, EditText input) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -1018,6 +1745,9 @@ public final class MainActivity extends Activity {
         encryptionInput = null;
         dnsInput = null;
         mtuInput = null;
+        proxyPortInput = null;
+        proxyUsernameInput = null;
+        proxyPasswordInput = null;
         logView = null;
         logScroll = null;
     }
@@ -1031,6 +1761,13 @@ public final class MainActivity extends Activity {
             catch (NumberFormatException ignored) { mtu = DEFAULT_MTU; }
             mtu = Math.max(576, Math.min(1500, mtu));
         }
+        if (proxyPortInput != null) {
+            try { proxyPort = Integer.parseInt(proxyPortInput.getText().toString()); }
+            catch (NumberFormatException ignored) { proxyPort = DEFAULT_PROXY_PORT; }
+            proxyPort = Math.max(1024, Math.min(65535, proxyPort));
+        }
+        if (proxyUsernameInput != null) proxyUsername = proxyUsernameInput.getText().toString().trim();
+        if (proxyPasswordInput != null) proxyPassword = proxyPasswordInput.getText().toString().trim();
         if (logView != null) logs = logView.getText().toString();
     }
 
@@ -1038,34 +1775,68 @@ public final class MainActivity extends Activity {
         if (dnsServer.isEmpty()) dnsServer = DEFAULT_DNS;
         secureSettings.putString("document_url", documentUrl);
         secureSettings.putString("encryption_secret", encryptionSecret);
+        secureSettings.putString("proxy_password", proxyPassword);
         getPreferences(MODE_PRIVATE).edit()
                 .remove("connection_document_url")
                 .putString("dns_server", dnsServer)
                 .putInt("mtu", mtu)
+                .putString("connection_mode", connectionMode)
+                .putString("dns_resolve_mode", dnsResolveMode)
+                .putInt("proxy_port", proxyPort)
+                .putBoolean("proxy_lan_access", proxyLanAccess)
+                .putBoolean("proxy_auth_enabled", proxyAuthEnabled)
+                .putString("proxy_username", proxyUsername)
                 .putBoolean("auto_scroll", autoScroll)
                 .putBoolean("dark_mode", darkMode)
                 .commit();
     }
 
-    private void toggleVpn() {
-        if (OpenFluxVpnService.isRunning()) {
-            Intent stop = new Intent(this, OpenFluxVpnService.class);
-            stop.setAction(OpenFluxVpnService.ACTION_STOP);
+    private boolean isProxyMode() {
+        return MODE_PROXY.equals(connectionMode);
+    }
+
+    private boolean isConnectionRunning() {
+        return isProxyMode() ? OpenFluxProxyService.isRunning() : OpenFluxVpnService.isRunning();
+    }
+
+    private String connectionStatus() {
+        return isProxyMode() ? OpenFluxProxyService.getStatus() : OpenFluxVpnService.getStatus();
+    }
+
+    private String connectionLastError() {
+        return isProxyMode() ? OpenFluxProxyService.getLastError() : OpenFluxVpnService.getLastError();
+    }
+
+    private void toggleConnection() {
+        if (isConnectionRunning()) {
+            boolean proxyMode = isProxyMode();
+            Intent stop = new Intent(this, proxyMode ? OpenFluxProxyService.class : OpenFluxVpnService.class);
+            stop.setAction(proxyMode ? OpenFluxProxyService.ACTION_STOP : OpenFluxVpnService.ACTION_STOP);
             startService(stop);
-            appendLog("Запрошена остановка VPN");
+            appendLog(proxyMode ? "Запрошена остановка прокси" : "Запрошена остановка VPN");
             return;
         }
         if (!isValidDocumentUrl(documentUrl)) {
             Toast.makeText(this, "Укажите корректную HTTPS-ссылку в настройках", Toast.LENGTH_LONG).show();
-            showPage(PAGE_SETTINGS);
+            openSettingsDetail(SETTINGS_TRANSPORT);
             return;
         }
         if (encryptionSecret == null || encryptionSecret.length() < 16) {
             Toast.makeText(this, "Укажите ключ шифрования: минимум 16 символов", Toast.LENGTH_LONG).show();
-            showPage(PAGE_SETTINGS);
+            openSettingsDetail(SETTINGS_TRANSPORT);
+            return;
+        }
+        if (isProxyMode() && proxyLanAccess && proxyAuthEnabled
+                && (proxyUsername.isEmpty() || proxyPassword.isEmpty())) {
+            Toast.makeText(this, "Укажите логин и пароль для авторизации прокси", Toast.LENGTH_LONG).show();
+            openSettingsDetail(SETTINGS_MODE);
             return;
         }
         persistSettings();
+        if (isProxyMode()) {
+            startProxy();
+            return;
+        }
         Intent permission = VpnService.prepare(this);
         if (permission != null) startActivityForResult(permission, VPN_PERMISSION_REQUEST);
         else startVpn();
@@ -1083,22 +1854,45 @@ public final class MainActivity extends Activity {
         intent.putExtra(OpenFluxVpnService.EXTRA_DOCUMENT_URL, documentUrl);
         intent.putExtra(OpenFluxVpnService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
         intent.putExtra(OpenFluxVpnService.EXTRA_DNS_SERVER, dnsServer);
+        intent.putExtra(OpenFluxVpnService.EXTRA_RESOLVE_ON_SERVER, DNS_RESOLVE_SERVER.equals(dnsResolveMode));
         intent.putExtra(OpenFluxVpnService.EXTRA_MTU, mtu);
         startForegroundService(intent);
         appendLog("Запуск VPN…");
     }
 
+    private void startProxy() {
+        Intent intent = new Intent(this, OpenFluxProxyService.class);
+        intent.setAction(OpenFluxProxyService.ACTION_START);
+        intent.putExtra(OpenFluxProxyService.EXTRA_DOCUMENT_URL, documentUrl);
+        intent.putExtra(OpenFluxProxyService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
+        intent.putExtra(OpenFluxProxyService.EXTRA_PORT, proxyPort);
+        intent.putExtra(OpenFluxProxyService.EXTRA_DNS_SERVER, dnsServer);
+        intent.putExtra(OpenFluxProxyService.EXTRA_RESOLVE_ON_SERVER, DNS_RESOLVE_SERVER.equals(dnsResolveMode));
+        intent.putExtra(OpenFluxProxyService.EXTRA_LAN_ACCESS, proxyLanAccess);
+        if (proxyLanAccess && proxyAuthEnabled) {
+            intent.putExtra(OpenFluxProxyService.EXTRA_USERNAME, proxyUsername);
+            intent.putExtra(OpenFluxProxyService.EXTRA_PASSWORD, proxyPassword);
+        }
+        startForegroundService(intent);
+        appendLog("Запуск прокси…");
+    }
+
     private void updateStatus() {
         if (statusView == null || vpnButton == null) return;
-        String state = OpenFluxVpnService.getStatus();
-        boolean running = OpenFluxVpnService.isRunning();
+        boolean proxyMode = isProxyMode();
+        String state = connectionStatus();
+        boolean running = isConnectionRunning();
         statusView.setText(state);
-        vpnButtonText.setText(running ? "Остановить VPN" : "Запустить VPN");
+        vpnButtonText.setText(running
+                ? (proxyMode ? "Остановить прокси" : "Остановить VPN")
+                : (proxyMode ? "Запустить прокси" : "Запустить VPN"));
         int stateColor;
         boolean transitional = false;
         if ("Подключено".equals(state)) {
             stateColor = darkMode ? Color.rgb(129, 201, 149) : Color.rgb(24, 128, 56);
-            statusDetail.setText("Трафик направляется через OpenFlux");
+            statusDetail.setText(proxyMode
+                    ? "SOCKS5 на 127.0.0.1:" + proxyPort
+                    : "Трафик направляется через OpenFlux");
         } else if ("Ошибка".equals(state)) {
             stateColor = darkMode ? Color.rgb(242, 139, 130) : Color.rgb(217, 48, 37);
             statusDetail.setText("Откройте вкладку «Логи»");
@@ -1108,7 +1902,7 @@ public final class MainActivity extends Activity {
             transitional = true;
         } else {
             stateColor = Color.rgb(154, 160, 166);
-            statusDetail.setText("VPN сейчас не используется");
+            statusDetail.setText(proxyMode ? "Прокси сейчас не используется" : "VPN сейчас не используется");
         }
         if (state != null && !state.equals(lastAnnouncedState)) {
             if ("Подключено".equals(state)) vibrateSuccess();
@@ -1123,7 +1917,7 @@ public final class MainActivity extends Activity {
         int vpnPressed = running ? Color.rgb(183, 28, 28) : Color.rgb(23, 78, 166);
         animateVpnButtonFill(vpnFill, vpnPressed);
 
-        String error = OpenFluxVpnService.getLastError();
+        String error = connectionLastError();
         if (error != null && !error.isEmpty() && !error.equals(lastShownError)) {
             lastShownError = error;
             appendLog("Ошибка: " + error);
@@ -1159,8 +1953,8 @@ public final class MainActivity extends Activity {
     }
 
     private void updatePing() {
-        boolean connected = OpenFluxVpnService.isRunning()
-                && "Подключено".equals(OpenFluxVpnService.getStatus());
+        boolean proxyMode = isProxyMode();
+        boolean connected = isConnectionRunning() && "Подключено".equals(connectionStatus());
         if (!connected) {
             lastPingRequestAt = 0;
             lastPingSequence = 0;
@@ -1173,16 +1967,16 @@ public final class MainActivity extends Activity {
         long now = SystemClock.elapsedRealtime();
         if (now - lastPingRequestAt >= 2000) {
             lastPingRequestAt = now;
-            Mobile.ping();
+            if (proxyMode) Mobile.proxyPing(); else Mobile.ping();
         }
-        long sequence = Mobile.pingSequence();
+        long sequence = proxyMode ? Mobile.proxyPingSequence() : Mobile.pingSequence();
         if (sequence == 0 || sequence == lastPingSequence) return;
         lastPingSequence = sequence;
-        long milliseconds = Mobile.pingMillis();
+        long milliseconds = proxyMode ? Mobile.proxyPingMillis() : Mobile.pingMillis();
         if (milliseconds < 0) return;
         if (pingHistory.size() >= 32) pingHistory.remove(0);
         pingHistory.add((float) milliseconds);
-        String country = Mobile.serverCountry();
+        String country = proxyMode ? Mobile.proxyServerCountry() : Mobile.serverCountry();
         boolean countryJustArrived = country != null && !country.isEmpty() && lastCountry.isEmpty();
         if (country != null && !country.isEmpty()) lastCountry = country;
         if (pingValue != null) {
@@ -1215,6 +2009,25 @@ public final class MainActivity extends Activity {
                         if (!pingPanelShown && pingPanel != null) pingPanel.setVisibility(View.GONE);
                     }).start();
         }
+    }
+
+    // getLocalIpAddress finds this device's IPv4 address on whatever network
+    // it's currently attached to (Wi-Fi, a hotspot it joined, Ethernet, ...)
+    // by scanning network interfaces directly, so it works the same way
+    // regardless of connection type and needs no extra permission.
+    private String getLocalIpAddress() {
+        try {
+            for (NetworkInterface intf : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                if (!intf.isUp() || intf.isLoopback()) continue;
+                for (InetAddress address : Collections.list(intf.getInetAddresses())) {
+                    if (!address.isLoopbackAddress() && address instanceof Inet4Address) {
+                        return address.getHostAddress();
+                    }
+                }
+            }
+        } catch (SocketException ignored) {
+        }
+        return null;
     }
 
     private boolean isValidDocumentUrl(String value) {
@@ -1298,6 +2111,39 @@ public final class MainActivity extends Activity {
     // setting automatically and needs no permission.
     private void tap(View view) {
         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+    }
+
+    // bounce gives a tap haptic plus a scale-down/scale-up feedback animation.
+    // Repeated or rapid taps on the same view would otherwise stack multiple
+    // overlapping ViewPropertyAnimator sequences (cancel() still runs a
+    // pending withEndAction on API 23+), so any animation already running for
+    // this exact view is fully cancelled and replaced before starting a new
+    // one, and the scale is reset synchronously rather than relying on the
+    // cancelled animation to leave it in a known state.
+    private void bounce(View view) {
+        tap(view);
+        AnimatorSet running = bounceAnimators.remove(view);
+        if (running != null) running.cancel();
+        view.setScaleX(1f);
+        view.setScaleY(1f);
+        ObjectAnimator shrink = ObjectAnimator.ofPropertyValuesHolder(view,
+                PropertyValuesHolder.ofFloat(View.SCALE_X, 0.96f),
+                PropertyValuesHolder.ofFloat(View.SCALE_Y, 0.96f));
+        shrink.setDuration(80);
+        ObjectAnimator grow = ObjectAnimator.ofPropertyValuesHolder(view,
+                PropertyValuesHolder.ofFloat(View.SCALE_X, 1f),
+                PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f));
+        grow.setDuration(140);
+        grow.setInterpolator(new OvershootInterpolator(3f));
+        AnimatorSet set = new AnimatorSet();
+        set.playSequentially(shrink, grow);
+        set.addListener(new AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(Animator animation) {
+                bounceAnimators.remove(view);
+            }
+        });
+        bounceAnimators.put(view, set);
+        set.start();
     }
 
     // vibrateSuccess/vibrateError are for state changes that aren't a direct

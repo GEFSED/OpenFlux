@@ -8,19 +8,26 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.VpnService;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
+import android.os.SystemClock;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.SocketTimeoutException;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import io.openflux.bridge.mobile.Mobile;
 
@@ -30,6 +37,7 @@ public final class OpenFluxVpnService extends VpnService {
     public static final String EXTRA_DOCUMENT_URL = "document_url";
     public static final String EXTRA_ENCRYPTION_SECRET = "encryption_secret";
     public static final String EXTRA_DNS_SERVER = "dns_server";
+    public static final String EXTRA_RESOLVE_ON_SERVER = "resolve_on_server";
     public static final String EXTRA_MTU = "mtu";
 
     private static final String CHANNEL_ID = "openflux_vpn";
@@ -46,9 +54,78 @@ public final class OpenFluxVpnService extends VpnService {
     private FileInputStream tunnelInput;
     private FileOutputStream tunnelOutput;
 
+    private final AtomicLong bytesSent = new AtomicLong();
+    private final AtomicLong bytesReceived = new AtomicLong();
+    private final Handler notificationHandler = new Handler(Looper.getMainLooper());
+    private long lastSampledSent;
+    private long lastSampledReceived;
+    private long lastSampledAt;
+    private final Runnable speedUpdater = new Runnable() {
+        @Override public void run() {
+            long now = SystemClock.elapsedRealtime();
+            long elapsedMs = Math.max(1, now - lastSampledAt);
+            long sent = bytesSent.get();
+            long received = bytesReceived.get();
+            long sentPerSec = (sent - lastSampledSent) * 1000 / elapsedMs;
+            long receivedPerSec = (received - lastSampledReceived) * 1000 / elapsedMs;
+            lastSampledSent = sent;
+            lastSampledReceived = received;
+            lastSampledAt = now;
+            updateNotification("↑ " + formatSpeed(sentPerSec) + "   ↓ " + formatSpeed(receivedPerSec));
+            notificationHandler.postDelayed(this, 1000);
+        }
+    };
+
+    // healthChecker keeps "Подключено" honest: without it, status is set
+    // once on initial connect and never revisited, so if the underlying
+    // Yandex Docs transport drops and silently retries (it keeps retrying
+    // on its own - see transport.DefaultConfig's MaxReconnectAttempts) the
+    // UI would keep showing a green "connected" while every packet is
+    // actually being dropped (Mobile.send fails silently, so nothing leaks
+    // unencrypted - the TUN just stops passing data). This surfaces that
+    // state honestly instead of just failing silently.
+    private final Runnable healthChecker = new Runnable() {
+        @Override public void run() {
+            if (running) {
+                boolean connected = Mobile.isConnected();
+                if (!connected && "Подключено".equals(status)) {
+                    status = "Подключение…";
+                    lastError = "Транспорт отключился, переподключение…";
+                } else if (connected && "Подключение…".equals(status) && active) {
+                    status = "Подключено";
+                    lastError = "Транспорт восстановлен";
+                }
+            }
+            notificationHandler.postDelayed(this, 2000);
+        }
+    };
+
     public static boolean isRunning() { return running; }
     public static String getStatus() { return status; }
     public static String getLastError() { return lastError; }
+
+    private static String formatSpeed(long bytesPerSecond) {
+        if (bytesPerSecond < 1024) return bytesPerSecond + " Б/с";
+        if (bytesPerSecond < 1024 * 1024) return String.format(Locale.US, "%.0f КБ/с", bytesPerSecond / 1024.0);
+        return String.format(Locale.US, "%.1f МБ/с", bytesPerSecond / (1024.0 * 1024.0));
+    }
+
+    private void startSpeedUpdates() {
+        bytesSent.set(0);
+        bytesReceived.set(0);
+        lastSampledSent = 0;
+        lastSampledReceived = 0;
+        lastSampledAt = SystemClock.elapsedRealtime();
+        notificationHandler.removeCallbacks(speedUpdater);
+        notificationHandler.post(speedUpdater);
+        notificationHandler.removeCallbacks(healthChecker);
+        notificationHandler.postDelayed(healthChecker, 2000);
+    }
+
+    private void stopSpeedUpdates() {
+        notificationHandler.removeCallbacks(speedUpdater);
+        notificationHandler.removeCallbacks(healthChecker);
+    }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
@@ -75,6 +152,7 @@ public final class OpenFluxVpnService extends VpnService {
             return START_NOT_STICKY;
         }
         if (dnsServer == null || dnsServer.trim().isEmpty()) dnsServer = "1.1.1.1";
+        boolean resolveOnServer = intent.getBooleanExtra(EXTRA_RESOLVE_ON_SERVER, true);
         int mtu = Math.max(576, Math.min(1500, intent.getIntExtra(EXTRA_MTU, 1400)));
 
         createNotificationChannel();
@@ -86,11 +164,12 @@ public final class OpenFluxVpnService extends VpnService {
         int session = generation.incrementAndGet();
         String selectedDns = dnsServer;
         int selectedMtu = mtu;
-        workers.execute(() -> startTunnel(url, encryptionSecret, selectedDns, selectedMtu, session));
+        workers.execute(() -> startTunnel(url, encryptionSecret, selectedDns, resolveOnServer, selectedMtu, session));
         return START_STICKY;
     }
 
-    private void startTunnel(String url, String encryptionSecret, String dnsServer, int mtu, int session) {
+    private void startTunnel(String url, String encryptionSecret, String dnsServer, boolean resolveOnServer,
+            int mtu, int session) {
         if (!isCurrent(session)) return;
         String error = Mobile.start(url, encryptionSecret);
         if (error != null && !error.isEmpty()) {
@@ -137,10 +216,10 @@ public final class OpenFluxVpnService extends VpnService {
 
         if (!isCurrent(session)) return;
         status = "Подключено";
-        updateNotification("VPN подключён");
+        startSpeedUpdates();
         FileInputStream input = tunnelInput;
         FileOutputStream output = tunnelOutput;
-        workers.execute(() -> readOutgoingPackets(session, input, dnsServer));
+        workers.execute(() -> readOutgoingPackets(session, input, dnsServer, resolveOnServer));
         workers.execute(() -> writeIncomingPackets(session, output));
     }
 
@@ -187,7 +266,7 @@ public final class OpenFluxVpnService extends VpnService {
         }
     }
 
-    private void readOutgoingPackets(int session, FileInputStream input, String dnsServer) {
+    private void readOutgoingPackets(int session, FileInputStream input, String dnsServer, boolean resolveOnServer) {
         byte[] buffer = new byte[32767];
         try {
             while (isCurrent(session)) {
@@ -195,11 +274,13 @@ public final class OpenFluxVpnService extends VpnService {
                 if (length <= 0) continue;
                 byte[] packet = Arrays.copyOf(buffer, length);
                 if (isIpv4UdpDns(packet)) {
-                    workers.execute(() -> forwardDns(session, outputFor(session), packet, dnsServer));
+                    workers.execute(() -> forwardDns(session, outputFor(session), packet, dnsServer, resolveOnServer));
                 } else if (isIpv4Tcp(packet)) {
                     String error = Mobile.send(packet);
                     if (error != null && !error.isEmpty() && isCurrent(session)) {
                         lastError = "Отправка пакета: " + error;
+                    } else {
+                        bytesSent.addAndGet(packet.length);
                     }
                 }
             }
@@ -217,6 +298,7 @@ public final class OpenFluxVpnService extends VpnService {
                     continue;
                 }
                 inject(session, output, packet);
+                bytesReceived.addAndGet(packet.length);
             }
         } catch (IOException exception) {
             if (isCurrent(session)) fail(session, "Запись TUN: " + exception.getMessage());
@@ -225,7 +307,14 @@ public final class OpenFluxVpnService extends VpnService {
         }
     }
 
-    private void forwardDns(int session, FileOutputStream output, byte[] request, String dnsServer) {
+    // forwardDns answers the captured query either through the encrypted
+    // document transport (Mobile.resolveDNS asks dnsServer from the exit
+    // node's own network - resolution never leaves this device) or, if the
+    // user chose local resolving in Settings, by relaying it directly from
+    // here over plain UDP - same wire relay, just run on-device instead of
+    // on the exit node.
+    private void forwardDns(int session, FileOutputStream output, byte[] request, String dnsServer,
+            boolean resolveOnServer) {
         int ipHeader = (request[0] & 0x0f) * 4;
         int dnsOffset = ipHeader + 8;
         int udpLength = unsignedShort(request, ipHeader + 4);
@@ -233,58 +322,36 @@ public final class OpenFluxVpnService extends VpnService {
 
         byte[] query = Arrays.copyOfRange(request, dnsOffset, ipHeader + udpLength);
         try {
-            byte[] answer = queryDnsOverHttps(query, dnsServer);
+            byte[] answer = resolveOnServer ? Mobile.resolveDNS(query, dnsServer) : queryLocalDns(query, dnsServer);
+            if (answer == null || answer.length == 0) {
+                if (isCurrent(session)) {
+                    lastError = resolveOnServer
+                            ? "DNS: сервер не ответил (обновите VDS до версии с поддержкой DNS?)"
+                            : "DNS: локальный сервер не ответил";
+                }
+                return;
+            }
             inject(session, output, buildDnsResponse(request, answer));
-        } catch (Exception exception) {
+        } catch (IOException exception) {
             if (isCurrent(session)) lastError = "DNS: " + exception.getMessage();
         }
     }
 
-    private byte[] queryDnsOverHttps(byte[] query, String dnsServer) throws IOException {
-        String endpoint;
-        switch (dnsServer) {
-            case "8.8.8.8":
-            case "8.8.4.4":
-                endpoint = "https://dns.google/dns-query";
-                break;
-            case "9.9.9.9":
-            case "149.112.112.112":
-                endpoint = "https://dns.9.9.9.9/dns-query";
-                break;
-            case "1.1.1.1":
-            case "1.0.0.1":
-                endpoint = "https://cloudflare-dns.com/dns-query";
-                break;
-            default:
-                throw new IOException("поддерживаются DNS 1.1.1.1, 8.8.8.8 и 9.9.9.9");
-        }
-
-        HttpURLConnection connection = (HttpURLConnection) new URL(endpoint).openConnection();
-        connection.setConnectTimeout(5000);
-        connection.setReadTimeout(5000);
-        connection.setRequestMethod("POST");
-        connection.setRequestProperty("Accept", "application/dns-message");
-        connection.setRequestProperty("Content-Type", "application/dns-message");
-        connection.setDoOutput(true);
-        connection.setFixedLengthStreamingMode(query.length);
-        try {
-            connection.getOutputStream().write(query);
-            int statusCode = connection.getResponseCode();
-            if (statusCode != HttpURLConnection.HTTP_OK) {
-                throw new IOException("DoH вернул HTTP " + statusCode);
-            }
-            try (java.io.InputStream input = connection.getInputStream();
-                 java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
-                byte[] buffer = new byte[2048];
-                int read;
-                while ((read = input.read(buffer)) != -1) {
-                    output.write(buffer, 0, read);
-                    if (output.size() > 65535) throw new IOException("слишком большой DNS-ответ");
-                }
-                return output.toByteArray();
-            }
-        } finally {
-            connection.disconnect();
+    // queryLocalDns relays the raw DNS message to dnsServer over plain UDP
+    // directly from this device - the same byte-transparent relay the exit
+    // node performs for server-side resolution, just run locally when the
+    // user picked "Резолвить локально на устройстве".
+    private byte[] queryLocalDns(byte[] query, String dnsServer) throws IOException {
+        try (DatagramSocket socket = new DatagramSocket()) {
+            socket.setSoTimeout(5000);
+            InetAddress address = InetAddress.getByName(dnsServer);
+            socket.send(new DatagramPacket(query, query.length, address, 53));
+            byte[] buffer = new byte[4096];
+            DatagramPacket response = new DatagramPacket(buffer, buffer.length);
+            socket.receive(response);
+            return Arrays.copyOf(buffer, response.getLength());
+        } catch (SocketTimeoutException timeout) {
+            return null;
         }
     }
 
@@ -362,6 +429,7 @@ public final class OpenFluxVpnService extends VpnService {
         status = "Ошибка";
         generation.incrementAndGet();
         active = false;
+        stopSpeedUpdates();
         closeTunnel();
         Mobile.stop();
         running = false;
@@ -373,6 +441,7 @@ public final class OpenFluxVpnService extends VpnService {
         status = "Останавливается…";
         generation.incrementAndGet();
         active = false;
+        stopSpeedUpdates();
         closeTunnel();
         Mobile.stop();
         running = false;
@@ -385,6 +454,7 @@ public final class OpenFluxVpnService extends VpnService {
     @Override public void onDestroy() {
         generation.incrementAndGet();
         active = false;
+        stopSpeedUpdates();
         closeTunnel();
         Mobile.stop();
         running = false;
@@ -414,12 +484,16 @@ public final class OpenFluxVpnService extends VpnService {
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent content = PendingIntent.getActivity(
                 this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        Intent stop = new Intent(this, OpenFluxVpnService.class).setAction(ACTION_STOP);
+        PendingIntent stopIntent = PendingIntent.getService(
+                this, 0, stop, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, CHANNEL_ID)
                 .setContentTitle("OpenFlux")
                 .setContentText(text)
                 .setSmallIcon(R.drawable.ic_openflux_notification)
                 .setOngoing(true)
                 .setContentIntent(content)
+                .addAction(R.drawable.ic_power, "Отключить", stopIntent)
                 .build();
     }
 

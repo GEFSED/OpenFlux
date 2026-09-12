@@ -9,15 +9,23 @@ the source code or APK.
 
 - Android 8 (API 26) or newer, with `arm64-v8a`, `armeabi-v7a`, `x86_64`, `x86`
   and universal APKs;
+- two connection modes: system-wide VPN (`VpnService`), or a local SOCKS5
+  proxy that other apps can be pointed at manually, optionally exposed to the
+  local network with authentication;
 - IPv4/TCP traffic is forwarded through OpenFlux and the exit node;
-- DNS uses DNS-over-HTTPS with selectable Cloudflare, Google or Quad9 service;
-- the foreground service keeps the tunnel alive while the screen is off;
+- DNS is relayed through the encrypted tunnel to the exit node by default (any
+  DNS server address or hostname, not just a fixed provider list), with a
+  setting to resolve locally on the device instead;
+- the foreground service keeps the tunnel alive while the screen is off, and
+  shows live upload/download speed in its notification;
 - the URL and secret are encrypted using an Android Keystore-backed key;
 - settings remain after an in-place update signed by the same certificate;
 - clearing app data or uninstalling the app removes the saved settings.
 
-The current app does not tunnel arbitrary UDP or IPv6. It is experimental and
-has not received an independent security audit.
+The current app does not tunnel arbitrary UDP or IPv6 (in either mode, an
+IPv6 target or a non-CONNECT SOCKS5 command is rejected with a proper
+protocol error rather than a silent hang). It is experimental and has not
+received an independent security audit.
 
 ## Build
 

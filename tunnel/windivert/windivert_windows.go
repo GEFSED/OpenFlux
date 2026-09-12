@@ -46,7 +46,7 @@ func New() (*Endpoint, error) {
 		return nil, fmt.Errorf("windivert open: %w", err)
 	}
 
-	// Очередь побольше. Если не сработает — не критично.
+	// Очередь побольше. Если не сработает - не критично.
 	_ = h.SetParam(windivert.QueueLength, 8192)
 	ep := &Endpoint{
 		handle: h,
@@ -144,7 +144,7 @@ func (e *Endpoint) readLoop() {
 		if cb != nil {
 			cb(pktCopy)
 		}
-		// НЕ вызываем Send — пакет дропается
+		// НЕ вызываем Send - пакет дропается
 	}
 }
 

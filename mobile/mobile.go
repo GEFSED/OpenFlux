@@ -158,6 +158,28 @@ func ServerCountry() string {
 	return encrypted.LastCountry()
 }
 
+// ResolveDNS relays a raw DNS query (as captured from the TUN device's
+// outgoing UDP packets) through the encrypted transport to the exit node,
+// which forwards it to dnsServer over UDP and returns the raw answer. This
+// keeps DNS resolution off the client's own network entirely, matching what
+// Proxy mode already does. Returns nil if the transport isn't running or the
+// exit node didn't answer in time (e.g. it hasn't been updated yet).
+func ResolveDNS(query []byte, dnsServer string) []byte {
+	client.mu.Lock()
+	encrypted := client.encrypted
+	running := client.running
+	client.mu.Unlock()
+	if !running || encrypted == nil {
+		return nil
+	}
+	answer, err := encrypted.ResolveDNS(dnsServer, query)
+	if err != nil {
+		appendLog(fmt.Sprintf("[ANDROID] DNS через туннель: %v", err))
+		return nil
+	}
+	return answer
+}
+
 func IsConnected() bool {
 	client.mu.Lock()
 	trans := client.transport

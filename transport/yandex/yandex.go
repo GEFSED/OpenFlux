@@ -252,7 +252,11 @@ func (t *YandexDocsTransport) writerLoop() {
 				utils.Debugf("[YDOCS] Write error: %v", err)
 			}
 		default:
-			time.Sleep(10 * time.Millisecond)
+			// Short poll interval: under bursty/ack-clocked traffic the queue
+			// drains and refills faster than the old 10ms granularity, which
+			// was adding up to 10ms of dead time per gap and capping
+			// throughput independent of the network or CPU.
+			time.Sleep(time.Millisecond)
 		}
 	}
 }
