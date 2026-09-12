@@ -62,12 +62,15 @@ from [GitHub Releases](https://github.com/damnurmum/OpenFlux-Android/releases/la
 > connection (without being able to decrypt traffic, but they don't need to
 > for that).
 
-## Step 2. Pick an encryption secret
+## Step 2. Pick an encryption secret (optional, but recommended)
 
-You need a random string **at least 16 characters long**, identical on the
-phone and the server. The easiest way is to generate it right in the Android
-app in step 4 using the "Generate secure key" button and then copy it to the
-server. Or generate one ahead of time in a terminal on your own machine:
+Transport encryption is optional - without it OpenFlux behaves exactly like
+a plain upstream exit node. If it's your own exit node, we recommend turning
+it on: you need a random string **at least 16 characters long**, identical on
+the phone and the server. The easiest way is to generate it right in the
+Android app in step 4 using the "Generate secure key" button and then copy it
+to the server. Or generate one ahead of time in a terminal on your own
+machine:
 
 ```bash
 openssl rand -base64 32
@@ -106,13 +109,16 @@ mv OpenFlux-linux-amd64 openflux
 chmod +x openflux
 ```
 
-### 3.2. Save the document link and secret to files
+### 3.2. Save the document link (and the secret, if you chose one) to files
 
 ```bash
 printf '%s\n' 'YOUR_DOCUMENT_URL' > /root/openflux/document-url
 printf '%s\n' 'YOUR_SECRET_FROM_STEP_2' > /root/openflux/encryption-key
 chmod 600 /root/openflux/document-url /root/openflux/encryption-key
 ```
+
+If you decided to skip encryption, you don't need the `encryption-key` file -
+just drop `--encryption-key-file` from the start command in steps 3.4/3.5.
 
 Replace `YOUR_DOCUMENT_URL` and `YOUR_SECRET_FROM_STEP_2` with your own
 values.
@@ -235,16 +241,18 @@ the SOCKS5 proxy `127.0.0.1:1080`.
 
 ## Common problems
 
-**"encryption key" or "document URL" error when starting the server.**
-Check that `document-url` and `encryption-key` aren't empty and don't have
-stray whitespace or extra newlines, and that the secret is at least 16
-characters.
+**"document URL" error when starting the server.**
+Check that `document-url` isn't empty and doesn't have stray whitespace or
+extra newlines. If you're using encryption, check the same for
+`encryption-key`, and that the secret is at least 16 characters.
 
 **Do I need to set the encryption key on the server if it's already in the
-app?** Yes, always - the server and client must agree on the same secret. On
-the server it's passed via `--encryption-key-file` (see step 3.2); in the
-app it's the "Settings" → "TRANSPORT" field. The connection won't come up if
-the two sides don't have matching secrets.
+app?** Yes, if you chose to enable encryption - the server and client must
+agree on the same secret, or the connection won't come up. On the server
+it's passed via `--encryption-key-file` (see step 3.2); in the app it's the
+"Settings" → "TRANSPORT" field. The key is optional: leave the app's field
+empty and skip `--encryption-key-file` on the server to run the tunnel
+unencrypted, like a plain upstream exit node.
 
 **The app connects but immediately drops / no ping.** This usually means the
 RST-drop rule (step 3.3) isn't active on the server - the iptables rule

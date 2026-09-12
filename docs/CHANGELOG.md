@@ -2,6 +2,31 @@
 
 All notable changes to this fork are documented here.
 
+## 0.5.2 - 2026-09-12
+
+### Changed
+
+- synced `main` with upstream `p1neappleXpress/OpenFlux` through commit
+  `4f1bdb5`: a Docker image and compose file for running the client/exit-node
+  locally, and - most importantly - upstream's own rework of transport
+  encryption (originally contributed from this fork via PR #38) that makes
+  `--encryption-key-file` **optional** instead of mandatory, and applies it
+  generically to every transport (`yandex`, `vyandex`, `oneme`) rather than
+  only `yandex`.
+- following that, this fork's own mandatory-encryption stance for the
+  `yandex` transport is dropped: the Android app's encryption key field is
+  now optional (labeled and documented as such), and `mobile.Start`/
+  `mobile.StartProxy` skip wrapping the transport in `EncryptedTransport`
+  when the key is left empty, matching the CLI. Leaving the key unset lets
+  the app talk to a plain, unmodified upstream exit node with no transport
+  encryption; setting one (16+ characters, matching on both ends) enables
+  AES-256-GCM as before.
+- the `vyandex` transport is now wired into `--transport` on the CLI, since
+  the previous reason for excluding it (no encryption wrapper of its own)
+  no longer applies now that encryption is a generic, optional layer over
+  any transport.
+- Android application version is now 0.5.2 (version code 7).
+
 ## 0.5.1 - 2026-09-12
 
 ### Changed

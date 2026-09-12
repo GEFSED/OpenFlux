@@ -28,7 +28,7 @@
 > [docs/UPSTREAM_DIFF.md](docs/UPSTREAM_DIFF.md).
 
 OpenFlux is a research TCP tunnel with pluggable transports. This fork adds an
-Android VPN client and mandatory end-to-end encryption for the Yandex Docs
+Android VPN client and optional end-to-end encryption for the Yandex Docs
 transport.
 
 **[Download the latest Android release](https://github.com/damnurmum/OpenFlux-Android/releases/latest)**
@@ -49,8 +49,9 @@ Android VPN or SOCKS5 client -> encrypted document transport -> Linux exit node 
   SOCKS5 authentication, plus a `socks://` share link and QR code;
 - Android 11-style UI with connection controls, logs and a phone-Settings-style
   vertical settings navigation;
-- AES-256-GCM authenticated encryption with a key derived using scrypt,
-  wire-compatible with upstream's exit-node and client binaries;
+- optional AES-256-GCM authenticated encryption with a key derived using
+  scrypt, wire-compatible with upstream's exit-node and client binaries;
+  leave the key empty to connect unencrypted to a plain upstream exit node;
 - Android Keystore-backed storage for the document URL and shared secret;
 - DNS-server field accepts any IP or hostname (not a fixed provider list),
   resolved locally on the device;
@@ -99,9 +100,12 @@ openssl rand -base64 32 > encryption-key
 chmod 600 document-url encryption-key
 ```
 
-The encryption secret must contain at least 16 characters. Generate a unique
-random value; do not reuse a password. Rotate both the document URL and the
-secret if either is exposed.
+The encryption key is optional: omit `--encryption-key-file` on both ends
+(and leave the Android app's key field empty) to talk to a plain, unmodified
+upstream exit node with no transport encryption. If you do set a key, it must
+contain at least 16 characters, be a unique random value rather than a reused
+password, and match on both ends. Rotate the document URL and the key if
+either is exposed.
 
 ## Build the exit node and desktop client
 
@@ -205,10 +209,10 @@ See [android/README.md](android/README.md) for Android-specific details.
 | `--exit-node` | off | Run the exit node (requires root) |
 | `--local-ip` | empty | Exit node egress IP, for scoping the RST-drop rule |
 | `--socks5` | `:1080` | SOCKS5 listen address |
-| `--transport` | `yandex` | Transport backend (`yandex` or `oneme`) |
+| `--transport` | `yandex` | Transport backend (`yandex`, `vyandex` or `oneme`) |
 | `--url` | empty | Inline document URL; prefer `--url-file` |
 | `--url-file` | empty | Read the document URL from a file |
-| `--encryption-key-file` | empty | Read the Yandex transport secret from a file |
+| `--encryption-key-file` | empty | Optional: encrypt the transport with a shared secret from this file |
 | `--maxToken` | empty | MAX transport token |
 | `--maxUid` | empty | MAX transport user ID |
 | `--debug` | off | Enable verbose logging |
