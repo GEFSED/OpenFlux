@@ -117,6 +117,13 @@ public final class OpenFluxProxyService extends Service {
         }
         if (running) return START_STICKY;
 
+        // A foreground service started via startForegroundService() must call
+        // startForeground() right away - any early stopSelf() before that
+        // (e.g. on a validation error below) would otherwise crash the app
+        // with ForegroundServiceDidNotStartInTimeException.
+        createNotificationChannel();
+        startForeground(NOTIFICATION_ID, notification("Подключение…"));
+
         String url = intent == null ? null : intent.getStringExtra(EXTRA_DOCUMENT_URL);
         if (url == null || !url.startsWith("https://")) {
             lastError = "Некорректная ссылка на документ";
@@ -124,9 +131,10 @@ public final class OpenFluxProxyService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        String encryptionSecret = intent.getStringExtra(EXTRA_ENCRYPTION_SECRET);
-        if (encryptionSecret == null || encryptionSecret.length() < 16) {
-            lastError = "Ключ шифрования должен содержать не менее 16 символов";
+        String encryptionSecretExtra = intent.getStringExtra(EXTRA_ENCRYPTION_SECRET);
+        final String encryptionSecret = encryptionSecretExtra == null ? "" : encryptionSecretExtra;
+        if (!encryptionSecret.isEmpty() && encryptionSecret.length() < 16) {
+            lastError = "Ключ шифрования должен быть не короче 16 символов, либо оставьте поле пустым";
             status = "Ошибка";
             stopSelf();
             return START_NOT_STICKY;
@@ -139,8 +147,6 @@ public final class OpenFluxProxyService extends Service {
         if (password == null) password = "";
         String bindHost = lanAccess ? "0.0.0.0" : "127.0.0.1";
 
-        createNotificationChannel();
-        startForeground(NOTIFICATION_ID, notification("Подключение…"));
         running = true;
         status = "Подключение…";
         lastError = "";

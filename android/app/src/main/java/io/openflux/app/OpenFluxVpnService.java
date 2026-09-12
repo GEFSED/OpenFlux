@@ -133,6 +133,13 @@ public final class OpenFluxVpnService extends VpnService {
         }
         if (running) return START_STICKY;
 
+        // A foreground service started via startForegroundService() must call
+        // startForeground() right away - any early stopSelf() before that
+        // (e.g. on a validation error below) would otherwise crash the app
+        // with ForegroundServiceDidNotStartInTimeException.
+        createNotificationChannel();
+        startForeground(NOTIFICATION_ID, notification("Подключение…"));
+
         String url = intent == null ? null : intent.getStringExtra(EXTRA_DOCUMENT_URL);
         if (url == null || !url.startsWith("https://")) {
             lastError = "Некорректная ссылка на документ";
@@ -142,9 +149,10 @@ public final class OpenFluxVpnService extends VpnService {
             return START_NOT_STICKY;
         }
         String dnsServer = intent.getStringExtra(EXTRA_DNS_SERVER);
-        String encryptionSecret = intent.getStringExtra(EXTRA_ENCRYPTION_SECRET);
-        if (encryptionSecret == null || encryptionSecret.length() < 16) {
-            lastError = "Ключ шифрования должен содержать не менее 16 символов";
+        String encryptionSecretExtra = intent.getStringExtra(EXTRA_ENCRYPTION_SECRET);
+        final String encryptionSecret = encryptionSecretExtra == null ? "" : encryptionSecretExtra;
+        if (!encryptionSecret.isEmpty() && encryptionSecret.length() < 16) {
+            lastError = "Ключ шифрования должен быть не короче 16 символов, либо оставьте поле пустым";
             status = "Ошибка";
             running = false;
             stopSelf();
@@ -153,8 +161,6 @@ public final class OpenFluxVpnService extends VpnService {
         if (dnsServer == null || dnsServer.trim().isEmpty()) dnsServer = "1.1.1.1";
         int mtu = Math.max(576, Math.min(1500, intent.getIntExtra(EXTRA_MTU, 1400)));
 
-        createNotificationChannel();
-        startForeground(NOTIFICATION_ID, notification("Подключение…"));
         active = true;
         running = true;
         status = "Подключение…";
