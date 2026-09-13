@@ -35,7 +35,7 @@ func main() {
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
 	socksAddr := flag.String("socks5", ":1080", "SOCKS5 address")
 	transportType := flag.String("transport", "yandex", "Transport type (yandex, vyandex, oneme, cupsonline)")
-	mode := flag.String("mode", "raw", "Exit-node mode: raw (default for us; Linux only, needs root) or proxy (works everywhere, no root)")
+	mode := flag.String("mode", "proxy", "Exit-node mode: proxy (default, works everywhere) or raw (Linux only, needs root)")
 	flag.StringVar(&globalDocUrl, "url", "", "Document URL. Required for Yandex.Docs transport")
 	urlFile := flag.String("url-file", "", "Read the document URL from a file")
 	flag.StringVar(&maxToken, "maxToken", "", "MAX Web token. If u use MAX transport")

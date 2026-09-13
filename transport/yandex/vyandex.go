@@ -290,7 +290,7 @@ func authorize(docURL string) (*volgaAuth, error) {
 	utils.Debugf("[VOLGA] Location: %s", location[:minInt(len(location), 300)])
 
 	if strings.Contains(location, "/document/error/") {
-		return nil, fmt.Errorf("auth/initial returned /document/error/ - check access_token_ttl and Referer")
+		return nil, fmt.Errorf("auth/initial returned /document/error/ — check access_token_ttl and Referer")
 	}
 
 	locParsed, err := url.Parse(location)
