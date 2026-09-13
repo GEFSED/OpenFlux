@@ -118,6 +118,12 @@ alongside the Android APKs. To build it yourself instead:
 go build -o openflux .
 ```
 
+By default the exit node runs in `--mode raw` (needs root on Linux; this is
+what the rest of this section covers). Pass `--mode proxy` instead for a
+root-free exit node that works on any OS - it dials outbound connections
+with a plain `net.Dial` instead of a raw socket, at some throughput cost, and
+none of the RST-drop steps below apply to it.
+
 The exit node's TCP connections live in a userspace stack (gvisor), so the
 kernel has no socket for them and sends an RST on every reply, tearing the
 tunnel down. That RST must be suppressed - scoped, not host-wide. A blanket
@@ -206,16 +212,23 @@ See [android/README.md](android/README.md) for Android-specific details.
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--client` | off | Run the SOCKS5 client |
-| `--exit-node` | off | Run the exit node (requires root) |
-| `--local-ip` | empty | Exit node egress IP, for scoping the RST-drop rule |
+| `--exit-node` | off | Run the exit node |
+| `--mode` | `raw` | Exit-node internet path: `raw` (Linux, needs root, our default) or `proxy` (works everywhere, no root, falls back to automatically if raw mode can't get a raw socket) |
+| `--local-ip` | empty | Exit node egress IP, for scoping the RST-drop rule (raw mode only) |
 | `--socks5` | `:1080` | SOCKS5 listen address |
-| `--transport` | `yandex` | Transport backend (`yandex`, `vyandex` or `oneme`) |
+| `--transport` | `yandex` | Transport backend (`yandex`, `vyandex`, `oneme` or `cupsonline`) |
 | `--url` | empty | Inline document URL; prefer `--url-file` |
 | `--url-file` | empty | Read the document URL from a file |
 | `--encryption-key-file` | empty | Optional: encrypt the transport with a shared secret from this file |
 | `--maxToken` | empty | MAX transport token |
 | `--maxUid` | empty | MAX transport user ID |
 | `--debug` | off | Enable verbose logging |
+
+`cupsonline` is an experimental transport riding the "shared cursor position"
+feature of cups.online's live-coding interview rooms. As of this writing it
+does not reliably deliver traffic end-to-end (the underlying cursor-broadcast
+channel appears to throttle/coalesce rapid updates), so treat it as
+unsupported until upstream fixes it.
 
 ## Development and security
 
