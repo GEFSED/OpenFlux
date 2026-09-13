@@ -203,12 +203,18 @@ public final class OpenFluxVpnService extends VpnService {
         }
 
         try {
+            // Builder.addDnsServer() only accepts a numeric IP - it throws
+            // IllegalArgumentException on a hostname like "dns.google", even
+            // though queryLocalDns() below resolves hostnames just fine. This
+            // is running on a background worker thread, so a blocking lookup
+            // here is fine.
+            String dnsServerIp = InetAddress.getByName(dnsServer).getHostAddress();
             Builder builder = new Builder()
                     .setSession("OpenFlux")
                     .setMtu(mtu)
                     .addAddress("10.10.10.2", 24)
                     .addRoute("0.0.0.0", 0)
-                    .addDnsServer(dnsServer);
+                    .addDnsServer(dnsServerIp);
             applyAppFilter(builder);
             ParcelFileDescriptor established = builder.establish();
             if (established == null) throw new IOException("Android не создал TUN-интерфейс");
