@@ -2483,6 +2483,7 @@ public final class MainActivity extends Activity {
             case "[ANDROID]":
             case "[VOLGA]":
             case "[MAX]":
+            case "[CUPS]":
                 return accent;
             default:
                 return logColor;
