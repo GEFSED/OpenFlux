@@ -27,6 +27,27 @@ All notable changes to this fork are documented here.
   in the log text with `HIDDEN-URL` before the line is ever stored, not
   just visually - a screenshot or copy-paste of the Logs tab can't leak
   them either.
+- exit node: a `--mode proxy|raw` flag selects the internet-facing path.
+  `proxy` (new default) dials out with a plain `net.Dial`, needs no root
+  and no RST-drop iptables rule, and works on any OS. `raw` keeps the
+  previous hand-rolled raw-socket path (Linux only, root required),
+  falling back to `proxy` automatically if it can't get a raw socket.
+  Synced from upstream.
+- an experimental `cupsonline` transport riding cups.online's live-coding
+  "shared cursor position" broadcast as a covert channel. Not wired into
+  the Android app: testing found it does not reliably deliver traffic once
+  transport encryption is enabled, so treat it as unsupported for now (see
+  the flags table in README).
+
+### Changed
+
+- the exit-node core (`transport/yandex`, `tunnel`, gVisor TCP buffer
+  sizing) is realigned to match upstream `p1neappleXpress/OpenFlux`'s
+  `main` byte-for-byte, so this fork's Android app is guaranteed to work
+  against either this fork's exit-node binary or an unmodified upstream
+  one. Client-only code the exit node never executes (SOCKS5 auth/
+  telemetry, `--url-file`, the cleaner `DialTCP` address parsing) is kept
+  as this fork's own addition.
 
 ### Fixed
 
@@ -39,6 +60,13 @@ All notable changes to this fork are documented here.
   crossfade/icon-pop animation for no reason; it's now a no-op.
 - the divider between rows in the Profiles list was indented under the
   icon (matching the Settings list); it now runs edge to edge.
+- the VPN's DNS-server field rejected a hostname (e.g. `dns.google`):
+  `VpnService.Builder.addDnsServer()` only accepts a literal IP address
+  and threw on anything else. The app now resolves a hostname to an IP
+  before handing it to the builder; the local DNS relay itself already
+  supported hostnames fine.
+- log lines from the `cupsonline` transport's `[CUPS]` tag were not
+  colorized like the other component tags in the Logs tab.
 
 ## 0.5.3 - 2026-09-12
 
