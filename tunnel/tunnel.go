@@ -58,14 +58,11 @@ type TCPTunnel struct {
 	packetCount atomic.Uint64
 }
 
-// TCP buffer size range for gvisor stacks. Kept at our fork's smaller,
-// already-tuned values rather than upstream's new 4/16/64 MB (per-connection
-// buffers that size add up fast on the small VPS instances this project
-// typically runs on - see the exit node's aggressive GC setting below).
+// TCP buffer size range for gvisor stacks.
 var (
-	TCPBufMin     = 65536
-	TCPBufDefault = 1048576
-	TCPBufMax     = 8388608
+	TCPBufMin     = 4 * 1024 * 1024
+	TCPBufDefault = 16 * 1024 * 1024
+	TCPBufMax     = 64 * 1024 * 1024
 )
 
 // SetTCPBuffers applies the configured TCP send/receive buffer ranges to s.
