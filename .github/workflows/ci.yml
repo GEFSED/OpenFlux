@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   go:
-    name: Go tests & Linux binaries
+    name: Go tests & cross-platform binaries
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,15 +20,22 @@ jobs:
           cache: true
       - run: go test ./...
       - run: go vet ./...
-      - name: Build Linux server/client binaries
+      - name: Build cross-platform binaries
         run: |
           mkdir -p dist
-          GOOS=linux GOARCH=amd64 go build -o dist/OpenFlux-linux-amd64 .
-          GOOS=linux GOARCH=arm64 go build -o dist/OpenFlux-linux-arm64 .
+          build() { GOOS=$1 GOARCH=$2 CGO_ENABLED=0 go build -o "dist/openflux-$1-$2$3" .; }
+          build darwin  amd64 ""
+          build darwin  arm64 ""
+          build linux   amd64 ""
+          build linux   arm   ""
+          build linux   arm64 ""
+          build windows 386   ".exe"
+          build windows amd64 ".exe"
+          build windows arm64 ".exe"
       - uses: actions/upload-artifact@v4
         with:
-          name: OpenFlux-linux-${{ github.sha }}
-          path: dist/OpenFlux-linux-*
+          name: openflux-${{ github.sha }}
+          path: dist/openflux-*
           if-no-files-found: error
           retention-days: 30
 
