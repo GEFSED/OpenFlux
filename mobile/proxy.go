@@ -9,11 +9,12 @@ import (
 	"fmt"
 	"sync"
 
-	"universal-bypass-tool/socks5"
-	"universal-bypass-tool/transport"
-	"universal-bypass-tool/transport/yandex"
-	"universal-bypass-tool/tunnel"
-	"universal-bypass-tool/utils"
+	"openflux/socks5"
+	"openflux/transport"
+	"openflux/transport/mailru"
+	"openflux/transport/yandex"
+	"openflux/tunnel"
+	"openflux/utils"
 )
 
 var proxy = proxyState{}
@@ -58,11 +59,20 @@ func StartProxy(transportType, documentURL, encryptionSecret, listenAddr, userna
 
 	config := transport.DefaultConfig()
 	var inner transport.Transport
-	if transportType == "vyandex" {
+	switch transportType {
+	case "vyandex":
 		inner = yandex.NewYandexVolgaTransport(documentURL, config)
-	} else {
+	case "mailru":
+		inner = mailru.NewMailruDocsTransport(documentURL, config)
+	default:
 		inner = yandex.NewYandexDocsTransport(documentURL, config)
 	}
+
+	// App-layer codec, same as the CLI's default (--codec=batched):
+	// zstd + coalescing, applied before encryption so it compresses
+	// plaintext rather than ciphertext.
+	inner = transport.NewBatchedTransport(inner)
+
 	if encryptionSecret != "" {
 		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, documentURL, false)
 		if err != nil {
@@ -73,7 +83,7 @@ func StartProxy(transportType, documentURL, encryptionSecret, listenAddr, userna
 	} else {
 		appendLog("[ANDROID] Шифрование прокси-транспорта отключено (ключ не задан)")
 	}
-	trans := transport.NewCompressedTransport(inner)
+	trans := inner
 	if err := trans.Start(); err != nil {
 		appendLog(fmt.Sprintf("[ERROR] Ошибка запуска прокси: %v", err))
 		return err.Error()

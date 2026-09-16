@@ -8,9 +8,10 @@ import (
 	"strings"
 	"sync"
 
-	"universal-bypass-tool/transport"
-	"universal-bypass-tool/transport/yandex"
-	"universal-bypass-tool/utils"
+	"openflux/transport"
+	"openflux/transport/mailru"
+	"openflux/transport/yandex"
+	"openflux/utils"
 )
 
 var client = packetClient{}
@@ -62,11 +63,20 @@ func Start(transportType, documentURL, encryptionSecret string) string {
 
 	config := transport.DefaultConfig()
 	var inner transport.Transport
-	if transportType == "vyandex" {
+	switch transportType {
+	case "vyandex":
 		inner = yandex.NewYandexVolgaTransport(documentURL, config)
-	} else {
+	case "mailru":
+		inner = mailru.NewMailruDocsTransport(documentURL, config)
+	default:
 		inner = yandex.NewYandexDocsTransport(documentURL, config)
 	}
+
+	// App-layer codec, same as the CLI's default (--codec=batched):
+	// zstd + coalescing, applied before encryption so it compresses
+	// plaintext rather than ciphertext.
+	inner = transport.NewBatchedTransport(inner)
+
 	if encryptionSecret != "" {
 		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, documentURL, false)
 		if err != nil {
@@ -80,7 +90,7 @@ func Start(transportType, documentURL, encryptionSecret string) string {
 	} else {
 		appendLog("[ANDROID] Шифрование транспорта отключено (ключ не задан)")
 	}
-	trans := transport.NewCompressedTransport(inner)
+	trans := inner
 	trans.Receive(func(data []byte) {
 		packet := append([]byte(nil), data...)
 		client.mu.Lock()

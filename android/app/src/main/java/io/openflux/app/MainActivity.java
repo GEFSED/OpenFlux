@@ -633,7 +633,9 @@ public final class MainActivity extends Activity {
     }
 
     private String transportLabel(String type) {
-        return "vyandex".equals(type) ? "Yandex Docs (Volga)" : "Yandex Docs";
+        if ("vyandex".equals(type)) return "Yandex Docs (Volga)";
+        if ("mailru".equals(type)) return "Mail.ru Docs";
+        return "Yandex Docs";
     }
 
     private void selectProfile(long id) {
@@ -1734,13 +1736,18 @@ public final class MainActivity extends Activity {
         group.setOrientation(LinearLayout.VERTICAL);
         RadioButton yandexButton = modeRadio("Yandex Docs");
         RadioButton vyandexButton = modeRadio("Yandex Docs (Volga, экспериментальный)");
+        RadioButton mailruButton = modeRadio("Mail.ru Docs");
         group.addView(yandexButton);
         group.addView(vyandexButton);
+        group.addView(mailruButton);
         if ("vyandex".equals(editorTransportType)) vyandexButton.setChecked(true);
+        else if ("mailru".equals(editorTransportType)) mailruButton.setChecked(true);
         else yandexButton.setChecked(true);
         group.setOnCheckedChangeListener((g, checkedId) -> {
             tap(g);
-            editorTransportType = checkedId == vyandexButton.getId() ? "vyandex" : "yandex";
+            if (checkedId == vyandexButton.getId()) editorTransportType = "vyandex";
+            else if (checkedId == mailruButton.getId()) editorTransportType = "mailru";
+            else editorTransportType = "yandex";
         });
         return group;
     }
