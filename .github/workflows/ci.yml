@@ -52,7 +52,9 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
+      # ubuntu-latest ships the Android SDK/cmdline-tools preinstalled
+      # (ANDROID_HOME set, sdkmanager on PATH) - android-actions/setup-android@v3
+      # is both redundant here and, as of this writing, broken.
       - run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
       - uses: gradle/actions/setup-gradle@v4
         with:
