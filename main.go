@@ -270,7 +270,7 @@ DEPRECATED (removed in v2)
 		utils.EnableDebug()
 	}
 
-	log.Printf("=== Universal Bypass Tool ===")
+	log.Printf("=== OpenFlux VPN Client ===")
 	log.Printf("Role: %s", *role)
 	log.Printf("Transport: %s", *transportType)
 	if *role == roleClient {
@@ -420,7 +420,7 @@ func runClientTUN(trans transport.Transport) {
 	if err := tc.SetupInterface(); err != nil {
 		log.Fatalf("setup utun (need sudo): %v", err)
 	}
-	log.Printf("utun up; bypass gateway is %s", tc.Gateway())
+	log.Printf("utun up; direct gateway is %s", tc.Gateway())
 
 	watcher := tunclient.NewSocketWatcher(tc.Gateway(), func() {
 		log.Printf("Socket set stable; taking default route into the tunnel")

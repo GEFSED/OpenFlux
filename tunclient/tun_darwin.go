@@ -30,7 +30,7 @@ type TUNClient struct {
 	packetsOut atomic.Uint64
 
 	gateway     string
-	bypassIPs   []string
+	directIPs   []string
 	routesAdded bool
 
 	// Saved default route, captured before we install any utun routes.
@@ -57,7 +57,7 @@ func NewTUNClient(trans transport.Transport, mtu int) (*TUNClient, error) {
 func (c *TUNClient) Name() string { return c.name }
 
 // ConfigureInterface sets address + routes. Requires root. Called once at start.
-func (c *TUNClient) ConfigureInterface(bypassHosts []string) error {
+func (c *TUNClient) ConfigureInterface(directHosts []string) error {
 	// 1. Bring interface up.
 	setup := [][]string{
 		{"ifconfig", c.name, "10.10.10.2", "10.10.10.2", "up"},
@@ -79,9 +79,9 @@ func (c *TUNClient) ConfigureInterface(bypassHosts []string) error {
 	c.gateway = gw
 	utils.Debugf("[TUN] real gateway: %s (iface=%s)", gw, iface)
 
-	// 3. Add /32 bypass routes BEFORE the default route, so transport
+	// 3. Add /32 direct routes BEFORE the default route, so transport
 	// traffic never loops through the tunnel.
-	for _, host := range bypassHosts {
+	for _, host := range directHosts {
 		host = strings.TrimSpace(host)
 		if host == "" {
 			continue
@@ -99,11 +99,11 @@ func (c *TUNClient) ConfigureInterface(bypassHosts []string) error {
 			ipStr := ipv4.String()
 			args := []string{"route", "add", "-host", ipStr, "-gateway", gw}
 			if out, err := exec.Command("sudo", args...).CombinedOutput(); err != nil {
-				utils.Debugf("[TUN] bypass route %s (%s) failed: %v (%s)", host, ipStr, err, string(out))
+				utils.Debugf("[TUN] direct route %s (%s) failed: %v (%s)", host, ipStr, err, string(out))
 				continue
 			}
-			c.bypassIPs = append(c.bypassIPs, ipStr)
-			utils.Debugf("[TUN] bypass %s -> %s via %s", host, ipStr, gw)
+			c.directIPs = append(c.directIPs, ipStr)
+			utils.Debugf("[TUN] direct %s -> %s via %s", host, ipStr, gw)
 		}
 	}
 
@@ -114,7 +114,7 @@ func (c *TUNClient) ConfigureInterface(bypassHosts []string) error {
 	}
 	for _, args := range defaults {
 		if out, err := exec.Command("sudo", args...).CombinedOutput(); err != nil {
-			// rollback bypass routes on failure
+			// rollback direct routes on failure
 			c.removeRoutes()
 			return fmt.Errorf("%v: %w (%s)", args, err, string(out))
 		}
@@ -126,17 +126,17 @@ func (c *TUNClient) ConfigureInterface(bypassHosts []string) error {
 // removeRoutes undoes everything ConfigureInterface added. Safe to call
 // multiple times. Ignores errors (best-effort cleanup).
 func (c *TUNClient) removeRoutes() {
-	if !c.routesAdded && len(c.bypassIPs) == 0 {
+	if !c.routesAdded && len(c.directIPs) == 0 {
 		return
 	}
 	// default routes first
 	exec.Command("sudo", "route", "delete", "-net", "0.0.0.0/1").Run()
 	exec.Command("sudo", "route", "delete", "-net", "128.0.0.0/1").Run()
-	// bypass /32 routes
-	for _, ip := range c.bypassIPs {
+	// direct /32 routes
+	for _, ip := range c.directIPs {
 		exec.Command("sudo", "route", "delete", "-host", ip).Run()
 	}
-	c.bypassIPs = nil
+	c.directIPs = nil
 	c.routesAdded = false
 }
 
@@ -384,7 +384,7 @@ func (c *TUNClient) SaveDefault() error {
 }
 
 // SetupInterface brings utun up, purges leftover tunnel routes from a
-// previous crashed run, and resolves the physical gateway used for bypass
+// previous crashed run, and resolves the physical gateway used for direct
 // routes. It does NOT install the default route.
 func (c *TUNClient) SetupInterface() error {
 	// Purge leftover default-override routes from a previous run.
@@ -400,12 +400,12 @@ func (c *TUNClient) SetupInterface() error {
 		}
 	}
 
-	// Prefer the saved default's gateway for bypass routes, so they use
+	// Prefer the saved default's gateway for direct routes, so they use
 	// exactly the same path that worked before we started. Fall back to
 	// scanning physical interfaces if it was not an IP.
 	if c.savedGw != "" && net.ParseIP(c.savedGw) != nil {
 		c.gateway = c.savedGw
-		utils.Debugf("[TUN] bypass gateway = saved default gw %s", c.gateway)
+		utils.Debugf("[TUN] direct gateway = saved default gw %s", c.gateway)
 		return nil
 	}
 	gw, iface, err := realGateway()
@@ -413,7 +413,7 @@ func (c *TUNClient) SetupInterface() error {
 		return err
 	}
 	c.gateway = gw
-	utils.Debugf("[TUN] bypass gateway = realGateway() %s (iface=%s)", gw, iface)
+	utils.Debugf("[TUN] direct gateway = realGateway() %s (iface=%s)", gw, iface)
 	return nil
 }
 

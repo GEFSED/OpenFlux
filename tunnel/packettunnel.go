@@ -35,7 +35,7 @@ type TCPDialer interface {
 //
 // The transport is TCP-only, so raw UDP is not carried; UDP port 53 is special
 // cased and proxied as DNS-over-TCP through the tunnel so name resolution works
-// (and bypasses local DNS poisoning). Other UDP is dropped.
+// (and avoids local DNS poisoning). Other UDP is dropped.
 type PacketTunnel struct {
 	stack  *stack.Stack
 	ep     *channel.Endpoint

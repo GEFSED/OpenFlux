@@ -7,8 +7,8 @@ batched+zstd codec, and two exit-node backends (L3 raw forward / L4 gVisor proxy
 
 # Disclaimer
 
-The author of OpenFlux **does not encourage** the use of this project to bypass
-restrictions or violate the rules of any platform, and **is not responsible**
+The author of OpenFlux **does not encourage** the use of this project to
+violate the restrictions or rules of any platform, and **is not responsible**
 for the final scenarios of how users apply this tool in real life or on the
 Internet. Any specific technical features of the application are nothing more
 than an **architectural coincidence**, created **without any intent**.
@@ -126,7 +126,7 @@ the kernel rule above is only needed for kernel-generated RSTs.
 - **Two exit backends** - `l3` (raw SNAT/DNAT) and `l4` (gVisor proxy).
   See [Exit-node backends](#exit-node-backends).
 - **macOS utun client** - `--inbound=tun` (default on macOS). Creates a utun
-  interface, watches its own sockets to install bypass routes, then takes
+  interface, watches its own sockets to install direct routes, then takes
   the default route. No SOCKS5, no gVisor on the client.
 - **iOS packet tunnel** - NEPacketTunnelProvider, pure L3 forwarding.
 - **Legacy codec** - `--codec=legacy` reverts to the old per-packet LZ4 codec
@@ -152,7 +152,7 @@ OpenFlux/
   main.go                          # CLI entry (client / exit / benches)
   bench.go                         # Benchmark helpers
   tun_darwin.go                    # macOS utun L3 client
-  tun_watch.go                     # Socket watcher for bypass routes
+  tun_watch.go                     # Socket watcher for direct routes
   tun_other.go                     # Stubs for non-darwin platforms
   export_ios.go                    # cgo bridge for the iOS static library
   transport/
@@ -239,7 +239,7 @@ sudo ./openflux --role=client --inbound=tun \
     --url="YOUR_YANDEX_DOC_URL"
 ```
 
-Creates a utun interface, installs bypass routes for the transport, waits for
+Creates a utun interface, installs direct routes for the transport, waits for
 the transport to connect, then takes the default route. No SOCKS5.
 Requires sudo. All traffic except the transport goes through the tunnel.
 

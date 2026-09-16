@@ -105,7 +105,7 @@ func (l *HostLearner) WriteFile(path string) error {
 	hosts := l.Hosts()
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Learned %s by oflx --tun-learn\n", time.Now().Format(time.RFC3339))
-	fmt.Fprintf(&b, "# One IPv4 per line; used as bypass hosts (routes outside the tunnel)\n")
+	fmt.Fprintf(&b, "# One IPv4 per line; used as direct hosts (routes outside the tunnel)\n")
 	for _, ip := range hosts {
 		b.WriteString(ip)
 		b.WriteByte('\n')

@@ -14,7 +14,7 @@ import (
 )
 
 // SocketWatcher watches the process's own outbound TCP connections and
-// installs a /32 bypass route (via the physical gateway) for every distinct
+// installs a /32 direct route (via the physical gateway) for every distinct
 // remote IPv4 it sees. This keeps the transport's sockets off the tunnel
 // while everything else goes through utun.
 type SocketWatcher struct {
@@ -70,7 +70,7 @@ func (w *SocketWatcher) Stop() {
 	close(w.stop)
 	w.stopped.Wait()
 
-	// The bypass routes added by addRoute() are only meaningful while this
+	// The direct routes added by addRoute() are only meaningful while this
 	// process's tunnel is up; leaving them in place after we stop watching
 	// silently strands a host route through whatever gateway happened to be
 	// current at the time, which breaks reachability to that IP once the
@@ -81,7 +81,7 @@ func (w *SocketWatcher) Stop() {
 	w.mu.Unlock()
 	for ip := range known {
 		if err := w.removeRoute(ip); err != nil {
-			utils.Debugf("[WATCH] remove bypass route %s failed: %v", ip, err)
+			utils.Debugf("[WATCH] remove direct route %s failed: %v", ip, err)
 		}
 	}
 }
@@ -124,7 +124,7 @@ func (w *SocketWatcher) snapshot() {
 			continue
 		}
 		w.known[ip] = true
-		utils.Debugf("[WATCH] bypass route %s via %s", ip, w.gateway)
+		utils.Debugf("[WATCH] direct route %s via %s", ip, w.gateway)
 	}
 
 	if sameSet(current, w.lastSet) {

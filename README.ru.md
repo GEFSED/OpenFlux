@@ -130,7 +130,7 @@ sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
 - **Два бэкенда выхода** - `l3` (сырой SNAT/DNAT) и `l4` (gVisor proxy).
   См. [Бэкенды выходной ноды](#бэкенды-выходной-ноды).
 - **macOS utun-клиент** - `--inbound=tun` (по умолчанию на macOS). Создаёт
-  utun-интерфейс, следит за своими сокетами и ставит bypass-маршруты, затем
+  utun-интерфейс, следит за своими сокетами и ставит прямые маршруты, затем
   забирает default-маршрут. Никакого SOCKS5, никакого gVisor на клиенте.
 - **iOS packet tunnel** - NEPacketTunnelProvider, чистый L3-форвардинг.
 - **Legacy-кодек** - `--codec=legacy` возвращает старый per-packet LZ4-кодек
@@ -156,7 +156,7 @@ OpenFlux/
   main.go                          # Точка входа CLI (клиент / exit / бенчи)
   bench.go                         # Хелперы бенчмарка
   tun_darwin.go                    # macOS utun L3-клиент
-  tun_watch.go                     # Watcher сокетов для bypass-маршрутов
+  tun_watch.go                     # Watcher сокетов для прямых маршрутов
   tun_other.go                     # Заглушки для не-darwin платформ
   export_ios.go                    # cgo-мост для iOS-статической библиотеки
   transport/
@@ -243,7 +243,7 @@ sudo ./openflux --role=client --inbound=tun \
     --url="YOUR_YANDEX_DOC_URL"
 ```
 
-Создаёт utun-интерфейс, ставит bypass-маршруты для транспорта, ждёт
+Создаёт utun-интерфейс, ставит прямые маршруты для транспорта, ждёт
 подключения транспорта, затем забирает default-маршрут. SOCKS5 не нужен.
 Требует sudo. Весь трафик, кроме транспорта, идёт через туннель.
 
