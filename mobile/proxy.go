@@ -86,7 +86,14 @@ func StartProxy(transportType, documentURL, encryptionSecret, codec, maxToken, m
 	}
 
 	if encryptionSecret != "" {
-		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, documentURL, false)
+		// Same fallback as the CLI: the KDF context is the document URL, or
+		// the transport name when there isn't one (oneme). Both peers must
+		// derive the same context or the encrypted channel just won't work.
+		context := transportType
+		if documentURL != "" {
+			context = documentURL
+		}
+		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, context, false)
 		if err != nil {
 			return err.Error()
 		}
