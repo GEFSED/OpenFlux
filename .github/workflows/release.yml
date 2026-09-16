@@ -47,9 +47,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # ubuntu-latest ships the Android SDK/cmdline-tools preinstalled
-      # (ANDROID_HOME set, sdkmanager on PATH) - android-actions/setup-android@v3
-      # is both redundant here and, as of this writing, broken.
+      # ubuntu-latest ships the Android SDK preinstalled (ANDROID_HOME set)
+      # but not on PATH - android-actions/setup-android@v3 used to add it
+      # and is, as of this writing, broken, so add it ourselves instead.
+      - name: Add Android cmdline-tools to PATH
+        run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
       - name: Accept Android SDK licenses
         run: yes | sdkmanager --licenses > /dev/null || true
 
