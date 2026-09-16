@@ -7,11 +7,14 @@ package mobile
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 
 	"openflux/socks5"
 	"openflux/transport"
+	"openflux/transport/cupsonline"
 	"openflux/transport/mailru"
+	"openflux/transport/oneme"
 	"openflux/transport/yandex"
 	"openflux/tunnel"
 	"openflux/utils"
@@ -35,11 +38,11 @@ type proxyState struct {
 // is non-empty, the SOCKS5 server requires that username/password (e.g. for
 // a proxy bound to 0.0.0.0 and reachable from the local network); an empty
 // username leaves it open, as appropriate for a loopback-only bind.
-func StartProxy(transportType, documentURL, encryptionSecret, listenAddr, username, password string) string {
+func StartProxy(transportType, documentURL, encryptionSecret, codec, maxToken, maxUid, listenAddr, username, password string) string {
 	if transportType == "" {
 		transportType = "yandex"
 	}
-	if documentURL == "" {
+	if transportType != "oneme" && documentURL == "" {
 		return "Ссылка на документ не указана"
 	}
 	if encryptionSecret != "" && len(encryptionSecret) < 16 {
@@ -64,14 +67,23 @@ func StartProxy(transportType, documentURL, encryptionSecret, listenAddr, userna
 		inner = yandex.NewYandexVolgaTransport(documentURL, config)
 	case "mailru":
 		inner = mailru.NewMailruDocsTransport(documentURL, config)
+	case "cupsonline":
+		inner = cupsonline.NewCupsonlineTransport(documentURL, config, true)
+	case "oneme":
+		uidint, _ := strconv.ParseInt(maxUid, 10, 64)
+		inner = oneme.NewOneMeTransport(false, maxToken, uidint, config)
 	default:
 		inner = yandex.NewYandexDocsTransport(documentURL, config)
 	}
 
-	// App-layer codec, same as the CLI's default (--codec=batched):
-	// zstd + coalescing, applied before encryption so it compresses
-	// plaintext rather than ciphertext.
-	inner = transport.NewBatchedTransport(inner)
+	// App-layer codec, same as the CLI's --codec flag. Both peers must use
+	// the same one. Applied before encryption so it compresses plaintext
+	// rather than ciphertext.
+	if codec == "legacy" {
+		inner = transport.NewCompressedTransport(inner)
+	} else {
+		inner = transport.NewBatchedTransport(inner)
+	}
 
 	if encryptionSecret != "" {
 		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, documentURL, false)

@@ -60,10 +60,16 @@ export PATH="$(dirname -- "$GOMOBILE_BIN"):$PATH"
 
 (
     cd "$SCRIPT_DIR/mobile"
+    # github.com/wlynxg/anet (pulled in transitively by the oneme/WebRTC
+    # transport) still uses a //go:linkname into net.zoneCache that Go's
+    # linker rejects by default since the 1.23 linkname hardening; no
+    # release of anet has adapted to it yet. -checklinkname=0 downgrades
+    # that to the old permissive behavior instead of a hard link failure.
     "$GOMOBILE_BIN" bind \
         -target=android \
         -androidapi=26 \
         -javapkg=io.openflux.bridge \
+        -ldflags="-checklinkname=0" \
         -o ../android/app/libs/openflux.aar \
         .
 )

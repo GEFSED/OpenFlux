@@ -5,11 +5,14 @@ package mobile
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
 	"openflux/transport"
+	"openflux/transport/cupsonline"
 	"openflux/transport/mailru"
+	"openflux/transport/oneme"
 	"openflux/transport/yandex"
 	"openflux/utils"
 )
@@ -34,13 +37,16 @@ func appendLog(message string) {
 }
 
 // Start connects the packet transport. transportType is "yandex" (default
-// when empty) or "vyandex"; documentURL is required for both. It returns an
-// empty string on success and a user-readable error on failure.
-func Start(transportType, documentURL, encryptionSecret string) string {
+// when empty), "vyandex", "mailru", "cupsonline" or "oneme". documentURL is
+// required for all but "oneme", which instead needs maxToken (and optionally
+// maxUid). codec is "batched" (default, zstd+coalescing, matches the CLI's
+// --codec=batched) or "legacy" (per-packet LZ4; both peers must agree). It
+// returns an empty string on success and a user-readable error on failure.
+func Start(transportType, documentURL, encryptionSecret, codec, maxToken, maxUid string) string {
 	if transportType == "" {
 		transportType = "yandex"
 	}
-	if documentURL == "" {
+	if transportType != "oneme" && documentURL == "" {
 		return "Ссылка на документ не указана"
 	}
 	if encryptionSecret != "" && len(encryptionSecret) < 16 {
@@ -68,14 +74,23 @@ func Start(transportType, documentURL, encryptionSecret string) string {
 		inner = yandex.NewYandexVolgaTransport(documentURL, config)
 	case "mailru":
 		inner = mailru.NewMailruDocsTransport(documentURL, config)
+	case "cupsonline":
+		inner = cupsonline.NewCupsonlineTransport(documentURL, config, true)
+	case "oneme":
+		uidint, _ := strconv.ParseInt(maxUid, 10, 64)
+		inner = oneme.NewOneMeTransport(false, maxToken, uidint, config)
 	default:
 		inner = yandex.NewYandexDocsTransport(documentURL, config)
 	}
 
-	// App-layer codec, same as the CLI's default (--codec=batched):
-	// zstd + coalescing, applied before encryption so it compresses
-	// plaintext rather than ciphertext.
-	inner = transport.NewBatchedTransport(inner)
+	// App-layer codec, same as the CLI's --codec flag. Both peers must use
+	// the same one. Applied before encryption so it compresses plaintext
+	// rather than ciphertext.
+	if codec == "legacy" {
+		inner = transport.NewCompressedTransport(inner)
+	} else {
+		inner = transport.NewBatchedTransport(inner)
+	}
 
 	if encryptionSecret != "" {
 		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, documentURL, false)

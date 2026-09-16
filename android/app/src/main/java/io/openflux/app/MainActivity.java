@@ -149,6 +149,9 @@ public final class MainActivity extends Activity {
     private FrameLayout content;
     private EditText urlInput;
     private EditText encryptionInput;
+    private EditText maxTokenInput;
+    private EditText maxUidInput;
+    private View maxFieldsContainer;
     private EditText dnsInput;
     private EditText mtuInput;
     private EditText proxyPortInput;
@@ -167,6 +170,9 @@ public final class MainActivity extends Activity {
     private String documentUrl;
     private String encryptionSecret;
     private String transportType = "yandex";
+    private String codec = "batched";
+    private String maxToken = "";
+    private String maxUid = "";
     private ProfileStore profileStore;
     private List<Profile> profiles = new ArrayList<>();
     private long selectedProfileId = -1;
@@ -174,6 +180,9 @@ public final class MainActivity extends Activity {
     private Long editingProfileId;
     private String editorIcon = "ic_public";
     private String editorTransportType = "yandex";
+    private String editorCodec = "batched";
+    private String editorMaxToken = "";
+    private String editorMaxUid = "";
     private EditText profileNameInput;
     private PopupWindow profileDropdown;
     private TextView uptimeView;
@@ -608,10 +617,16 @@ public final class MainActivity extends Activity {
             documentUrl = p.documentUrl;
             encryptionSecret = p.encryptionSecret;
             transportType = p.transportType;
+            codec = p.codec;
+            maxToken = p.maxToken;
+            maxUid = p.maxUid;
         } else {
             documentUrl = "";
             encryptionSecret = "";
             transportType = "yandex";
+            codec = "batched";
+            maxToken = "";
+            maxUid = "";
         }
     }
 
@@ -635,6 +650,8 @@ public final class MainActivity extends Activity {
     private String transportLabel(String type) {
         if ("vyandex".equals(type)) return "Yandex Docs (Volga)";
         if ("mailru".equals(type)) return "Mail.ru Docs";
+        if ("cupsonline".equals(type)) return "Cups.online";
+        if ("oneme".equals(type)) return "MAX (OneMe)";
         return "Yandex Docs";
     }
 
@@ -649,6 +666,9 @@ public final class MainActivity extends Activity {
         editingProfileId = existing != null ? existing.id : null;
         editorIcon = existing != null ? existing.icon : "ic_public";
         editorTransportType = existing != null ? existing.transportType : "yandex";
+        editorCodec = existing != null ? existing.codec : "batched";
+        editorMaxToken = existing != null ? existing.maxToken : "";
+        editorMaxUid = existing != null ? existing.maxUid : "";
         profileEditorOpen = true;
         showPage(PAGE_PROFILES);
     }
@@ -658,13 +678,18 @@ public final class MainActivity extends Activity {
         showPage(PAGE_PROFILES);
     }
 
-    private void saveProfileFromEditor(String name, String docUrl, String secret) {
+    private void saveProfileFromEditor(String name, String docUrl, String secret, String token, String uid) {
         if (name.isEmpty()) {
             Toast.makeText(this, "Укажите название профиля", Toast.LENGTH_SHORT).show();
             return;
         }
-        if (!isValidDocumentUrl(docUrl)) {
+        boolean isMax = "oneme".equals(editorTransportType);
+        if (!isMax && !isValidDocumentUrl(docUrl)) {
             Toast.makeText(this, "Укажите корректную HTTPS-ссылку на документ", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (isMax && token.isEmpty()) {
+            Toast.makeText(this, "Укажите MAX Web token", Toast.LENGTH_SHORT).show();
             return;
         }
         if (!secret.isEmpty() && secret.length() < 16) {
@@ -687,6 +712,9 @@ public final class MainActivity extends Activity {
         target.transportType = editorTransportType;
         target.documentUrl = docUrl;
         target.encryptionSecret = secret;
+        target.codec = editorCodec;
+        target.maxToken = token;
+        target.maxUid = uid;
         profileStore.save(profiles);
         if (isNew && selectedProfile() == null) selectProfile(target.id);
         if (target.id == selectedProfileId) applySelectedProfileToFields();
@@ -1621,6 +1649,19 @@ public final class MainActivity extends Activity {
         section.addView(transportTypeLabel, transportTypeLabelParams);
         section.addView(buildTransportTypeSelector(), matchWrap());
 
+        LinearLayout.LayoutParams maxFieldsParams = matchWrap();
+        maxFieldsParams.topMargin = dp(8);
+        maxFieldsContainer = buildMaxFields(existing);
+        maxFieldsContainer.setVisibility("oneme".equals(editorTransportType) ? View.VISIBLE : View.GONE);
+        section.addView(maxFieldsContainer, maxFieldsParams);
+
+        TextView codecLabel = label("КОДЕК");
+        LinearLayout.LayoutParams codecLabelParams = matchWrap();
+        codecLabelParams.topMargin = dp(18);
+        codecLabelParams.bottomMargin = dp(8);
+        section.addView(codecLabel, codecLabelParams);
+        section.addView(buildCodecSelector(), matchWrap());
+
         LinearLayout.LayoutParams urlParams = new LinearLayout.LayoutParams(-1, dp(56));
         urlParams.topMargin = dp(18);
         section.addView(buildUrlField(initialUrl), urlParams);
@@ -1666,7 +1707,9 @@ public final class MainActivity extends Activity {
             String name = profileNameInput.getText().toString().trim();
             String url = urlInput.getText().toString().trim();
             String secret = encryptionInput.getText().toString().trim();
-            saveProfileFromEditor(name, url, secret);
+            String token = maxTokenInput.getText().toString().trim();
+            String uid = maxUidInput.getText().toString().trim();
+            saveProfileFromEditor(name, url, secret, token, uid);
         });
         LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(-1, dp(52));
         saveParams.topMargin = dp(22);
@@ -1737,17 +1780,71 @@ public final class MainActivity extends Activity {
         RadioButton yandexButton = modeRadio("Yandex Docs");
         RadioButton vyandexButton = modeRadio("Yandex Docs (Volga, экспериментальный)");
         RadioButton mailruButton = modeRadio("Mail.ru Docs");
+        RadioButton cupsButton = modeRadio("Cups.online");
+        RadioButton maxButton = modeRadio("MAX (OneMe)");
         group.addView(yandexButton);
         group.addView(vyandexButton);
         group.addView(mailruButton);
+        group.addView(cupsButton);
+        group.addView(maxButton);
         if ("vyandex".equals(editorTransportType)) vyandexButton.setChecked(true);
         else if ("mailru".equals(editorTransportType)) mailruButton.setChecked(true);
+        else if ("cupsonline".equals(editorTransportType)) cupsButton.setChecked(true);
+        else if ("oneme".equals(editorTransportType)) maxButton.setChecked(true);
         else yandexButton.setChecked(true);
         group.setOnCheckedChangeListener((g, checkedId) -> {
             tap(g);
             if (checkedId == vyandexButton.getId()) editorTransportType = "vyandex";
             else if (checkedId == mailruButton.getId()) editorTransportType = "mailru";
+            else if (checkedId == cupsButton.getId()) editorTransportType = "cupsonline";
+            else if (checkedId == maxButton.getId()) editorTransportType = "oneme";
             else editorTransportType = "yandex";
+            if (maxFieldsContainer != null) {
+                maxFieldsContainer.setVisibility("oneme".equals(editorTransportType) ? View.VISIBLE : View.GONE);
+            }
+        });
+        return group;
+    }
+
+    // MAX (OneMe) authenticates via a web token + numeric user id instead of
+    // a document URL - only shown/required when that transport is selected.
+    private View buildMaxFields(Profile existing) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+
+        FrameLayout tokenField = new FrameLayout(this);
+        tokenField.setBackground(rounded(surface, border, 1, 10));
+        maxTokenInput = settingInput("MAX Web token", existing != null ? existing.maxToken : "",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        maxTokenInput.setPadding(dp(16), 0, dp(16), 0);
+        tokenField.addView(maxTokenInput, new FrameLayout.LayoutParams(-1, -1));
+        box.addView(tokenField, new LinearLayout.LayoutParams(-1, dp(56)));
+
+        FrameLayout uidField = new FrameLayout(this);
+        uidField.setBackground(rounded(surface, border, 1, 10));
+        maxUidInput = settingInput("MAX call user id", existing != null ? existing.maxUid : "",
+                InputType.TYPE_CLASS_NUMBER);
+        maxUidInput.setPadding(dp(16), 0, dp(16), 0);
+        uidField.addView(maxUidInput, new FrameLayout.LayoutParams(-1, -1));
+        LinearLayout.LayoutParams uidParams = new LinearLayout.LayoutParams(-1, dp(56));
+        uidParams.topMargin = dp(8);
+        box.addView(uidField, uidParams);
+
+        return box;
+    }
+
+    private View buildCodecSelector() {
+        RadioGroup group = new RadioGroup(this);
+        group.setOrientation(LinearLayout.VERTICAL);
+        RadioButton batchedButton = modeRadio("Batched + zstd (по умолчанию)");
+        RadioButton legacyButton = modeRadio("Legacy (LZ4, для совместимости со старым exit-node)");
+        group.addView(batchedButton);
+        group.addView(legacyButton);
+        if ("legacy".equals(editorCodec)) legacyButton.setChecked(true);
+        else batchedButton.setChecked(true);
+        group.setOnCheckedChangeListener((g, checkedId) -> {
+            tap(g);
+            editorCodec = checkedId == legacyButton.getId() ? "legacy" : "batched";
         });
         return group;
     }
@@ -2242,8 +2339,14 @@ public final class MainActivity extends Activity {
             appendLog(proxyMode ? "Запрошена остановка прокси" : "Запрошена остановка VPN");
             return;
         }
-        if (!isValidDocumentUrl(documentUrl)) {
+        boolean isMax = "oneme".equals(transportType);
+        if (!isMax && !isValidDocumentUrl(documentUrl)) {
             Toast.makeText(this, "Выберите или создайте профиль с корректной HTTPS-ссылкой", Toast.LENGTH_LONG).show();
+            showPage(PAGE_PROFILES);
+            return;
+        }
+        if (isMax && (maxToken == null || maxToken.isEmpty())) {
+            Toast.makeText(this, "Выберите или создайте профиль с MAX Web token", Toast.LENGTH_LONG).show();
             showPage(PAGE_PROFILES);
             return;
         }
@@ -2280,6 +2383,9 @@ public final class MainActivity extends Activity {
         intent.putExtra(OpenFluxVpnService.EXTRA_DOCUMENT_URL, documentUrl);
         intent.putExtra(OpenFluxVpnService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
         intent.putExtra(OpenFluxVpnService.EXTRA_TRANSPORT_TYPE, transportType);
+        intent.putExtra(OpenFluxVpnService.EXTRA_CODEC, codec);
+        intent.putExtra(OpenFluxVpnService.EXTRA_MAX_TOKEN, maxToken);
+        intent.putExtra(OpenFluxVpnService.EXTRA_MAX_UID, maxUid);
         intent.putExtra(OpenFluxVpnService.EXTRA_DNS_SERVER, dnsServer);
         intent.putExtra(OpenFluxVpnService.EXTRA_MTU, mtu);
         startForegroundService(intent);
@@ -2292,6 +2398,9 @@ public final class MainActivity extends Activity {
         intent.putExtra(OpenFluxProxyService.EXTRA_DOCUMENT_URL, documentUrl);
         intent.putExtra(OpenFluxProxyService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
         intent.putExtra(OpenFluxProxyService.EXTRA_TRANSPORT_TYPE, transportType);
+        intent.putExtra(OpenFluxProxyService.EXTRA_CODEC, codec);
+        intent.putExtra(OpenFluxProxyService.EXTRA_MAX_TOKEN, maxToken);
+        intent.putExtra(OpenFluxProxyService.EXTRA_MAX_UID, maxUid);
         intent.putExtra(OpenFluxProxyService.EXTRA_PORT, proxyPort);
         intent.putExtra(OpenFluxProxyService.EXTRA_LAN_ACCESS, proxyLanAccess);
         if (proxyLanAccess && proxyAuthEnabled) {
@@ -2491,6 +2600,7 @@ public final class MainActivity extends Activity {
             case "[VOLGA]":
             case "[MAX]":
             case "[CUPS]":
+            case "[M-DOCS]":
                 return accent;
             default:
                 return logColor;

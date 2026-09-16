@@ -13,6 +13,9 @@ final class Profile {
     String transportType = "yandex";
     String documentUrl = "";
     String encryptionSecret = "";
+    String codec = "batched";
+    String maxToken = "";
+    String maxUid = "";
 
     JSONObject toJson() throws JSONException {
         JSONObject o = new JSONObject();
@@ -22,6 +25,9 @@ final class Profile {
         o.put("transportType", transportType);
         o.put("documentUrl", documentUrl);
         o.put("encryptionSecret", encryptionSecret);
+        o.put("codec", codec);
+        o.put("maxToken", maxToken);
+        o.put("maxUid", maxUid);
         return o;
     }
 
@@ -33,6 +39,9 @@ final class Profile {
         p.transportType = o.optString("transportType", "yandex");
         p.documentUrl = o.optString("documentUrl", "");
         p.encryptionSecret = o.optString("encryptionSecret", "");
+        p.codec = o.optString("codec", "batched");
+        p.maxToken = o.optString("maxToken", "");
+        p.maxUid = o.optString("maxUid", "");
         return p;
     }
 }

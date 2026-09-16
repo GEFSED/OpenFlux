@@ -33,6 +33,9 @@ public final class OpenFluxProxyService extends Service {
     public static final String EXTRA_LAN_ACCESS = "lan_access";
     public static final String EXTRA_USERNAME = "username";
     public static final String EXTRA_PASSWORD = "password";
+    public static final String EXTRA_CODEC = "codec";
+    public static final String EXTRA_MAX_TOKEN = "max_token";
+    public static final String EXTRA_MAX_UID = "max_uid";
 
     private static final String CHANNEL_ID = "openflux_proxy";
     private static final int NOTIFICATION_ID = 8;
@@ -130,13 +133,19 @@ public final class OpenFluxProxyService extends Service {
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, notification("Подключение…"));
 
+        String transportTypeExtra = intent == null ? null : intent.getStringExtra(EXTRA_TRANSPORT_TYPE);
+        final String transportType = transportTypeExtra == null || transportTypeExtra.isEmpty()
+                ? "yandex" : transportTypeExtra;
+        boolean needsUrl = !"oneme".equals(transportType);
+
         String url = intent == null ? null : intent.getStringExtra(EXTRA_DOCUMENT_URL);
-        if (url == null || !url.startsWith("https://")) {
+        if (needsUrl && (url == null || !url.startsWith("https://"))) {
             lastError = "Некорректная ссылка на документ";
             status = "Ошибка";
             stopSelf();
             return START_NOT_STICKY;
         }
+        if (url == null) url = "";
         String encryptionSecretExtra = intent.getStringExtra(EXTRA_ENCRYPTION_SECRET);
         final String encryptionSecret = encryptionSecretExtra == null ? "" : encryptionSecretExtra;
         if (!encryptionSecret.isEmpty() && encryptionSecret.length() < 16) {
@@ -145,9 +154,12 @@ public final class OpenFluxProxyService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        String transportTypeExtra = intent.getStringExtra(EXTRA_TRANSPORT_TYPE);
-        final String transportType = transportTypeExtra == null || transportTypeExtra.isEmpty()
-                ? "yandex" : transportTypeExtra;
+        String codecExtra = intent.getStringExtra(EXTRA_CODEC);
+        final String codec = codecExtra == null || codecExtra.isEmpty() ? "batched" : codecExtra;
+        String maxTokenExtra = intent.getStringExtra(EXTRA_MAX_TOKEN);
+        final String maxToken = maxTokenExtra == null ? "" : maxTokenExtra;
+        String maxUidExtra = intent.getStringExtra(EXTRA_MAX_UID);
+        final String maxUid = maxUidExtra == null ? "" : maxUidExtra;
         int port = intent.getIntExtra(EXTRA_PORT, 1080);
         boolean lanAccess = intent.getBooleanExtra(EXTRA_LAN_ACCESS, false);
         String username = intent.getStringExtra(EXTRA_USERNAME);
@@ -163,15 +175,16 @@ public final class OpenFluxProxyService extends Service {
         int session = generation.incrementAndGet();
         String selectedUser = username;
         String selectedPassword = password;
-        workers.execute(() -> startProxyTransport(transportType, url, encryptionSecret, bindHost, port,
+        String finalUrl = url;
+        workers.execute(() -> startProxyTransport(transportType, finalUrl, encryptionSecret, codec, maxToken, maxUid, bindHost, port,
                 selectedUser, selectedPassword, session));
         return START_STICKY;
     }
 
-    private void startProxyTransport(String transportType, String url, String encryptionSecret, String bindHost, int port,
+    private void startProxyTransport(String transportType, String url, String encryptionSecret, String codec, String maxToken, String maxUid, String bindHost, int port,
             String username, String password, int session) {
         if (!isCurrent(session)) return;
-        String error = Mobile.startProxy(transportType, url, encryptionSecret, bindHost + ":" + port, username, password);
+        String error = Mobile.startProxy(transportType, url, encryptionSecret, codec, maxToken, maxUid, bindHost + ":" + port, username, password);
         if (error != null && !error.isEmpty()) {
             fail(session, error);
             return;

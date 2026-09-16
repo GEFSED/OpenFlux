@@ -39,6 +39,9 @@ public final class OpenFluxVpnService extends VpnService {
     public static final String EXTRA_TRANSPORT_TYPE = "transport_type";
     public static final String EXTRA_DNS_SERVER = "dns_server";
     public static final String EXTRA_MTU = "mtu";
+    public static final String EXTRA_CODEC = "codec";
+    public static final String EXTRA_MAX_TOKEN = "max_token";
+    public static final String EXTRA_MAX_UID = "max_uid";
 
     private static final String CHANNEL_ID = "openflux_vpn";
     private static final int NOTIFICATION_ID = 7;
@@ -146,14 +149,20 @@ public final class OpenFluxVpnService extends VpnService {
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, notification("Подключение…"));
 
+        String transportTypeExtra = intent == null ? null : intent.getStringExtra(EXTRA_TRANSPORT_TYPE);
+        final String transportType = transportTypeExtra == null || transportTypeExtra.isEmpty()
+                ? "yandex" : transportTypeExtra;
+        boolean needsUrl = !"oneme".equals(transportType);
+
         String url = intent == null ? null : intent.getStringExtra(EXTRA_DOCUMENT_URL);
-        if (url == null || !url.startsWith("https://")) {
+        if (needsUrl && (url == null || !url.startsWith("https://"))) {
             lastError = "Некорректная ссылка на документ";
             status = "Ошибка";
             running = false;
             stopSelf();
             return START_NOT_STICKY;
         }
+        if (url == null) url = "";
         String dnsServer = intent.getStringExtra(EXTRA_DNS_SERVER);
         String encryptionSecretExtra = intent.getStringExtra(EXTRA_ENCRYPTION_SECRET);
         final String encryptionSecret = encryptionSecretExtra == null ? "" : encryptionSecretExtra;
@@ -164,9 +173,12 @@ public final class OpenFluxVpnService extends VpnService {
             stopSelf();
             return START_NOT_STICKY;
         }
-        String transportTypeExtra = intent.getStringExtra(EXTRA_TRANSPORT_TYPE);
-        final String transportType = transportTypeExtra == null || transportTypeExtra.isEmpty()
-                ? "yandex" : transportTypeExtra;
+        String codecExtra = intent.getStringExtra(EXTRA_CODEC);
+        final String codec = codecExtra == null || codecExtra.isEmpty() ? "batched" : codecExtra;
+        String maxTokenExtra = intent.getStringExtra(EXTRA_MAX_TOKEN);
+        final String maxToken = maxTokenExtra == null ? "" : maxTokenExtra;
+        String maxUidExtra = intent.getStringExtra(EXTRA_MAX_UID);
+        final String maxUid = maxUidExtra == null ? "" : maxUidExtra;
         if (dnsServer == null || dnsServer.trim().isEmpty()) dnsServer = "1.1.1.1";
         int mtu = Math.max(576, Math.min(1500, intent.getIntExtra(EXTRA_MTU, 1400)));
 
@@ -177,13 +189,14 @@ public final class OpenFluxVpnService extends VpnService {
         int session = generation.incrementAndGet();
         String selectedDns = dnsServer;
         int selectedMtu = mtu;
-        workers.execute(() -> startTunnel(transportType, url, encryptionSecret, selectedDns, selectedMtu, session));
+        String finalUrl = url;
+        workers.execute(() -> startTunnel(transportType, finalUrl, encryptionSecret, codec, maxToken, maxUid, selectedDns, selectedMtu, session));
         return START_STICKY;
     }
 
-    private void startTunnel(String transportType, String url, String encryptionSecret, String dnsServer, int mtu, int session) {
+    private void startTunnel(String transportType, String url, String encryptionSecret, String codec, String maxToken, String maxUid, String dnsServer, int mtu, int session) {
         if (!isCurrent(session)) return;
-        String error = Mobile.start(transportType, url, encryptionSecret);
+        String error = Mobile.start(transportType, url, encryptionSecret, codec, maxToken, maxUid);
         if (error != null && !error.isEmpty()) {
             fail(session, error);
             return;
