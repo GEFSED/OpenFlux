@@ -194,6 +194,16 @@ public final class MainActivity extends Activity {
     private boolean proxyAuthEnabled;
     private String proxyUsername = "";
     private String proxyPassword = "";
+    // Draft state for the Network/Mode settings sub-pages: edits only take
+    // effect when "Применить" is pressed, not just by navigating away (see
+    // applyNetworkSettings/applyModeSettings). Seeded from the live fields
+    // each time the corresponding sub-page opens (openSettingsDetail).
+    private String editorDnsServer = "";
+    private int editorMtu;
+    private String editorConnectionMode = MODE_VPN;
+    private int editorProxyPort = DEFAULT_PROXY_PORT;
+    private boolean editorProxyLanAccess;
+    private boolean editorProxyAuthEnabled;
     private String logs = "";
     private String lastShownError = "";
     private boolean encryptionVisible;
@@ -303,8 +313,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onStop() {
         handler.removeCallbacks(refresh);
-        readSettingsFromViews();
-        persistSettings();
+        captureLogs();
         super.onStop();
     }
 
@@ -575,6 +584,15 @@ public final class MainActivity extends Activity {
         if (settingsDetailOpen && settingsSubTab == tab) return;
         settingsDetailOpen = true;
         settingsSubTab = tab;
+        if (tab == SETTINGS_NETWORK) {
+            editorDnsServer = dnsServer;
+            editorMtu = mtu;
+        } else if (tab == SETTINGS_MODE) {
+            editorConnectionMode = connectionMode;
+            editorProxyPort = proxyPort;
+            editorProxyLanAccess = proxyLanAccess;
+            editorProxyAuthEnabled = proxyAuthEnabled;
+        }
         showPage(PAGE_SETTINGS);
     }
 
@@ -1019,8 +1037,8 @@ public final class MainActivity extends Activity {
             save.setBackground(buttonBackground(Color.rgb(26, 115, 232), Color.rgb(23, 78, 166)));
             save.setOnClickListener(v -> {
                 bounce(v);
-                readSettingsFromViews();
-                persistSettings();
+                if (settingsSubTab == SETTINGS_NETWORK) applyNetworkSettings();
+                else if (settingsSubTab == SETTINGS_MODE) applyModeSettings();
                 Toast.makeText(this, "Настройки сохранены", Toast.LENGTH_SHORT).show();
             });
             LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(-1, dp(52));
@@ -1164,12 +1182,12 @@ public final class MainActivity extends Activity {
         RadioButton proxyOption = modeRadio("Прокси (SOCKS5) - без системного VPN");
         modeGroup.addView(vpnOption);
         modeGroup.addView(proxyOption);
-        if (MODE_PROXY.equals(connectionMode)) proxyOption.setChecked(true);
+        if (MODE_PROXY.equals(editorConnectionMode)) proxyOption.setChecked(true);
         else vpnOption.setChecked(true);
 
-        boolean proxySelected = MODE_PROXY.equals(connectionMode);
+        boolean proxySelected = MODE_PROXY.equals(editorConnectionMode);
 
-        proxyPortInput = settingInput("Порт", String.valueOf(proxyPort), InputType.TYPE_CLASS_NUMBER);
+        proxyPortInput = settingInput("Порт", String.valueOf(editorProxyPort), InputType.TYPE_CLASS_NUMBER);
         View portRow = settingRow(R.drawable.ic_swap, "Локальный порт SOCKS5", proxyPortInput);
         setInitialVisibility(portRow, proxySelected);
         LinearLayout.LayoutParams portParams = matchWrap();
@@ -1177,7 +1195,7 @@ public final class MainActivity extends Activity {
         section.addView(portRow, portParams);
 
         Switch lanSwitch = settingSwitch(R.drawable.ic_public, "Доступ из локальной сети",
-                "Прокси станет виден другим устройствам в этой же Wi-Fi/LAN", proxyLanAccess);
+                "Прокси станет виден другим устройствам в этой же Wi-Fi/LAN", editorProxyLanAccess);
         View lanRow = (View) lanSwitch.getTag();
         setInitialVisibility(lanRow, proxySelected);
         LinearLayout.LayoutParams lanParams = matchWrap();
@@ -1187,33 +1205,33 @@ public final class MainActivity extends Activity {
         String localIp = getLocalIpAddress();
         TextView lanAddressHint = text(
                 localIp != null
-                        ? "Адрес в сети: " + localIp + ":" + proxyPort
+                        ? "Адрес в сети: " + localIp + ":" + editorProxyPort
                         : "Не удалось определить IP - проверьте подключение к Wi-Fi",
                 13, accent, true);
         lanAddressHint.setPadding(dp(14), dp(12), dp(14), dp(12));
         lanAddressHint.setBackground(rounded(darkMode ? Color.rgb(38, 50, 68) : Color.rgb(232, 240, 254),
                 Color.TRANSPARENT, 0, 10));
-        setInitialVisibility(lanAddressHint, proxySelected && proxyLanAccess);
+        setInitialVisibility(lanAddressHint, proxySelected && editorProxyLanAccess);
         LinearLayout.LayoutParams lanAddressParams = matchWrap();
         lanAddressParams.topMargin = dp(8);
         section.addView(lanAddressHint, lanAddressParams);
 
         Switch authSwitch = settingSwitch(R.drawable.ic_lock, "Логин и пароль",
-                "Требовать авторизацию для подключения к прокси", proxyAuthEnabled);
+                "Требовать авторизацию для подключения к прокси", editorProxyAuthEnabled);
         View authRow = (View) authSwitch.getTag();
-        setInitialVisibility(authRow, proxySelected && proxyLanAccess);
+        setInitialVisibility(authRow, proxySelected && editorProxyLanAccess);
         LinearLayout.LayoutParams authParams = matchWrap();
         authParams.topMargin = dp(8);
         section.addView(authRow, authParams);
         View lanWarningHint = fieldHint(
                 "Без пароля прокси в локальной сети открыт для всех: любой в этой Wi-Fi сможет "
                         + "ходить в интернет через ваш туннель.");
-        setInitialVisibility(lanWarningHint, proxySelected && proxyLanAccess);
+        setInitialVisibility(lanWarningHint, proxySelected && editorProxyLanAccess);
         section.addView(lanWarningHint);
 
         LinearLayout credentialsBlock = new LinearLayout(this);
         credentialsBlock.setOrientation(LinearLayout.VERTICAL);
-        setInitialVisibility(credentialsBlock, proxySelected && proxyLanAccess && proxyAuthEnabled);
+        setInitialVisibility(credentialsBlock, proxySelected && editorProxyLanAccess && editorProxyAuthEnabled);
         LinearLayout.LayoutParams credentialsParams = matchWrap();
         credentialsParams.topMargin = dp(10);
         section.addView(credentialsBlock, credentialsParams);
@@ -1277,37 +1295,53 @@ public final class MainActivity extends Activity {
 
         modeGroup.setOnCheckedChangeListener((group, checkedId) -> {
             tap(group);
-            connectionMode = checkedId == proxyOption.getId() ? MODE_PROXY : MODE_VPN;
-            boolean nowProxy = MODE_PROXY.equals(connectionMode);
+            editorConnectionMode = checkedId == proxyOption.getId() ? MODE_PROXY : MODE_VPN;
+            boolean nowProxy = MODE_PROXY.equals(editorConnectionMode);
             setViewVisibleAnimated(portRow, nowProxy);
             setViewVisibleAnimated(lanRow, nowProxy);
-            setViewVisibleAnimated(lanAddressHint, nowProxy && proxyLanAccess);
-            setViewVisibleAnimated(authRow, nowProxy && proxyLanAccess);
-            setViewVisibleAnimated(lanWarningHint, nowProxy && proxyLanAccess);
-            setViewVisibleAnimated(credentialsBlock, nowProxy && proxyLanAccess && proxyAuthEnabled);
+            setViewVisibleAnimated(lanAddressHint, nowProxy && editorProxyLanAccess);
+            setViewVisibleAnimated(authRow, nowProxy && editorProxyLanAccess);
+            setViewVisibleAnimated(lanWarningHint, nowProxy && editorProxyLanAccess);
+            setViewVisibleAnimated(credentialsBlock, nowProxy && editorProxyLanAccess && editorProxyAuthEnabled);
             setViewVisibleAnimated(shareCard, nowProxy);
             setViewVisibleAnimated(alwaysOnRow, !nowProxy);
-            persistSettings();
         });
 
         lanSwitch.setOnCheckedChangeListener((button, checked) -> {
             tap(button);
-            proxyLanAccess = checked;
+            editorProxyLanAccess = checked;
             setViewVisibleAnimated(lanAddressHint, checked);
             setViewVisibleAnimated(authRow, checked);
             setViewVisibleAnimated(lanWarningHint, checked);
-            setViewVisibleAnimated(credentialsBlock, checked && proxyAuthEnabled);
-            persistSettings();
+            setViewVisibleAnimated(credentialsBlock, checked && editorProxyAuthEnabled);
         });
 
         authSwitch.setOnCheckedChangeListener((button, checked) -> {
             tap(button);
-            proxyAuthEnabled = checked;
+            editorProxyAuthEnabled = checked;
             setViewVisibleAnimated(credentialsBlock, checked);
-            persistSettings();
         });
 
         return section;
+    }
+
+    // Commits the Mode/Proxy draft fields to the live settings. Called by the
+    // generic "Сохранить настройки" button in buildSettingsPage() - editing
+    // these fields and pressing back without it discards the draft.
+    private void applyModeSettings() {
+        connectionMode = editorConnectionMode;
+        proxyLanAccess = editorProxyLanAccess;
+        proxyAuthEnabled = editorProxyAuthEnabled;
+        int newPort;
+        try {
+            newPort = Integer.parseInt(proxyPortInput.getText().toString().trim());
+        } catch (NumberFormatException ignored) {
+            newPort = DEFAULT_PROXY_PORT;
+        }
+        proxyPort = Math.max(1024, Math.min(65535, newPort));
+        proxyUsername = proxyUsernameInput.getText().toString().trim();
+        proxyPassword = proxyPasswordInput.getText().toString().trim();
+        persistSettings();
     }
 
     // buildProxyShareCard renders the socks:// link (and a QR encoding it)
@@ -1460,18 +1494,19 @@ public final class MainActivity extends Activity {
         proxyPasswordInput.setSelection(Math.max(0, Math.min(position, proxyPasswordInput.length())));
     }
 
+    // Only fills the (still-unsaved) input fields - applyModeSettings() is
+    // what actually commits them, same as editing the fields by hand would.
     private void generateProxyCredentials() {
         byte[] randomPass = new byte[16];
         new SecureRandom().nextBytes(randomPass);
-        proxyUsername = "user" + (100 + new SecureRandom().nextInt(900));
-        proxyPassword = Base64.encodeToString(randomPass, Base64.NO_WRAP | Base64.NO_PADDING | Base64.URL_SAFE);
-        if (proxyUsernameInput != null) proxyUsernameInput.setText(proxyUsername);
+        String generatedUser = "user" + (100 + new SecureRandom().nextInt(900));
+        String generatedPass = Base64.encodeToString(randomPass, Base64.NO_WRAP | Base64.NO_PADDING | Base64.URL_SAFE);
+        if (proxyUsernameInput != null) proxyUsernameInput.setText(generatedUser);
         if (proxyPasswordInput != null) {
-            proxyPasswordInput.setText(proxyPassword);
+            proxyPasswordInput.setText(generatedPass);
             proxyPasswordInput.setSelection(proxyPasswordInput.length());
         }
-        persistSettings();
-        Toast.makeText(this, "Логин и пароль созданы", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Логин и пароль созданы - нажмите «Применить»", Toast.LENGTH_SHORT).show();
     }
 
     private View buildAboutSettings() {
@@ -1851,14 +1886,14 @@ public final class MainActivity extends Activity {
 
     private View buildNetworkSettings() {
         LinearLayout section = page();
-        dnsInput = settingInput("DNS-сервер", dnsServer,
+        dnsInput = settingInput("DNS-сервер", editorDnsServer,
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         section.addView(settingRow(R.drawable.ic_public, "DNS-сервер", dnsInput));
         section.addView(fieldHint(
                 "Для чего: сюда уходят запросы «какой IP у сайта», резолвится локально на "
                         + "устройстве. Можно указать IP (1.1.1.1) или доменное имя (dns.google)."));
 
-        mtuInput = settingInput("MTU", String.valueOf(mtu), InputType.TYPE_CLASS_NUMBER);
+        mtuInput = settingInput("MTU", String.valueOf(editorMtu), InputType.TYPE_CLASS_NUMBER);
         LinearLayout.LayoutParams mtuParams = matchWrap();
         mtuParams.topMargin = dp(16);
         section.addView(settingRow(R.drawable.ic_settings, "MTU пакета", mtuInput), mtuParams);
@@ -1866,7 +1901,24 @@ public final class MainActivity extends Activity {
                 "Для чего: максимальный размер пакета в туннеле. Трогать не обязательно - "
                         + "уменьшите (например, до 1280), если сайты грузятся не полностью "
                         + "или соединение обрывается."));
+
         return section;
+    }
+
+    // Commits the Network draft fields to the live settings. Called by the
+    // generic "Сохранить настройки" button in buildSettingsPage() - editing
+    // these fields and pressing back without it discards the draft.
+    private void applyNetworkSettings() {
+        String newDns = dnsInput.getText().toString().trim();
+        dnsServer = newDns.isEmpty() ? DEFAULT_DNS : newDns;
+        int newMtu;
+        try {
+            newMtu = Integer.parseInt(mtuInput.getText().toString().trim());
+        } catch (NumberFormatException ignored) {
+            newMtu = DEFAULT_MTU;
+        }
+        mtu = Math.max(576, Math.min(1500, newMtu));
+        persistSettings();
     }
 
     private TextView fieldHint(String value) {
@@ -2262,9 +2314,13 @@ public final class MainActivity extends Activity {
         Toast.makeText(this, "Создан ключ на 256 бит. Передайте его на VDS.", Toast.LENGTH_LONG).show();
     }
 
+    // Called on every navigation (showPage), not just when leaving a settings
+    // page with unsaved edits - so it must NOT commit the Network/Mode draft
+    // fields (applyNetworkSettings/applyModeSettings do that, only when the
+    // save button is pressed). Just preserves the log scrollback text across
+    // the page rebuild and drops view references before they're rebuilt.
     private void captureSettings() {
-        readSettingsFromViews();
-        persistSettings();
+        captureLogs();
         urlInput = null;
         encryptionInput = null;
         profileNameInput = null;
@@ -2277,20 +2333,7 @@ public final class MainActivity extends Activity {
         logScroll = null;
     }
 
-    private void readSettingsFromViews() {
-        if (dnsInput != null) dnsServer = dnsInput.getText().toString().trim();
-        if (mtuInput != null) {
-            try { mtu = Integer.parseInt(mtuInput.getText().toString()); }
-            catch (NumberFormatException ignored) { mtu = DEFAULT_MTU; }
-            mtu = Math.max(576, Math.min(1500, mtu));
-        }
-        if (proxyPortInput != null) {
-            try { proxyPort = Integer.parseInt(proxyPortInput.getText().toString()); }
-            catch (NumberFormatException ignored) { proxyPort = DEFAULT_PROXY_PORT; }
-            proxyPort = Math.max(1024, Math.min(65535, proxyPort));
-        }
-        if (proxyUsernameInput != null) proxyUsername = proxyUsernameInput.getText().toString().trim();
-        if (proxyPasswordInput != null) proxyPassword = proxyPasswordInput.getText().toString().trim();
+    private void captureLogs() {
         if (logView != null) logs = logView.getText().toString();
     }
 
