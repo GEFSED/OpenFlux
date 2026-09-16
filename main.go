@@ -11,12 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"openflux/bench"
 	"openflux/socks5"
 	"openflux/transport"
 	"openflux/transport/cupsonline"
 	"openflux/transport/mailru"
 	"openflux/transport/oneme"
 	"openflux/transport/yandex"
+	"openflux/tunclient"
 	"openflux/tunnel"
 	"openflux/utils"
 )
@@ -337,11 +339,11 @@ DEPRECATED (removed in v2)
 		if *benchBytes <= 0 {
 			log.Fatalf("--role=bench-send requires --bench-bytes=<MB>")
 		}
-		runBenchSend(trans, *benchBytes, *benchCompressible)
+		bench.RunSend(trans, *benchBytes, *benchCompressible)
 		return
 	}
 	if *role == roleBenchSink {
-		runBenchSink(trans)
+		bench.RunSink(trans)
 		return
 	}
 
@@ -404,7 +406,7 @@ func runClient(trans transport.Transport, inbound, socksAddr string, exitMode tu
 }
 
 func runClientTUN(trans transport.Transport) {
-	tc, err := NewTUNClient(trans, 1280)
+	tc, err := tunclient.NewTUNClient(trans, 1280)
 	if err != nil {
 		log.Fatalf("utun: %v", err)
 	}
@@ -420,7 +422,7 @@ func runClientTUN(trans transport.Transport) {
 	}
 	log.Printf("utun up; bypass gateway is %s", tc.Gateway())
 
-	watcher := NewSocketWatcher(tc.Gateway(), func() {
+	watcher := tunclient.NewSocketWatcher(tc.Gateway(), func() {
 		log.Printf("Socket set stable; taking default route into the tunnel")
 		if err := tc.ConfigureDefault(); err != nil {
 			log.Printf("FATAL: configure default: %v", err)
@@ -432,7 +434,7 @@ func runClientTUN(trans transport.Transport) {
 	watcher.Start(2 * time.Second)
 
 	sigCh := make(chan os.Signal, 1)
-	notifySignals(sigCh)
+	tunclient.NotifySignals(sigCh)
 	<-sigCh
 	watcher.Stop()
 	log.Printf("Shutting down, restoring default route...")

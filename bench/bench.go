@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"bytes"
@@ -32,7 +32,7 @@ func ratio(a, b int64) float64 {
 
 // runBenchSink receives packets and measures delivered goodput plus the
 // channel-message count (which exposes the batching factor).
-func runBenchSink(trans transport.Transport) {
+func RunSink(trans transport.Transport) {
 	var got, pkts, startNs int64
 	done := make(chan int64, 1)
 
@@ -94,7 +94,7 @@ func runBenchSink(trans transport.Transport) {
 
 // runBenchSend pushes mb megabytes through the transport as ~MTU-sized packets,
 // honoring queue backpressure, then reports the channel-message count.
-func runBenchSend(trans transport.Transport, mb int, compressible bool) {
+func RunSend(trans transport.Transport, mb int, compressible bool) {
 	if err := trans.Start(); err != nil {
 		log.Fatalf("[BENCH-SEND] start: %v", err)
 	}
