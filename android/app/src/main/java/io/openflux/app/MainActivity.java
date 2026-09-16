@@ -329,7 +329,7 @@ public final class MainActivity extends Activity {
             text = Color.rgb(241, 243, 244);
             secondary = Color.rgb(189, 193, 198);
             border = Color.rgb(60, 64, 67);
-            accent = Color.rgb(138, 180, 248);
+            accent = Color.rgb(255, 107, 107);
             hint = Color.rgb(154, 160, 166);
             logColor = Color.rgb(218, 220, 224);
         } else {
@@ -338,7 +338,7 @@ public final class MainActivity extends Activity {
             text = Color.rgb(32, 33, 36);
             secondary = Color.rgb(95, 99, 104);
             border = Color.rgb(218, 220, 224);
-            accent = Color.rgb(26, 115, 232);
+            accent = Color.rgb(234, 26, 26);
             hint = Color.rgb(128, 134, 139);
             logColor = Color.rgb(60, 64, 67);
         }
@@ -386,7 +386,7 @@ public final class MainActivity extends Activity {
         ImageView logo = new ImageView(this);
         logo.setContentDescription("Логотип OpenFlux");
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        logo.setBackground(rounded(Color.rgb(43, 43, 43), Color.TRANSPARENT, 0, 10));
+        logo.setBackground(rounded(Color.rgb(234, 26, 26), Color.TRANSPARENT, 0, 10));
         logo.setImageResource(R.drawable.ic_openflux_foreground);
         logo.setClipToOutline(true);
         header.addView(logo, new LinearLayout.LayoutParams(dp(44), dp(44)));
@@ -1034,7 +1034,7 @@ public final class MainActivity extends Activity {
             save.setTextSize(15);
             save.setTypeface(Typeface.DEFAULT_BOLD);
             save.setStateListAnimator(null);
-            save.setBackground(buttonBackground(Color.rgb(26, 115, 232), Color.rgb(23, 78, 166)));
+            save.setBackground(buttonBackground(Color.rgb(234, 26, 26), Color.rgb(179, 18, 18)));
             save.setOnClickListener(v -> {
                 bounce(v);
                 if (settingsSubTab == SETTINGS_NETWORK) applyNetworkSettings();
@@ -1736,7 +1736,7 @@ public final class MainActivity extends Activity {
         save.setTextSize(15);
         save.setTypeface(Typeface.DEFAULT_BOLD);
         save.setStateListAnimator(null);
-        save.setBackground(buttonBackground(Color.rgb(26, 115, 232), Color.rgb(23, 78, 166)));
+        save.setBackground(buttonBackground(Color.rgb(234, 26, 26), Color.rgb(179, 18, 18)));
         save.setOnClickListener(v -> {
             bounce(v);
             String name = profileNameInput.getText().toString().trim();
@@ -2498,8 +2498,12 @@ public final class MainActivity extends Activity {
         statusDot.setBackground(rounded(stateColor, Color.TRANSPARENT, 0, 8));
         setStatusDotPulsing(transitional);
 
-        int vpnFill = running ? Color.rgb(217, 48, 37) : Color.rgb(26, 115, 232);
-        int vpnPressed = running ? Color.rgb(183, 28, 28) : Color.rgb(23, 78, 166);
+        // Not-running uses the brand red (matches the accent); running keeps
+        // a distinct neutral tone instead of also going red, so "tap to
+        // disconnect" doesn't read as an alarm/error state on top of the
+        // now-red "tap to connect" button.
+        int vpnFill = running ? Color.rgb(66, 66, 66) : Color.rgb(234, 26, 26);
+        int vpnPressed = running ? Color.rgb(45, 45, 45) : Color.rgb(179, 18, 18);
         animateVpnButtonFill(vpnFill, vpnPressed);
 
         String error = connectionLastError();
