@@ -1,302 +1,208 @@
-# OpenFlux
+<div align="center">
+  <img src="design/logo/icon.svg" width="112" alt="Логотип OpenFlux">
+  <h1>OpenFlux Android</h1>
+  <p>Зашифрованный VPN через документ-транспорт - для Android, десктопных клиентов и Linux-выходных нод.</p>
+  <p>
+    <a href="https://github.com/damnurmum/OpenFlux-Android/releases/latest"><img src="https://img.shields.io/github/v/release/damnurmum/OpenFlux-Android?display_name=tag&amp;sort=semver&amp;style=flat-square&amp;color=EA1A1A" alt="Последний релиз"></a>
+    <a href="https://github.com/damnurmum/OpenFlux-Android/actions/workflows/ci.yml"><img src="https://github.com/damnurmum/OpenFlux-Android/actions/workflows/ci.yml/badge.svg" alt="Статус CI"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/damnurmum/OpenFlux-Android?style=flat-square" alt="Лицензия GPL-3.0"></a>
+    <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android 8 и новее">
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/Go-1.26.4%2B-00ADD8?style=flat-square&amp;logo=go&amp;logoColor=white" alt="Go 1.26.4 и новее">
+    <img src="https://img.shields.io/badge/Java-17-ED8B00?style=flat-square&amp;logo=openjdk&amp;logoColor=white" alt="Java 17">
+    <img src="https://img.shields.io/badge/ABI-ARM64%20%7C%20ARMv7%20%7C%20x86__64%20%7C%20x86-455a64?style=flat-square" alt="Поддерживаемые архитектуры Android">
+    <img src="https://img.shields.io/badge/IPv4%20%2F%20TCP-experimental-f59e0b?style=flat-square" alt="Экспериментальная поддержка IPv4 и TCP">
+  </p>
+  <p><a href="README.md">English</a> · <strong>Русский</strong></p>
+</div>
 
-[English](README.md) | **Русский**
+> Этот репозиторий - экспериментальный, независимо поддерживаемый форк
+> [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux),
+> добавляющий нативный Android VPN-клиент поверх апстримного ядра
+> (транспорты + выходная нода). Что именно меняет форк - см.
+> [docs/FORK.md](docs/FORK.md). `main` остаётся wire-совместимым с текущими
+> бинарниками exit-node/клиента апстрима; отдельная ветка `experimental`
+> несёт дополнительные фичи (график пинга, страна выходной ноды, серверный
+> DNS-релей), которым нужна собственная выходная нода этого форка - см.
+> [docs/UPSTREAM_DIFF.md](docs/UPSTREAM_DIFF.md).
 
-Исследовательский инструмент сетевого стека. TCP-туннель с подключаемыми
-транспортами, батчированным zstd-кодеком и двумя бэкендами выходной ноды
-(L3 raw forward / L4 gVisor proxy).
+OpenFlux - исследовательский TCP-туннель, маскирующий трафик под сессию
+совместного редактирования документа (Yandex Docs, Mail.ru Docs, Cups.online,
+MAX) вместо обычного VPN-протокола. Этот форк добавляет Android-клиент для
+такого туннеля и опциональное сквозное шифрование AES-256-GCM поверх него.
 
-# Отказ от ответственности
+**[Скачать последний релиз для Android](https://github.com/damnurmum/OpenFlux-Android/releases/latest)**
 
-Автор OpenFlux **не призывает** использовать данный проект для обхода
-блокировок или нарушения правил каких-либо платформ, а также **не несёт
-ответственности** за финальные сценарии использования утилиты пользователями
-в реальной жизни или сети Интернет. Любые специфические технические
-особенности приложения - не более чем **архитектурное совпадение**, созданное
-**без какого-либо умысла**.
+Впервые здесь? [docs/GUIDE.md](docs/GUIDE.md) - пошаговое руководство для
+новичков по развёртыванию выходной ноды на VPS и подключению с Android.
 
-Проект является **полностью некоммерческим**, не содержит **платных функций,
-скрытых подписок или коммерческой выгоды**.
-
-Автор **не несёт ответственности** за форки, модификации и производные
-версии OpenFlux, созданные третьими лицами. Любые изменения, добавленные
-в форк, являются ответственностью его автора.
-
-Автор **не несёт ответственности** за:
-
-- Любое использование OpenFlux третьими лицами
-- Последствия, вызванные использованием форков и модификаций
-- Ущерб, возникший в результате работы производных версий
-- Нарушения, совершённые с использованием форков
-
-Оригинальный код предоставляется **как есть** («as is»), **без каких-либо
-гарантий**.
-
-## Клиенты
-
-| Платформа | Скачать | Примечания |
-|-----------|---------|------------|
-| **macOS**   | сборка из исходников | CLI + utun L3-клиент (`--inbound=tun`, по умолчанию на macOS) |
-| **Linux**   | сборка из исходников | CLI-клиент (SOCKS5) / выходная нода (L3 или L4) |
-| **Windows** | сборка из исходников | CLI-клиент (SOCKS5) / выходная нода (`l4`, либо `l3` через QEMU - см. TODO) |
-| **Android** | [Релизы OpenFluxAndroid](https://github.com/p1neappleXpress/OpenFluxAndroid) | Отдельный APK |
-| **iOS**     | [TestFlight бета](https://testflight.apple.com/join/BwnAcdus) | Системный VPN через Network Extension |
-
-> **iOS-приложение** сделано [@saharev1](https://github.com/saharev1) -
-> полноценный iOS-клиент, пайплайн TestFlight, системный VPN, DNS-over-TLS
-> и множество фиксов стабильности. ОГРОМНОЕ спасибо!
->
-> **Android-приложение** - [p1neappleXpress/OpenFluxAndroid](https://github.com/p1neappleXpress/OpenFluxAndroid).
-
-## Архитектура
-
-Любой клиент работает с любым бэкендом выходной ноды. `--mode` выбирается
-на **выходной ноде**, а не на клиенте.
-
-```
-Клиент (любой): macOS (utun) / Linux / Windows / iOS (packet tunnel) / Android
-                    |
-                    v
-               Транспорт (Yandex.Docs / Volga / MAX / Cups / Mail.ru)
-                    |
-                    v
-               Выходная нода  -->  Интернет
-                 --mode l3   (сырой SNAT/DNAT, Linux + root)
-                 --mode l4   (gVisor proxy, любая платформа)
+```text
+Android VPN или SOCKS5-клиент -> зашифрованный документ-транспорт -> Linux-выходная нода -> Интернет
 ```
 
-| Клиент (любой)                          | Бэкенд выхода | Требует              |
-|-----------------------------------------|---------------|----------------------|
-| macOS / Linux / Windows / iOS / Android | `--mode l3`   | exit на Linux + root |
-| macOS / Linux / Windows / iOS / Android | `--mode l4`   | ничего               |
+## Возможности
 
-В `l3` выходная нода ничего не терминирует: она форвардит сырые IP-пакеты
-с SNAT/DNAT (conntrack + фильтр по egress-IP). Одно TCP-соединение
-end-to-end между клиентом и реальным сервером.
+- Android 8+ клиент на системном API `VpnService`, сборки под ARM, ARM64,
+  x86 и x86_64;
+- второй режим подключения на Android - локальный SOCKS5-прокси, когда
+  системный VPN не нужен целиком - опционально доступен из локальной сети
+  с авторизацией SOCKS5, плюс `socks://`-ссылка и QR-код;
+- профили: сохраняйте несколько конфигураций выходной ноды (транспорт, URL
+  документа, секрет) и переключайтесь между ними без повторного ввода;
+- пять подключаемых транспортов - Yandex.Docs, Yandex Volga, Mail.ru Docs,
+  Cups.online и MAX/OneMe - плюс выбор кодека канала (batched+zstd по
+  умолчанию, либо legacy per-packet LZ4 для совместимости со старыми
+  выходными нодами);
+- опциональное аутентифицированное шифрование AES-256-GCM с ключом,
+  производным через scrypt, wire-совместимое с бинарниками exit-node и
+  клиента апстрима; оставьте ключ пустым для подключения без шифрования к
+  обычной выходной ноде;
+- хранение URL документа и общего секрета через Android Keystore;
+- поля DNS-сервера и MTU применяются только по явному сохранению - уход со
+  страницы без сохранения отменяет правку;
+- маршрутизация трафика по приложениям (белый или чёрный список);
+- закреплённое уведомление с живой скоростью загрузки/отдачи и кнопкой
+  отключения, для обоих режимов подключения;
+- десктопный SOCKS5/utun-клиент и режимы Linux-выходной ноды (`l3` - сырой
+  SNAT/DNAT, или `l4` - gVisor proxy) для того же туннеля, см.
+  [Десктопный CLI](#десктопный-cli-выходная-нода-и-клиент) ниже.
 
-В `l4` выходная нода терминирует TCP в userspace-стеке gVisor, затем
-переподключается к реальному серверу через `net.Dial`. Работает на любой ОС
-без root.
+> **Предупреждение про MAX-транспорт:** бэкенд MAX отправляет пакеты через
+> WebRTC DataChannel на вашем аккаунте MAX. Не используйте основной или важный
+> аккаунт; запуск с внешнего VPS может привести к ограничениям аккаунта,
+> которые сохранятся и после остановки OpenFlux. Считайте MAX-транспорт
+> экспериментальным, пока не станет понятнее его детектирование и блокировка.
 
-Клиент терминирует TCP локально (gVisor, utun или NEPacketTunnelProvider),
-затем отправляет сырые IP-пакеты в транспорт.
+## Важные ограничения
 
-## Бэкенды выходной ноды
+OpenFlux - экспериментальное исследовательское ПО, не аудированная замена
+WireGuard или другого зрелого VPN. Android-туннель сейчас поддерживает
+только IPv4 и TCP; произвольный UDP и IPv6 не туннелируются (IPv6-адрес или
+не-DNS UDP-запрос отклоняется корректной протокольной ошибкой, а не тихо
+зависает). Провайдер документа всё ещё может наблюдать метаданные - время
+соединений, объёмы трафика, зашифрованные payload'ы. Любой с доступом на
+редактирование документа может разорвать соединение.
 
-У выходной ноды ровно **два** бэкенда, выбираются флагом `--mode` на
-**выходной ноде**. Клиент бэкенд не выбирает - один и тот же клиент
-работает с любым из них.
-
-| `--mode` | Бэкенд | Форвардинг | Требует | Платформы |
-|----------|--------|-----------|---------|-----------|
-| `l3` | Сырой L3 | SNAT/DNAT сырых IPv4-пакетов через SOCK_RAW + conntrack. Без userspace TCP-стека. | root / CAP_NET_RAW | только Linux |
-| `l4` (алиас `proxy`) | gVisor proxy | Терминирует TCP в userspace-стеке gVisor, затем `net.Dial` к реальному серверу. | ничего | Linux, macOS, Windows |
-
-- `proxy` - устаревший алиас для `l4`; оба выбирают один и тот же бэкенд.
-  Каноническое имя впредь - `l4`.
-- **l3 быстрее** (одно TCP-соединение end-to-end, без двойной терминации),
-  но только Linux и нужен root.
-- **l4 работает везде** без root, ценой двойной терминации TCP
-  (клиент -> gVisor на выходе -> реальный сервер).
-- На Linux с root предпочитайте `l3`. На Windows целевой путь - `l3`
-  внутри лёгкой QEMU-виртуалки (см. TODO); WinDivert-бэкенд пока не подключён,
-  а `l4` - рабочий fallback, пока QEMU не поставлен. На хостах без root -
-  `l4`.
-
-### l3 и kernel-RST
-
-В режиме `l3` ядро видит ответные пакеты для соединений, которые оно не
-открывало, и шлёт RST, разрывая туннельные соединения. Их надо гасить:
-
-```
-# Scoped (рекомендуется): назначить отдельный egress-IP, запустить с --local-ip, затем:
-sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -s <egress-ip> -j DROP
-
-# Host-wide fallback (дропает ВСЕ исходящие RST; закрытые порты выглядят filtered):
-sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
-```
-
-Дополнительно код L3 сам дропает клиентские RST до `sendto()`, так что
-правило выше нужно только для RST, которые генерирует ядро.
-
-## Ключевые особенности
-
-- **Подключаемые транспорты** - Yandex.Docs (WS), Yandex Volga (HTTP relay + WS),
-  MAX/OneMe (WebRTC DataChannel), Cups.online (Centrifugo-комнаты),
-  Mail.ru Docs (WS).
-- **Батчинг + zstd** - склеивает множество туннельных пакетов в одно
-  транспортное сообщение. Меньше сообщений в канале, выше скорость. См.
-  `transport/batched.go` и `transport/framing.go`.
-- **Два бэкенда выхода** - `l3` (сырой SNAT/DNAT) и `l4` (gVisor proxy).
-  См. [Бэкенды выходной ноды](#бэкенды-выходной-ноды).
-- **macOS utun-клиент** - `--inbound=tun` (по умолчанию на macOS). Создаёт
-  utun-интерфейс, следит за своими сокетами и ставит прямые маршруты, затем
-  забирает default-маршрут. Никакого SOCKS5, никакого gVisor на клиенте.
-- **iOS packet tunnel** - NEPacketTunnelProvider, чистый L3-форвардинг.
-- **Legacy-кодек** - `--codec=legacy` возвращает старый per-packet LZ4-кодек
-  (совместим со старыми клиентами).
-- **Опциональное шифрование** - `--encryption-key-file` оборачивает транспорт
-  в AES-256-GCM. Обе стороны должны использовать один и тот же секрет.
-- **Режимы бенчмарка** - `--role=bench-send --bench-bytes=N` / `--role=bench-sink`
-  измеряют чистый goodput через транспорт, не задевая сеть хоста.
+Используйте ПО только на системах и в сетях, которыми вы владеете или на
+тестирование которых у вас есть разрешение.
 
 ## Требования
 
-1. **Go** - для сборки бинарника десктопного клиента / выходной ноды. Точная
-   версия - в `go.mod`.
-2. **Android NDK r27+** - для сборки бинарника Android-клиента.
-3. **Xcode 26.6+** - для сборки бинарника iOS-клиента.
-4. **Linux VPS / VDS** для выходной ноды. Бэкенд `l3` требует root; `l4`
-   работает без root.
+- Go 1.26.4 или новее для десктопного клиента и выходной ноды;
+- Linux VPS/VDS с root-доступом для режима `l3` выходной ноды (`l4` root не
+  требует, на любой ОС);
+- для сборки Android: Java 17, Android SDK/API 35, Build Tools 35.0.0,
+  NDK 27.0.12077973, Gradle 8.14.3 и `gomobile`;
+- редактируемый документ, открытый в старом редакторе, для транспортов на
+  основе документов (Yandex Docs, Yandex Volga, Mail.ru Docs).
 
-## Структура
+## Подготовка приватной конфигурации
 
-```
-OpenFlux/
-  main.go                          # Точка входа CLI (клиент / exit / бенчи)
-  bench.go                         # Хелперы бенчмарка
-  tun_darwin.go                    # macOS utun L3-клиент
-  tun_watch.go                     # Watcher сокетов для прямых маршрутов
-  tun_other.go                     # Заглушки для не-darwin платформ
-  export_ios.go                    # cgo-мост для iOS-статической библиотеки
-  transport/
-    transport.go                   # Интерфейс Transport
-    batched.go                     # BatchedTransport (склейка + zstd)
-    framing.go                     # Wire-формат батчированных кадров
-    compressor.go                  # Legacy per-packet LZ4-кодек
-    encrypted.go                   # Опциональная AES-256-GCM обёртка
-    yandex/                        # Бэкенды Yandex.Docs + Volga
-    oneme/                         # Бэкенд MAX Messenger
-    cupsonline/                    # Бэкенд Cups.online
-    mailru/                        # Бэкенд Mail.ru Docs
-  tunnel/
-    tunnel.go                      # Клиентский туннель (gVisor + TunnelLinkEndpoint)
-    endpoint.go                    # Виртуальный NIC (клиент)
-    exit.go                        # Диспетчер NewExitNode (l3 / l4)
-    proxy_exit.go                  # L4 exit (gVisor + net.Dial)
-    l3/
-      l3.go                        # L3Exit: SNAT/DNAT, conntrack, фильтр egress
-      backend.go                   # Интерфейс L3Backend
-      backend_linux.go             # SOCK_RAW (Linux)
-      backend_windows.go           # Заглушка (WinDivert не подключён)
-      backend_other.go             # Заглушка для неподдерживаемых платформ
-      conntrack.go                 # Таблица conntrack
-      flow.go                      # Flow-ключи, SNAT/DNAT, checksums
-    rawsocket_linux.go             # Legacy raw exit (оставлен для референса)
-    rawsocket_{darwin,windows}.go  # Заглушки
-    windivert/                     # WinDivert-бэкенд (есть, но к L3 не подключён)
-  socks5/                          # SOCKS5-сервер (fallback на клиенте)
-  network/                         # Контрольные суммы, разбор пакетов
-  utils/                           # Логирование
-  ios-app/                         # iOS-клиент на SwiftUI (XcodeGen)
-  build_ios.sh                     # Сборка статической библиотеки iOS (liboflux.a)
-  build_ios_app.sh                 # Сборка + архив + экспорт IPA iOS
-  build_android.sh                 # Сборка клиентского бинарника Android
-  scripts/
-    cleanup-utun.sh                # Удалить stale-маршруты utun (macOS)
-    build-flx-linux-img.sh         # Сборка минимального Alpine rootfs для QEMU
+Создайте эти файлы локально и скопируйте те же значения на выходную ноду.
+Они исключены `.gitignore` и никогда не должны попадать в коммит:
+
+```bash
+printf '%s\n' 'https://ваш-собственный-url-документа' > document-url
+openssl rand -base64 32 > encryption-key
+chmod 600 document-url encryption-key
 ```
 
-## Сборка
+Ключ шифрования опционален: не указывайте `--encryption-key-file` на обеих
+сторонах (и оставьте поле ключа пустым в приложении), чтобы подключаться к
+обычной, немодифицированной выходной ноде без шифрования транспорта. Если
+задаёте ключ - он должен содержать не менее 16 символов, быть уникальным
+случайным значением, а не переиспользованным паролем, и совпадать на обеих
+сторонах. Ротируйте URL документа и ключ, если один из них был раскрыт.
 
-```
-go mod tidy
+## Десктопный CLI (выходная нода и клиент)
+
+Выходная нода и десктопный клиент - один и тот же бинарник, различаются
+только флаги. Готовые бинарники под Linux `amd64`/`arm64` (плюс сборки под
+macOS и Windows) прикреплены к каждому
+[GitHub-релизу](https://github.com/damnurmum/OpenFlux-Android/releases/latest)
+рядом с Android APK. Чтобы собрать самостоятельно:
+
+```bash
 go build -o openflux .
 ```
 
-Кросс-сборка для выходной ноды (Linux amd64), stripped:
+### Выходная нода - l3 (Linux, root)
 
-```
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w" -trimpath -o openflux-linux .
-```
-
-## Использование
-
-### Выходная нода - L3 (Linux, root)
-
-```
-sudo ./openflux --role=exit --mode=l3 \
-    --transport=yandex \
-    --url="YOUR_YANDEX_DOC_URL"
+```bash
+sudo ./openflux --role=exit --mode=l3 --transport=yandex \
+    --url="$(cat document-url)" --encryption-key-file=encryption-key
 ```
 
-Требует root / CAP_NET_RAW. Поставьте правило iptables (см.
-[l3 и kernel-RST](#l3-и-kernel-rst)).
+`l3` форвардит сырые IP-пакеты с SNAT/DNAT (conntrack + фильтр по
+egress-IP) - одно TCP-соединение end-to-end, без двойной терминации, но
+только Linux и нужен root. TCP-соединения выходной ноды живут в userspace-
+стеке, поэтому у ядра нет для них сокета, и оно шлёт RST на каждый ответ,
+разрывая туннель. Этот RST нужно гасить - точечно, не хостом целиком:
 
-### Выходная нода - L4 (любая ОС, без root)
+```bash
+# Точечно (рекомендуется): выделите второй/алиас-IP под туннель, запустите
+# с --local-ip, затем:
+sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -s 203.0.113.10 -j DROP
+sudo ./openflux --role=exit --mode=l3 --local-ip=203.0.113.10 ...
 
+# Fallback на весь хост (дропает ВСЕ исходящие RST; закрытые порты будут
+# выглядеть filtered, и хост перестанет сбрасывать посторонние соединения;
+# только на однозадачном сервере):
+sudo iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP 2>/dev/null || \
+  sudo iptables -I OUTPUT 1 -p tcp --tcp-flags RST RST -j DROP
 ```
-./openflux --role=exit --mode=l4 \
-    --transport=yandex \
-    --url="YOUR_YANDEX_DOC_URL"
+
+Пример [systemd-юнита](deploy/openflux.service) ожидает бинарник и приватные
+файлы в `/root/openflux`. Проверьте пути перед установкой:
+
+```bash
+sudo install -d -m 700 /root/openflux
+sudo install -m 755 ./openflux /root/openflux/openflux
+sudo install -m 600 ./document-url ./encryption-key /root/openflux/
+sudo install -m 644 deploy/openflux.service /etc/systemd/system/openflux.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now openflux
+sudo systemctl status openflux
 ```
 
-Fallback для платформ, где `l3` недоступен (Windows без WinDivert, macOS,
-Linux без root). Медленнее `l3` (двойная терминация TCP).
+### Выходная нода - l4 (любая ОС, без root)
+
+```bash
+./openflux --role=exit --mode=l4 --transport=yandex \
+    --url="$(cat document-url)" --encryption-key-file=encryption-key
+```
+
+Терминирует TCP в userspace-стеке gVisor и переподключается к реальному
+серверу через `net.Dial` - работает везде, ценой двойной терминации TCP.
+Используйте на Windows, macOS или Linux-хосте без root.
+
+### Клиент - SOCKS5 (все платформы)
+
+```bash
+./openflux --role=client --inbound=socks5 --transport=yandex \
+    --url="$(cat document-url)" --encryption-key-file=encryption-key \
+    --socks5=127.0.0.1:1080
+```
+
+Настройте браузер / приложение на `127.0.0.1:1080` как SOCKS5-прокси. Режим
+по умолчанию на всех платформах, кроме macOS.
 
 ### Клиент - macOS utun (по умолчанию на macOS)
 
-```
-sudo ./openflux --role=client --inbound=tun \
-    --transport=yandex \
-    --url="YOUR_YANDEX_DOC_URL"
-```
-
-Создаёт utun-интерфейс, ставит прямые маршруты для транспорта, ждёт
-подключения транспорта, затем забирает default-маршрут. SOCKS5 не нужен.
-Требует sudo. Весь трафик, кроме транспорта, идёт через туннель.
-
-### Клиент - SOCKS5 (все платформы, fallback)
-
-```
-./openflux --role=client --inbound=socks5 \
-    --transport=yandex \
-    --url="YOUR_YANDEX_DOC_URL" \
-    --socks5=:1080
+```bash
+sudo ./openflux --role=client --transport=yandex \
+    --url="$(cat document-url)" --encryption-key-file=encryption-key
 ```
 
-Настройте браузер / приложение на `127.0.0.1:1080` как SOCKS5-прокси. Это
-режим по умолчанию на всех платформах, кроме macOS.
-
-### Выбор кодека
-
-По умолчанию транспорт использует батчированный + zstd кодек
-(`transport/batched.go` + `transport/framing.go`). Для старого per-packet
-LZ4-кодека передайте `--codec=legacy`:
-
-```
-./openflux --role=client --codec=legacy ...
-```
-
-**Важно:** батчированный wire-формат НЕ совместим с legacy LZ4.
-Клиент и выходная нода должны использовать один и тот же кодек (оба - новые,
-либо оба - `--codec=legacy`).
-
-### Шифрование (опционально)
-
-```
-./openflux ... --encryption-key-file=/path/to/secret.txt
-```
-
-Обе стороны должны использовать один и тот же файл-секрет. AES-256-GCM,
-направленные ключи. Без флага - без шифрования, поведение не меняется.
-
-### Бенчмарки
-
-Измерьте чистый goodput через транспорт, не задевая сеть хоста:
-
-```
-# Отправитель: залить 100 MB
-./openflux --role=bench-send --bench-bytes=100 --transport=yandex --url="..."
-
-# Приёмник: измерить goodput
-./openflux --role=bench-sink --transport=yandex --url="..."
-```
+Создаёт utun-интерфейс, направляет собственное соединение транспорта
+напрямую (в обход туннеля, чтобы оно не зациклилось само на себя), затем
+забирает default-маршрут. SOCKS5 не нужен; весь остальной трафик идёт через
+туннель.
 
 ### Другие транспорты
 
-```
+```bash
 # Yandex Volga (HTTP relay + WS)
 ./openflux --role=exit --mode=l3 --transport=vyandex --url="..." --debug
 
@@ -305,57 +211,112 @@ LZ4-кодека передайте `--codec=legacy`:
     --maxToken="..." --maxUid="..." --debug
 
 # Cups.online (Centrifugo-комнаты)
-./openflux --role=exit --mode=l3 --transport=cupsonline --debug
-# печатает base64-список комнат; передайте его клиенту через --url
+./openflux --role=exit --mode=l3 --transport=cupsonline --url="..." --debug
 
 # Mail.ru Docs (WS)
 ./openflux --role=exit --mode=l3 --transport=mailru \
-    --url="YOUR_MAILRU_PUBLIC_LINK" --debug
-# принимает как голый weblink (AbCdEfGh1/IjKlMnOp2), так и полный URL
-# (https://cloud.mail.ru/public/AbCdEfGh1/IjKlMnOp2)
+    --url="https://cloud.mail.ru/public/AbCdEfGh1/IjKlMnOp2" --debug
 ```
 
-## Флаги
+Добавляйте `--debug` только при диагностике проблемы и проверяйте логи перед
+тем, как ими делиться - в них может попасть URL документа.
+
+### Флаги
 
 | Флаг | Короткий | По умолчанию | Описание |
 |------|----------|--------------|----------|
 | `--role` | `-r` | `client` | `client` \| `exit` \| `bench-send` \| `bench-sink` |
-| `--inbound` | `-i` | (платформа) | `tun` (macOS) \| `socks5` |
+| `--inbound` | `-i` | (платформа) | Только клиент: `tun` (macOS) \| `socks5` (по умолчанию везде ещё) |
 | `--transport` | `-t` | `yandex` | `yandex` \| `vyandex` \| `oneme` \| `cupsonline` \| `mailru` |
-| `--mode` | `-m` | `l3` | Режим выходной ноды: `l3` \| `l4` |
-| `--codec` | `-c` | `batched` | `batched` \| `legacy` |
-| `--url` | `-u` | `http://#` | URL документа |
-| `--socks5` | `-s` | `:1080` | Адрес SOCKS5-прокси |
-| `--local-ip` | `-l` | (авто) | Egress IP для l3 SNAT / фильтра RST |
-| `--debug` | `-d` | `false` | Подробное per-packet логирование |
-| `--encryption-key-file` | | | Файл с общим секретом для AES-256-GCM |
-| `--maxToken` | | | Токен авторизации MAX (`--transport=oneme`) |
-| `--maxUid` | | | ID пользователя MAX (`--transport=oneme`) |
-| `--bench-bytes` | | `0` | Сколько MB залить (`--role=bench-send`) |
-| `--bench-compressible` | | `false` | Сжимаемый payload (bench) |
+| `--mode` | `-m` | `l3` | Только выходная нода: `l3` \| `l4` |
+| `--codec` | `-c` | `batched` | `batched` (zstd+склейка) \| `legacy` (per-packet LZ4) |
+| `--url` | `-u` | пусто | URL документа (или weblink для `mailru`) |
+| `--socks5` | `-s` | `:1080` | Адрес SOCKS5 (клиент, `--inbound=socks5`) |
+| `--local-ip` | `-l` | (авто) | Egress IP выходной ноды, для точечного правила RST (только `l3`) |
+| `--encryption-key-file` | | пусто | Файл общего секрета AES-256-GCM; без флага - без шифрования |
+| `--maxToken` / `--maxUid` | | пусто | Токен / ID пользователя MAX (`--transport=oneme`) |
+| `--bench-bytes` / `--bench-compressible` | | `0` / `false` | Размер / сжимаемость payload'а бенчмарка (`--role=bench-send`) |
+| `--debug` | `-d` | `false` | Подробное логирование |
 
-Устаревшие (оставлены на один релиз, автоматически маппятся на новые флаги):
-`--client`, `--exit-node`, `--tun`, `--socks5-mode`, `--legacy`,
-`--bench-send`, `--bench-sink`.
+Устаревшие (оставлены на один релиз, маппятся автоматически): `--client`,
+`--exit-node`, `--tun`, `--socks5-mode`, `--legacy`, `--bench-send`,
+`--bench-sink`.
 
-## Реализация собственных транспортов
+Batched и legacy wire-форматы не совместимы между собой - клиент и выходная
+нода должны использовать один и тот же `--codec`.
 
-Реализуйте интерфейс `Transport` из `transport/transport.go` и
-зарегистрируйте свой транспорт в `switch`-блоке `main.go` (см.
-`transport/mailru/` как полный пример). Батчированный кодек
-(`BatchedTransport`) оборачивает любой транспорт - новый бэкенд получает
-батчинг бесплатно.
+## Сборка и установка Android-приложения
 
-## TODO
+Задайте `ANDROID_SDK_ROOT` (или `ANDROID_HOME`), убедитесь, что доступны
+`gomobile` и Gradle, затем выполните:
 
-- **L3-выход на Windows и macOS.** Сейчас L3-выход работает только на Linux
-  (SOCK_RAW); Windows и macOS используют `--mode=l4`. Пакет
-  `tunnel/windivert/` (Windows) есть, но к L3-форвардеру пока не подключён.
-  Нативный L3-выход для macOS не реализован.
-- **Запуск выходной ноды (QEMU).**
+```bash
+go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
+go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
+gomobile init
+./build_android_app.sh
+```
+
+Сборка создаёт отдельные APK для `arm64-v8a`, `armeabi-v7a`, `x86_64` и
+`x86`, плюс `OpenFlux-android-universal-debug.apk` для устройств с неизвестной
+архитектурой. Перенесите подходящий APK на устройство с Android 8+,
+установите, создайте профиль со своим URL документа и общим секретом, затем
+подтвердите системный запрос на VPN.
+
+Настройки сохраняются при обычном обновлении приложения "поверх", если ID
+приложения и сертификат подписи не меняются. Очистка данных приложения или
+удаление стирает их. APK, подписанные другим сертификатом, не могут обновить
+существующую установку. Артефакты CI - debug-сборки; APK в GitHub Releases
+подписаны постоянным релизным сертификатом проекта. Переход с debug-сборки
+на релизный канал требует одного удаления и, соответственно, стирает
+сохранённые настройки.
+
+Подробности по Android - в [android/README.md](android/README.md).
+
+## Структура
+
+```
+OpenFlux-Android/
+  main.go                          # Точка входа десктопного/exit-node CLI
+  bench/                           # Замер производительности --role=bench-send/bench-sink
+  tunclient/                       # macOS utun-клиент, прямые маршруты сокетов, сигналы
+  transport/
+    transport.go                   # Интерфейс Transport
+    batched.go, framing.go         # BatchedTransport (склейка + zstd)
+    compressor.go                  # Legacy per-packet LZ4-кодек
+    encrypted.go                   # Опциональная AES-256-GCM обёртка
+    yandex/, oneme/, cupsonline/, mailru/   # Бэкенды транспортов
+  tunnel/
+    tunnel.go, endpoint.go         # Клиентский туннель (gVisor)
+    exit.go, proxy_exit.go         # l4 exit (gVisor + net.Dial)
+    l3/                            # l3 exit: SNAT/DNAT, conntrack, raw-бэкенд по ОС
+    windivert/                     # WinDivert-бэкенд (есть, но к l3 не подключён)
+  socks5/                          # SOCKS5-сервер (fallback на клиенте)
+  network/, utils/                 # Контрольные суммы/разбор пакетов, логирование
+  mobile/                          # gomobile-мост, используется Android-приложением
+  android/                         # Android VPN-клиент (добавление этого форка)
+  build_android_app.sh             # Сборка Android APK
+  deploy/openflux.service          # Пример systemd-юнита для выходной ноды
+```
+
+## Разработка и безопасность
+
+Перед коммитом прогоните проверки:
+
+```bash
+gofmt -w $(git ls-files '*.go')
+go test ./...
+go vet ./...
+git diff --check
+```
+
+Как контрибьютить - в [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+Пожалуйста, прочитайте [docs/SECURITY.md](docs/SECURITY.md) перед тем, как
+сообщать об уязвимости. Список изменений - в
+[docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 ## Лицензия
 
-GNU General Public License v3.0 or later. Полный текст - в файле LICENSE.
-
-Лицензии третьих сторон - в файле [NOTICE](NOTICE).
+OpenFlux распространяется под лицензией GNU General Public License v3.0 или
+новее. См. [LICENSE](LICENSE), [COPYRIGHT](COPYRIGHT) и [NOTICE](NOTICE).
+Этот форк не одобрен и не аффилирован с Яндексом или Mail.ru.
