@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"universal-bypass-tool/utils"
+	"openflux/utils"
 )
 
 type Dialer interface {
