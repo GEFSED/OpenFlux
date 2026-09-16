@@ -1,12 +1,12 @@
 # Beginner's guide: deploying OpenFlux on your own VPS
 
-**English** · [Русский](GUIDE.ru.md)
+**English** · [Русский](../ru/GUIDE.md)
 
 This is a step-by-step, start-to-finish walkthrough: rent a server, run an
 OpenFlux exit node on it, and connect from an Android phone. It assumes you
 have never done this before.
 
-If anything here disagrees with the main [README.md](../README.md), trust the
+If anything here disagrees with the main [README.md](../../README.md), trust the
 README - it's the more complete and up-to-date reference. This guide is a
 simplified path to get a first connection working.
 
@@ -135,15 +135,15 @@ sudo iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP 2>/dev/null || \
 ```
 
 If this server also runs other services besides OpenFlux, check the scoped
-`--local-ip` variant in the main [README.md](../README.md#build-the-exit-node-and-desktop-client)
+`--local-ip` variant in the main [README.md](../../README.md#desktop-cli-exit-node-and-client)
 instead - it doesn't silence RSTs for the whole host.
 
 ### 3.4. Test it manually before setting up auto-start
 
 ```bash
-sudo /root/openflux/openflux --exit-node --transport yandex \
-  --url-file /root/openflux/document-url \
-  --encryption-key-file /root/openflux/encryption-key --debug
+sudo /root/openflux/openflux --role=exit --mode=l3 --transport=yandex \
+  --encryption-key-file /root/openflux/encryption-key \
+  --url "$(cat /root/openflux/document-url)" --debug
 ```
 
 If you don't see errors in the log and it prints something like "Running as
@@ -157,14 +157,14 @@ Create `/etc/systemd/system/openflux.service`:
 ```bash
 sudo tee /etc/systemd/system/openflux.service > /dev/null <<'EOF'
 [Unit]
-Description=OpenFlux encrypted Yandex transport exit node
+Description=OpenFlux encrypted exit node (l3, Yandex transport)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 ExecStartPre=/bin/sh -c '/usr/sbin/iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP 2>/dev/null || /usr/sbin/iptables -I OUTPUT 1 -p tcp --tcp-flags RST RST -j DROP'
-ExecStart=/root/openflux/openflux --exit-node --transport yandex --url-file /root/openflux/document-url --encryption-key-file /root/openflux/encryption-key
+ExecStart=/bin/sh -c 'exec /root/openflux/openflux --role=exit --mode=l3 --transport=yandex --encryption-key-file /root/openflux/encryption-key --url "$(cat /root/openflux/document-url)"'
 ExecStopPost=/bin/sh -c '/usr/sbin/iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP 2>/dev/null && /usr/sbin/iptables -D OUTPUT -p tcp --tcp-flags RST RST -j DROP || true'
 Restart=on-failure
 RestartSec=5
@@ -234,9 +234,9 @@ device can use it too.
 ## Also handy: the desktop client
 
 OpenFlux can also run as a SOCKS5 client on a computer (Linux/macOS/Windows)
-- see the main [README.md](../README.md#build-the-exit-node-and-desktop-client)
+- see the main [README.md](../../README.md#desktop-cli-exit-node-and-client)
 for details. Short version: it's the same binary you used on the server,
-just with `--client` instead of `--exit-node`, and you point your browser at
+just with `--role=client` instead of `--role=exit`, and you point your browser at
 the SOCKS5 proxy `127.0.0.1:1080`.
 
 ## Common problems
@@ -271,12 +271,12 @@ data - you'll need to re-enter the link and key.
 
 **Someone else edited the document and everything broke.** That's expected -
 anyone with edit access to the document can disrupt the connection. See
-"Important limitations" in the [README.md](../README.md) and
+"Important limitations" in the [README.md](../../README.md) and
 [SECURITY.md](SECURITY.md) for details.
 
 ## Where to go next
 
-- Full CLI flag reference and architecture details - [README.md](../README.md).
+- Full CLI flag reference and architecture details - [README.md](../../README.md).
 - Security model and what to do if your key/link leaks -
   [SECURITY.md](SECURITY.md).
 - Found a bug or have an improvement idea - open an issue in the repository;

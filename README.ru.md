@@ -21,11 +21,11 @@
 > [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux),
 > добавляющий нативный Android VPN-клиент поверх апстримного ядра
 > (транспорты + выходная нода). Что именно меняет форк - см.
-> [docs/FORK.md](docs/FORK.md). `main` остаётся wire-совместимым с текущими
+> [docs/ru/FORK.md](docs/ru/FORK.md). `main` остаётся wire-совместимым с текущими
 > бинарниками exit-node/клиента апстрима; отдельная ветка `experimental`
 > несёт дополнительные фичи (график пинга, страна выходной ноды, серверный
 > DNS-релей), которым нужна собственная выходная нода этого форка - см.
-> [docs/UPSTREAM_DIFF.md](docs/UPSTREAM_DIFF.md).
+> [docs/ru/UPSTREAM_DIFF.md](docs/ru/UPSTREAM_DIFF.md).
 
 OpenFlux - исследовательский TCP-туннель, маскирующий трафик под сессию
 совместного редактирования документа (Yandex Docs, Mail.ru Docs, Cups.online,
@@ -34,7 +34,7 @@ MAX) вместо обычного VPN-протокола. Этот форк д�
 
 **[Скачать последний релиз для Android](https://github.com/damnurmum/OpenFlux-Android/releases/latest)**
 
-Впервые здесь? [docs/GUIDE.md](docs/GUIDE.md) - пошаговое руководство для
+Впервые здесь? [docs/ru/GUIDE.md](docs/ru/GUIDE.md) - пошаговое руководство для
 новичков по развёртыванию выходной ноды на VPS и подключению с Android.
 
 ```text
@@ -310,10 +310,10 @@ go vet ./...
 git diff --check
 ```
 
-Как контрибьютить - в [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
-Пожалуйста, прочитайте [docs/SECURITY.md](docs/SECURITY.md) перед тем, как
+Как контрибьютить - в [docs/ru/CONTRIBUTING.md](docs/ru/CONTRIBUTING.md).
+Пожалуйста, прочитайте [docs/ru/SECURITY.md](docs/ru/SECURITY.md) перед тем, как
 сообщать об уязвимости. Список изменений - в
-[docs/CHANGELOG.md](docs/CHANGELOG.md).
+[docs/ru/CHANGELOG.md](docs/ru/CHANGELOG.md).
 
 ## Лицензия
 

@@ -2,6 +2,53 @@
 
 All notable changes to this fork are documented here.
 
+## 0.7.0 - 2026-09-16
+
+### Added
+
+- a `mailru` transport (Mail.ru Docs shared-cursor channel), same shape as
+  `yandex`; merged upstream and wired into both the CLI and the Android app.
+- exit node core resynced 1:1 with upstream's `flx-kernel`: new
+  `--role=client|exit|bench-send|bench-sink`, `--inbound=tun|socks5`,
+  `--mode=l3|l4`, `--codec=batched|legacy`, and a single `--url` flag
+  (replaces `--exit-node`/`--client`/`--tun`/`--socks5-mode`/`--mode
+  raw|proxy`/`--url-file`, all still accepted for one release as deprecated
+  aliases). `--url-file` has no direct replacement - read the file yourself
+  with shell command substitution, e.g. `--url "$(cat document-url)"`.
+- Android app: added the Cups.online and MAX (oneme/WebRTC) transports,
+  a codec choice (batched/legacy), and MAX token/UID fields to Settings -
+  previously CLI-only. Missing `[M-DOCS]` (mailru) log tag color added.
+- new cross-platform release builds (darwin/linux/windows, amd64/arm64,
+  plus linux/arm and windows/386) via CI, matching upstream's release
+  asset list.
+
+### Fixed
+
+- Android: changing a Network or Mode of operation setting and pressing
+  back without an explicit save no longer applies it - these pages now use
+  the same draft/apply pattern as the profile editor.
+- Android: the mobile bridge (`mobile.Start`/`mobile.StartProxy`) derived
+  the encryption KDF context differently from the desktop CLI when no
+  document URL is set (the `oneme` transport), which would silently break
+  decryption between an Android client and a CLI exit node on that
+  transport. Both now fall back to the transport name identically.
+- desktop client: `SocketWatcher` installed direct/bypass routes for the
+  transport's own control-channel IP but never removed them on shutdown,
+  which could leave stale routes behind after disconnecting (also missed
+  cleanup on `SIGHUP`, e.g. closing the terminal window).
+- CI: Android builds failed because `sdkmanager` wasn't on `PATH` on the
+  `ubuntu-latest` runner; the redundant, already-broken
+  `android-actions/setup-android` step was removed instead.
+
+### Changed
+
+- all "bypass" wording (code, logs, docs) renamed to "direct" - this is a
+  VPN client, not a bypass tool.
+- rebrand: accent color changed to `#EA1A1A`, new app icon/logo.
+- `main.go`, `tun_darwin.go`, `tun_watch.go`, `tun_learn.go`, `tun_other.go`,
+  `signals_unix.go`, `signals_windows.go` moved into a `tunclient/` package;
+  `bench.go` moved into a `bench/` package. No behavior change.
+
 ## 0.6.0 - 2026-09-13
 
 ### Added
@@ -245,7 +292,7 @@ running both ends with this fork's own exit-node binary.
   successful connection and for errors via `Vibrator`/`VibrationEffect`
   (new `VIBRATE` permission).
 - a beginner-friendly, step-by-step VPS deployment guide in English and
-  Russian ([docs/GUIDE.md](GUIDE.md), [docs/GUIDE.ru.md](GUIDE.ru.md)),
+  Russian ([docs/en/GUIDE.md](GUIDE.md), [docs/ru/GUIDE.md](../ru/GUIDE.md)),
   linked from both READMEs.
 - CI now cross-compiles Linux `amd64`/`arm64` server/client binaries and
   uploads them as a build artifact; GitHub Releases now attach the same

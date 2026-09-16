@@ -15,7 +15,8 @@ It preserves the upstream Git history and remains licensed under GPL-3.0-or-late
   derivation, wire-compatible with upstream's exit-node and client binaries;
   leave the key unset to talk to a plain, unencrypted upstream exit node;
 - a live upload/download speed indicator in the connection notification;
-- safer VDS deployment using root-only URL/key files instead of process arguments;
+- `--encryption-key-file` reads the shared secret from a root-only file
+  instead of a process argument, keeping it out of `ps`/process listings;
 - removal of the non-functional iOS prototype.
 
 ## Branches

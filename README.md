@@ -20,11 +20,11 @@
 > This repository is an experimental, independently maintained fork of
 > [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux),
 > adding a native Android VPN client on top of upstream's exit-node/transport
-> core. See [docs/FORK.md](docs/FORK.md) for what this fork changes. `main`
+> core. See [docs/en/FORK.md](docs/en/FORK.md) for what this fork changes. `main`
 > stays wire-compatible with current upstream exit-node/client binaries; a
 > separate `experimental` branch carries additional features (ping graph,
 > exit-node country, server-side DNS relay) that need this fork's own exit
-> node - see [docs/UPSTREAM_DIFF.md](docs/UPSTREAM_DIFF.md).
+> node - see [docs/en/UPSTREAM_DIFF.md](docs/en/UPSTREAM_DIFF.md).
 
 OpenFlux is a research TCP tunnel that disguises traffic as a collaborative
 document-editing session (Yandex Docs, Mail.ru Docs, Cups.online, MAX) instead
@@ -33,7 +33,7 @@ tunnel and optional end-to-end AES-256-GCM encryption on top of it.
 
 **[Download the latest Android release](https://github.com/damnurmum/OpenFlux-Android/releases/latest)**
 
-New to this? [docs/GUIDE.md](docs/GUIDE.md) is a beginner-friendly, step-by-step
+New to this? [docs/en/GUIDE.md](docs/en/GUIDE.md) is a beginner-friendly, step-by-step
 walkthrough for deploying an exit node on a VPS and connecting from Android.
 
 ```text
@@ -304,9 +304,9 @@ go vet ./...
 git diff --check
 ```
 
-Contributions are described in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
-Please read [docs/SECURITY.md](docs/SECURITY.md) before reporting a
-vulnerability. Changes are listed in [docs/CHANGELOG.md](docs/CHANGELOG.md).
+Contributions are described in [docs/en/CONTRIBUTING.md](docs/en/CONTRIBUTING.md).
+Please read [docs/en/SECURITY.md](docs/en/SECURITY.md) before reporting a
+vulnerability. Changes are listed in [docs/en/CHANGELOG.md](docs/en/CHANGELOG.md).
 
 ## License
 

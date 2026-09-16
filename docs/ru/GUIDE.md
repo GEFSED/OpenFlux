@@ -1,12 +1,12 @@
 # Гайд для новичков: разворачиваем OpenFlux на своём VPS
 
-[English](GUIDE.md) · **Русский**
+[English](../en/GUIDE.md) · **Русский**
 
 Этот гайд - пошаговая инструкция «от и до»: как арендовать сервер, поднять
 на нём exit-node OpenFlux и подключиться к нему с Android-телефона. Он
 рассчитан на то, что вы никогда раньше этого не делали.
 
-Если что-то в этом гайде не совпадает с основным [README.ru.md](../README.ru.md) -
+Если что-то в этом гайде не совпадает с основным [README.ru.md](../../README.ru.md) -
 доверяйте README, там более полное и актуальное описание. Здесь - упрощённый
 путь для первого запуска.
 
@@ -135,15 +135,15 @@ sudo iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP 2>/dev/null || \
 ```
 
 Если на этом сервере кроме OpenFlux работают и другие сервисы - посмотрите
-более аккуратный вариант с `--local-ip` в основном [README.ru.md](../README.ru.md#сборка-ноды-и-клиента-компьютера),
+более аккуратный вариант с `--local-ip` в основном [README.ru.md](../../README.ru.md#десктопный-cli-выходная-нода-и-клиент),
 он не глушит RST для всего хоста.
 
 ### 3.4. Проверьте вручную перед автозапуском
 
 ```bash
-sudo /root/openflux/openflux --exit-node --transport yandex \
-  --url-file /root/openflux/document-url \
-  --encryption-key-file /root/openflux/encryption-key --debug
+sudo /root/openflux/openflux --role=exit --mode=l3 --transport=yandex \
+  --encryption-key-file /root/openflux/encryption-key \
+  --url "$(cat /root/openflux/document-url)" --debug
 ```
 
 Если в логах не видно ошибок и написано что-то вроде «Running as EXIT NODE» -
@@ -157,14 +157,14 @@ sudo /root/openflux/openflux --exit-node --transport yandex \
 ```bash
 sudo tee /etc/systemd/system/openflux.service > /dev/null <<'EOF'
 [Unit]
-Description=OpenFlux encrypted Yandex transport exit node
+Description=OpenFlux encrypted exit node (l3, Yandex transport)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 ExecStartPre=/bin/sh -c '/usr/sbin/iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP 2>/dev/null || /usr/sbin/iptables -I OUTPUT 1 -p tcp --tcp-flags RST RST -j DROP'
-ExecStart=/root/openflux/openflux --exit-node --transport yandex --url-file /root/openflux/document-url --encryption-key-file /root/openflux/encryption-key
+ExecStart=/bin/sh -c 'exec /root/openflux/openflux --role=exit --mode=l3 --transport=yandex --encryption-key-file /root/openflux/encryption-key --url "$(cat /root/openflux/document-url)"'
 ExecStopPost=/bin/sh -c '/usr/sbin/iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP 2>/dev/null && /usr/sbin/iptables -D OUTPUT -p tcp --tcp-flags RST RST -j DROP || true'
 Restart=on-failure
 RestartSec=5
@@ -238,9 +238,9 @@ VPN-разрешения, и опционально может быть откр
 ## Тоже неплохо: клиент для компьютера
 
 OpenFlux умеет работать и как SOCKS5-клиент на компьютере (Linux/macOS/
-Windows) - подробности в основном [README.ru.md](../README.ru.md#сборка-ноды-и-клиента-компьютера).
+Windows) - подробности в основном [README.ru.md](../../README.ru.md#десктопный-cli-выходная-нода-и-клиент).
 Короткая версия - тот же бинарник, что и на сервере, только с флагом
-`--client` вместо `--exit-node`, и в браузере нужно указать SOCKS5-прокси
+`--role=client` вместо `--role=exit`, и в браузере нужно указать SOCKS5-прокси
 `127.0.0.1:1080`.
 
 ## Частые проблемы
@@ -277,11 +277,11 @@ Windows) - подробности в основном [README.ru.md](../README.r
 **Кто-то другой отредактировал документ, и всё сломалось.** Это ожидаемое
 поведение - у документа есть владелец сообщения об этом, и любой с правом
 редактирования может нарушить связь. Подробнее - в разделе «Важные
-ограничения» [README.ru.md](../README.ru.md) и в [SECURITY.md](SECURITY.md).
+ограничения» [README.ru.md](../../README.ru.md) и в [SECURITY.md](SECURITY.md).
 
 ## Дальше
 
-- Полное описание флагов командной строки и архитектуры - [README.ru.md](../README.ru.md).
+- Полное описание флагов командной строки и архитектуры - [README.ru.md](../../README.ru.md).
 - Модель безопасности и что делать при компрометации ключа/ссылки -
   [SECURITY.md](SECURITY.md).
 - Нашли баг или хотите предложить улучшение - заведите issue в репозитории;
