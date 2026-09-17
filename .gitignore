@@ -10,6 +10,8 @@ universal-bypass-tool
 universal-bypass-tool-*
 /app
 /app.exe
+app
+app.exe
 
 capture.txt
 capture.etl
@@ -48,22 +50,11 @@ android/local.properties
 android/app/libs/*.aar
 android/app/libs/*-sources.jar
 
-# iOS build artifacts
-output/
-ios-app/build/
-ios-app/Lib/*.a
-ios-app/Lib/*.h
-ios-app/OpenFlux.xcodeproj/
-ios-app/DerivedData/
-
 # App Store Connect API private key — never commit
 *.p8
 app-linux
 app-darwin
-app.exe
-universal-bypass-tool
 universal-bypass-tool.exe
-universal-bypass-tool
 oflx
 oflx-new
 deploy.sh
@@ -73,4 +64,5 @@ stats.txt
 watch_stats.sh
 *.log
 /openflux
+openflux
 *.bak

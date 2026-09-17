@@ -38,7 +38,7 @@ var encryptedMagic = [3]byte{'O', 'F', 'X'}
 // byte. An earlier version of this fork multiplexed ping and DNS-relay
 // frames into this same channel; that variant lives on the "experimental"
 // branch, since it cannot talk to an unmodified upstream binary. See
-// docs/UPSTREAM_DIFF.md.
+// docs/en/UPSTREAM_DIFF.md.
 type EncryptedTransport struct {
 	Transport
 	sendAEAD      cipher.AEAD
