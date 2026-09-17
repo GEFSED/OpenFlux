@@ -63,3 +63,4 @@ watch_stats.sh
 *.log
 /openflux
 *.bak
+# test: discord alerts bot commit-notification check
