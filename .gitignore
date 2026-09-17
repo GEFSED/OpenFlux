@@ -10,8 +10,6 @@ universal-bypass-tool
 universal-bypass-tool-*
 /app
 /app.exe
-app
-app.exe
 
 capture.txt
 capture.etl
@@ -64,5 +62,4 @@ stats.txt
 watch_stats.sh
 *.log
 /openflux
-openflux
 *.bak

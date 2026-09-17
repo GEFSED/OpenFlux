@@ -1329,6 +1329,16 @@ public final class MainActivity extends Activity {
     // generic "Сохранить настройки" button in buildSettingsPage() - editing
     // these fields and pressing back without it discards the draft.
     private void applyModeSettings() {
+        // If the mode is actually changing while the OLD mode's service is
+        // still connected, isConnectionRunning() below would start checking
+        // the NEW mode's (not yet started) service and show "not connected" -
+        // while the old service keeps running unseen in the background,
+        // holding the VPN slot or the proxy port. Stop it explicitly instead
+        // of orphaning it.
+        boolean modeChanging = !editorConnectionMode.equals(connectionMode);
+        boolean oldProxyMode = isProxyMode();
+        boolean oldWasRunning = isConnectionRunning();
+
         connectionMode = editorConnectionMode;
         proxyLanAccess = editorProxyLanAccess;
         proxyAuthEnabled = editorProxyAuthEnabled;
@@ -1342,6 +1352,13 @@ public final class MainActivity extends Activity {
         proxyUsername = proxyUsernameInput.getText().toString().trim();
         proxyPassword = proxyPasswordInput.getText().toString().trim();
         persistSettings();
+
+        if (modeChanging && oldWasRunning) {
+            Intent stop = new Intent(this, oldProxyMode ? OpenFluxProxyService.class : OpenFluxTunnelService.class);
+            stop.setAction(oldProxyMode ? OpenFluxProxyService.ACTION_STOP : OpenFluxTunnelService.ACTION_STOP);
+            startService(stop);
+            appendLog("Режим изменён - предыдущее соединение (" + (oldProxyMode ? "прокси" : "туннель") + ") остановлено");
+        }
     }
 
     // buildProxyShareCard renders the socks:// link (and a QR encoding it)
