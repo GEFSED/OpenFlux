@@ -13,10 +13,11 @@ import android.service.quicksettings.TileService;
 
 import java.util.List;
 
-// Quick Settings tile that toggles whichever connection mode (VPN or Proxy)
-// is currently selected in the app, using whichever profile is currently
-// selected there. VPN mode needs Android's one-time VPN consent dialog,
-// which a TileService cannot show itself, so if that permission hasn't been
+// Quick Settings tile that toggles whichever connection mode (Tunnel or
+// Proxy) is currently selected in the app, using whichever profile is
+// currently selected there. Tunnel mode needs Android's one-time system
+// consent dialog, which a TileService cannot show itself, so if that
+// permission hasn't been
 // granted yet (or no profile is configured) the tile opens the app instead
 // of failing silently.
 public final class OpenFluxTileService extends TileService {
@@ -42,16 +43,16 @@ public final class OpenFluxTileService extends TileService {
     @Override public void onClick() {
         super.onClick();
         boolean proxyMode = isProxyMode();
-        boolean running = proxyMode ? OpenFluxProxyService.isRunning() : OpenFluxVpnService.isRunning();
+        boolean running = proxyMode ? OpenFluxProxyService.isRunning() : OpenFluxTunnelService.isRunning();
         if (running) {
-            Intent stop = new Intent(this, proxyMode ? OpenFluxProxyService.class : OpenFluxVpnService.class);
-            stop.setAction(proxyMode ? OpenFluxProxyService.ACTION_STOP : OpenFluxVpnService.ACTION_STOP);
+            Intent stop = new Intent(this, proxyMode ? OpenFluxProxyService.class : OpenFluxTunnelService.class);
+            stop.setAction(proxyMode ? OpenFluxProxyService.ACTION_STOP : OpenFluxTunnelService.ACTION_STOP);
             startService(stop);
             updateTile();
             return;
         }
         if (!proxyMode && VpnService.prepare(this) != null) {
-            // First-time VPN consent can only be granted through an activity.
+            // First-time tunnel consent can only be granted through an activity.
             openApp();
             return;
         }
@@ -64,7 +65,7 @@ public final class OpenFluxTileService extends TileService {
 
     private boolean isProxyMode() {
         SharedPreferences prefs = getSharedPreferences(MainActivity.SETTINGS_PREFS_NAME, MODE_PRIVATE);
-        return "proxy".equals(prefs.getString("connection_mode", "vpn"));
+        return "proxy".equals(prefs.getString("connection_mode", "tunnel"));
     }
 
     private boolean startConnection(boolean proxyMode) {
@@ -95,13 +96,13 @@ public final class OpenFluxTileService extends TileService {
             }
             startForegroundService(intent);
         } else {
-            Intent intent = new Intent(this, OpenFluxVpnService.class);
-            intent.setAction(OpenFluxVpnService.ACTION_START);
-            intent.putExtra(OpenFluxVpnService.EXTRA_DOCUMENT_URL, selected.documentUrl);
-            intent.putExtra(OpenFluxVpnService.EXTRA_ENCRYPTION_SECRET, selected.encryptionSecret);
-            intent.putExtra(OpenFluxVpnService.EXTRA_TRANSPORT_TYPE, selected.transportType);
-            intent.putExtra(OpenFluxVpnService.EXTRA_DNS_SERVER, prefs.getString("dns_server", "1.1.1.1"));
-            intent.putExtra(OpenFluxVpnService.EXTRA_MTU, prefs.getInt("mtu", 1400));
+            Intent intent = new Intent(this, OpenFluxTunnelService.class);
+            intent.setAction(OpenFluxTunnelService.ACTION_START);
+            intent.putExtra(OpenFluxTunnelService.EXTRA_DOCUMENT_URL, selected.documentUrl);
+            intent.putExtra(OpenFluxTunnelService.EXTRA_ENCRYPTION_SECRET, selected.encryptionSecret);
+            intent.putExtra(OpenFluxTunnelService.EXTRA_TRANSPORT_TYPE, selected.transportType);
+            intent.putExtra(OpenFluxTunnelService.EXTRA_DNS_SERVER, prefs.getString("dns_server", "1.1.1.1"));
+            intent.putExtra(OpenFluxTunnelService.EXTRA_MTU, prefs.getInt("mtu", 1400));
             startForegroundService(intent);
         }
         return true;
@@ -123,12 +124,12 @@ public final class OpenFluxTileService extends TileService {
         Tile tile = getQsTile();
         if (tile == null) return;
         boolean proxyMode = isProxyMode();
-        boolean running = proxyMode ? OpenFluxProxyService.isRunning() : OpenFluxVpnService.isRunning();
+        boolean running = proxyMode ? OpenFluxProxyService.isRunning() : OpenFluxTunnelService.isRunning();
         tile.setIcon(Icon.createWithResource(this, R.drawable.ic_openflux_notification));
         tile.setLabel("OpenFlux");
         tile.setState(running ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         if (Build.VERSION.SDK_INT >= 29) {
-            tile.setSubtitle(proxyMode ? "Прокси" : "VPN");
+            tile.setSubtitle(proxyMode ? "Прокси" : "Туннель");
         }
         tile.updateTile();
     }

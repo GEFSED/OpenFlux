@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import io.openflux.bridge.mobile.Mobile;
 
-public final class OpenFluxVpnService extends VpnService {
+public final class OpenFluxTunnelService extends VpnService {
     public static final String ACTION_START = "io.openflux.app.START";
     public static final String ACTION_STOP = "io.openflux.app.STOP";
     public static final String EXTRA_DOCUMENT_URL = "document_url";
@@ -43,7 +43,7 @@ public final class OpenFluxVpnService extends VpnService {
     public static final String EXTRA_MAX_TOKEN = "max_token";
     public static final String EXTRA_MAX_UID = "max_uid";
 
-    private static final String CHANNEL_ID = "openflux_vpn";
+    private static final String CHANNEL_ID = "openflux_tunnel";
     private static final int NOTIFICATION_ID = 7;
     private static volatile boolean running;
     private static volatile String status = "Остановлено";
@@ -137,7 +137,7 @@ public final class OpenFluxVpnService extends VpnService {
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
-            stopVpn();
+            stopTunnel();
             return START_NOT_STICKY;
         }
         if (running) return START_STICKY;
@@ -458,7 +458,7 @@ public final class OpenFluxVpnService extends VpnService {
         stopSelf();
     }
 
-    private synchronized void stopVpn() {
+    private synchronized void stopTunnel() {
         status = "Останавливается…";
         generation.incrementAndGet();
         active = false;
@@ -500,14 +500,14 @@ public final class OpenFluxVpnService extends VpnService {
     private void createNotificationChannel() {
         NotificationManager manager = getSystemService(NotificationManager.class);
         manager.createNotificationChannel(new NotificationChannel(
-                CHANNEL_ID, "OpenFlux VPN", NotificationManager.IMPORTANCE_LOW));
+                CHANNEL_ID, "OpenFlux Tunnel", NotificationManager.IMPORTANCE_LOW));
     }
 
     private Notification notification(String text) {
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent content = PendingIntent.getActivity(
                 this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        Intent stop = new Intent(this, OpenFluxVpnService.class).setAction(ACTION_STOP);
+        Intent stop = new Intent(this, OpenFluxTunnelService.class).setAction(ACTION_STOP);
         PendingIntent stopIntent = PendingIntent.getService(
                 this, 0, stop, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, CHANNEL_ID)

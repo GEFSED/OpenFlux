@@ -270,7 +270,7 @@ DEPRECATED (removed in v2)
 		utils.EnableDebug()
 	}
 
-	log.Printf("=== OpenFlux VPN Client ===")
+	log.Printf("=== OpenFlux Tunnel Client ===")
 	log.Printf("Role: %s", *role)
 	log.Printf("Transport: %s", *transportType)
 	if *role == roleClient {

@@ -8,7 +8,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Required on Android 11+ to enumerate other installed apps for the
-         per-app VPN allow/deny list in Settings -> "Приложения". -->
+         per-app tunnel allow/deny list in Settings -> "Приложения". -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -34,7 +34,7 @@
         </activity>
 
         <service
-            android:name=".OpenFluxVpnService"
+            android:name=".OpenFluxTunnelService"
             android:exported="false"
             android:foregroundServiceType="specialUse"
             android:permission="android.permission.BIND_VPN_SERVICE">
@@ -43,7 +43,7 @@
             </intent-filter>
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="vpn" />
+                android:value="tunnel" />
         </service>
 
         <service

@@ -1,7 +1,7 @@
 <div align="center">
   <img src="design/logo/icon.svg" width="112" alt="OpenFlux logo">
   <h1>OpenFlux Android</h1>
-  <p>Encrypted document-transport VPN for Android, desktop clients and Linux exit nodes.</p>
+  <p>Encrypted document-transport tunnel for Android, desktop clients and Linux exit nodes.</p>
   <p>
     <a href="https://github.com/damnurmum/OpenFlux-Android/releases/latest"><img src="https://img.shields.io/github/v/release/damnurmum/OpenFlux-Android?display_name=tag&amp;sort=semver&amp;style=flat-square&amp;color=EA1A1A" alt="Latest release"></a>
     <a href="https://github.com/damnurmum/OpenFlux-Android/actions/workflows/ci.yml"><img src="https://github.com/damnurmum/OpenFlux-Android/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
@@ -19,7 +19,7 @@
 
 > This repository is an experimental, independently maintained fork of
 > [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux),
-> adding a native Android VPN client on top of upstream's exit-node/transport
+> adding a native Android tunnel client on top of upstream's exit-node/transport
 > core. See [docs/en/FORK.md](docs/en/FORK.md) for what this fork changes. `main`
 > stays wire-compatible with current upstream exit-node/client binaries; a
 > separate `experimental` branch carries additional features (ping graph,
@@ -37,7 +37,7 @@ New to this? [docs/en/GUIDE.md](docs/en/GUIDE.md) is a beginner-friendly, step-b
 walkthrough for deploying an exit node on a VPS and connecting from Android.
 
 ```text
-Android VPN or SOCKS5 client -> encrypted document transport -> Linux exit node -> Internet
+Android tunnel or SOCKS5 client -> encrypted document transport -> Linux exit node -> Internet
 ```
 
 ## Features
@@ -45,7 +45,7 @@ Android VPN or SOCKS5 client -> encrypted document transport -> Linux exit node 
 - Android 8+ client using the system `VpnService` API, with ARM, ARM64, x86 and
   x86_64 builds;
 - a second Android connection mode, local SOCKS5 Proxy, for when a full
-  system VPN isn't wanted - optionally exposed to the local network with
+  system-wide tunnel isn't wanted - optionally exposed to the local network with
   SOCKS5 authentication, plus a `socks://` share link and QR code;
 - profiles: save several exit-node configurations (transport, document URL,
   secret) and switch between them without re-typing anything;
@@ -58,7 +58,7 @@ Android VPN or SOCKS5 client -> encrypted document transport -> Linux exit node 
 - Android Keystore-backed storage for the document URL and shared secret;
 - DNS-server and MTU fields, applied only when explicitly saved - navigating
   away without saving discards the edit;
-- per-app VPN routing (whitelist or blacklist which apps use the tunnel);
+- per-app tunnel routing (whitelist or blacklist which apps use it);
 - a pinned notification with live upload/download speed and a disconnect
   action, for both connection modes;
 - desktop SOCKS5/utun client and Linux exit-node modes (`l3` raw SNAT/DNAT or
@@ -255,7 +255,7 @@ The build creates separate APKs for `arm64-v8a`, `armeabi-v7a`, `x86_64` and
 `x86`, plus `OpenFlux-android-universal-debug.apk` for devices whose architecture
 is unknown. Transfer the appropriate APK to an Android 8+ device, install it,
 create a profile with your own document URL and shared secret, then approve
-Android's VPN prompt.
+Android's tunnel consent prompt.
 
 Configuration survives a normal in-place app update when the application ID
 and signing certificate stay the same. Clearing app data or uninstalling the
@@ -288,7 +288,7 @@ OpenFlux-Android/
   socks5/                          # SOCKS5 server (client fallback)
   network/, utils/                 # Checksums/packet parsing, logging
   mobile/                          # gomobile bridge consumed by the Android app
-  android/                         # Android VPN client (this fork's addition)
+  android/                         # Android tunnel client (this fork's addition)
   build_android_app.sh             # Build the Android APKs
   deploy/openflux.service          # Sample systemd unit for the exit node
 ```

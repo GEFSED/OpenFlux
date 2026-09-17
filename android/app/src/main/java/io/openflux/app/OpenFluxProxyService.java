@@ -19,10 +19,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import io.openflux.bridge.mobile.Mobile;
 
 // Runs the local SOCKS5 proxy (Mobile.startProxy/stopProxy) as a plain
-// foreground Service, not a VpnService: unlike OpenFluxVpnService, this mode
-// never touches Android's VPN subsystem, so it needs no VPN permission
-// dialog and doesn't show the system VPN key icon. Other apps must be
-// pointed at the local SOCKS5 address manually.
+// foreground Service, not a VpnService: unlike OpenFluxTunnelService, this
+// mode never requests Android's system-wide tunnel permission, so it needs
+// no consent dialog and doesn't show the status-bar key icon. Other apps
+// must be pointed at the local SOCKS5 address manually.
 public final class OpenFluxProxyService extends Service {
     public static final String ACTION_START = "io.openflux.app.PROXY_START";
     public static final String ACTION_STOP = "io.openflux.app.PROXY_STOP";
@@ -72,7 +72,7 @@ public final class OpenFluxProxyService extends Service {
     };
 
     // healthChecker keeps "Подключено" honest for the same reason as in
-    // OpenFluxVpnService: once set at initial connect, status would never
+    // OpenFluxTunnelService: once set at initial connect, status would never
     // reflect a later drop in the underlying transport without this.
     private final Runnable healthChecker = new Runnable() {
         @Override public void run() {

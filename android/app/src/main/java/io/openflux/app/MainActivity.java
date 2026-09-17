@@ -101,7 +101,7 @@ public final class MainActivity extends Activity {
     // and network settings without depending on Activity.getPreferences()'s
     // undocumented file-naming behavior.
     static final String SETTINGS_PREFS_NAME = "openflux_settings";
-    private static final int VPN_PERMISSION_REQUEST = 42;
+    private static final int TUNNEL_PERMISSION_REQUEST = 42;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 43;
     private static final String DEFAULT_DNS = "1.1.1.1";
     private static final int DEFAULT_MTU = 1400;
@@ -118,7 +118,7 @@ public final class MainActivity extends Activity {
             "ic_public", "ic_link", "ic_lock", "ic_key", "ic_power",
             "ic_person", "ic_swap", "ic_terminal", "ic_apps", "ic_settings",
     };
-    private static final String MODE_VPN = "vpn";
+    private static final String MODE_TUNNEL = "tunnel";
     private static final String MODE_PROXY = "proxy";
     private static final int DEFAULT_PROXY_PORT = 1080;
     private static final String MAIN_REPO_URL = "https://github.com/p1neappleXpress/OpenFlux";
@@ -165,8 +165,8 @@ public final class MainActivity extends Activity {
     private TextView statusDetail;
     private TextView logView;
     private ScrollView logScroll;
-    private LinearLayout vpnButton;
-    private TextView vpnButtonText;
+    private LinearLayout tunnelButton;
+    private TextView tunnelButtonText;
     private String documentUrl;
     private String encryptionSecret;
     private String transportType = "yandex";
@@ -188,7 +188,7 @@ public final class MainActivity extends Activity {
     private TextView uptimeView;
     private String dnsServer;
     private int mtu;
-    private String connectionMode = MODE_VPN;
+    private String connectionMode = MODE_TUNNEL;
     private int proxyPort = DEFAULT_PROXY_PORT;
     private boolean proxyLanAccess;
     private boolean proxyAuthEnabled;
@@ -200,7 +200,7 @@ public final class MainActivity extends Activity {
     // each time the corresponding sub-page opens (openSettingsDetail).
     private String editorDnsServer = "";
     private int editorMtu;
-    private String editorConnectionMode = MODE_VPN;
+    private String editorConnectionMode = MODE_TUNNEL;
     private int editorProxyPort = DEFAULT_PROXY_PORT;
     private boolean editorProxyLanAccess;
     private boolean editorProxyAuthEnabled;
@@ -211,7 +211,7 @@ public final class MainActivity extends Activity {
     private SecureSettings secureSettings;
     private boolean shellAnimated;
     private ObjectAnimator dotPulse;
-    private int lastVpnButtonFill = -1;
+    private int lastTunnelButtonFill = -1;
     private Vibrator vibrator;
     private String lastAnnouncedState = "";
     private TextView versionBadge;
@@ -251,7 +251,7 @@ public final class MainActivity extends Activity {
         applySelectedProfileToFields();
         dnsServer = prefs.getString("dns_server", DEFAULT_DNS);
         mtu = prefs.getInt("mtu", DEFAULT_MTU);
-        connectionMode = MODE_PROXY.equals(prefs.getString("connection_mode", MODE_VPN)) ? MODE_PROXY : MODE_VPN;
+        connectionMode = MODE_PROXY.equals(prefs.getString("connection_mode", MODE_TUNNEL)) ? MODE_PROXY : MODE_TUNNEL;
         proxyPort = prefs.getInt("proxy_port", DEFAULT_PROXY_PORT);
         proxyLanAccess = prefs.getBoolean("proxy_lan_access", false);
         proxyAuthEnabled = prefs.getBoolean("proxy_auth_enabled", false);
@@ -270,13 +270,13 @@ public final class MainActivity extends Activity {
         configureSystemBars();
         buildShell();
         showPage(PAGE_HOME);
-        appendLog("Готово. При первом запуске Android запросит разрешение на VPN.");
+        appendLog("Готово. При первом запуске Android запросит разрешение на туннель.");
         checkForUpdates();
         requestNotificationPermissionIfNeeded();
     }
 
     // Android 13+ requires this runtime permission to actually display any
-    // notification, including a foreground service's - without it the VPN
+    // notification, including a foreground service's - without it the tunnel
     // and proxy services still run fine, they just show no ongoing
     // notification (no status, no speed indicator) for the user to see.
     private void requestNotificationPermissionIfNeeded() {
@@ -396,7 +396,7 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams titlesParams = new LinearLayout.LayoutParams(0, -2, 1f);
         titlesParams.leftMargin = dp(12);
         TextView title = text("OpenFlux", 21, text, true);
-        TextView subtitle = text("VPN через Yandex Docs", 12, secondary, false);
+        TextView subtitle = text("Туннель через Yandex Docs", 12, secondary, false);
         titles.addView(title);
         titles.addView(subtitle);
         header.addView(titles, titlesParams);
@@ -627,7 +627,7 @@ public final class MainActivity extends Activity {
     }
 
     // applySelectedProfileToFields refreshes the plain documentUrl/
-    // encryptionSecret/transportType fields that toggleConnection/startVpn/
+    // encryptionSecret/transportType fields that toggleConnection/startTunnel/
     // startProxy already read, from whichever profile is currently selected.
     private void applySelectedProfileToFields() {
         Profile p = selectedProfile();
@@ -837,15 +837,15 @@ public final class MainActivity extends Activity {
             dotPulse.cancel();
             dotPulse = null;
         }
-        lastVpnButtonFill = -1;
+        lastTunnelButtonFill = -1;
 
         boolean proxyMode = MODE_PROXY.equals(connectionMode);
         LinearLayout page = page();
         TextView heading = text("Подключение", 25, text, true);
         page.addView(heading);
         TextView intro = text(proxyMode
-                ? "Локальный SOCKS5-прокси через документ-транспорт, без системного VPN."
-                : "Защищённый системный VPN-туннель через документ-транспорт.", 13, secondary, false);
+                ? "Локальный SOCKS5-прокси через документ-транспорт, без системного туннеля."
+                : "Защищённый системный туннель через документ-транспорт.", 13, secondary, false);
         LinearLayout.LayoutParams introParams = matchWrap();
         introParams.topMargin = dp(4);
         page.addView(intro, introParams);
@@ -863,7 +863,7 @@ public final class MainActivity extends Activity {
         LinearLayout statusCopy = new LinearLayout(this);
         statusCopy.setOrientation(LinearLayout.VERTICAL);
         statusView = text("Остановлено", 17, text, true);
-        statusDetail = text("VPN сейчас не используется", 13, secondary, false);
+        statusDetail = text("Туннель сейчас не используется", 13, secondary, false);
         statusCopy.addView(statusView);
         statusCopy.addView(statusDetail);
         status.addView(statusCopy, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -880,26 +880,26 @@ public final class MainActivity extends Activity {
         page.addView(profileSelector, selectorParams);
         staggerIn(profileSelector, 80);
 
-        vpnButton = new LinearLayout(this);
-        vpnButton.setOrientation(LinearLayout.HORIZONTAL);
-        vpnButton.setGravity(Gravity.CENTER);
-        vpnButton.setClickable(true);
-        vpnButton.setFocusable(true);
-        vpnButton.setElevation(dp(2));
+        tunnelButton = new LinearLayout(this);
+        tunnelButton.setOrientation(LinearLayout.HORIZONTAL);
+        tunnelButton.setGravity(Gravity.CENTER);
+        tunnelButton.setClickable(true);
+        tunnelButton.setFocusable(true);
+        tunnelButton.setElevation(dp(2));
         ImageView powerIcon = icon(R.drawable.ic_power, Color.WHITE);
         LinearLayout.LayoutParams powerParams = new LinearLayout.LayoutParams(dp(24), dp(24));
         powerParams.rightMargin = dp(10);
-        vpnButton.addView(powerIcon, powerParams);
-        vpnButtonText = text(proxyMode ? "Запустить прокси" : "Запустить VPN", 16, Color.WHITE, true);
-        vpnButton.addView(vpnButtonText, new LinearLayout.LayoutParams(-2, -2));
-        vpnButton.setOnClickListener(v -> {
+        tunnelButton.addView(powerIcon, powerParams);
+        tunnelButtonText = text(proxyMode ? "Запустить прокси" : "Запустить туннель", 16, Color.WHITE, true);
+        tunnelButton.addView(tunnelButtonText, new LinearLayout.LayoutParams(-2, -2));
+        tunnelButton.setOnClickListener(v -> {
             bounce(v);
             toggleConnection();
         });
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(58));
         buttonParams.topMargin = dp(16);
-        page.addView(vpnButton, buttonParams);
-        staggerIn(vpnButton, 130);
+        page.addView(tunnelButton, buttonParams);
+        staggerIn(tunnelButton, 130);
 
         TextView summaryTitle = label("АКТИВНЫЕ ПАРАМЕТРЫ");
         LinearLayout.LayoutParams summaryTitleParams = matchWrap();
@@ -924,7 +924,7 @@ public final class MainActivity extends Activity {
             };
         }
         return new String[][]{
-                {"Режим", "VPN (весь трафик)"},
+                {"Режим", "Туннель (весь трафик)"},
                 {"DNS-сервер", dnsServer},
                 {"MTU пакета", String.valueOf(mtu)},
                 {"Приложения", appFilterSummary()},
@@ -1095,13 +1095,13 @@ public final class MainActivity extends Activity {
         list.setOrientation(LinearLayout.VERTICAL);
         list.setBackground(rounded(surface, border, 1, 12));
         list.addView(settingsListRow(R.drawable.ic_swap, "Режим работы",
-                MODE_PROXY.equals(connectionMode) ? "Прокси (SOCKS5)" : "VPN (весь трафик)", SETTINGS_MODE));
+                MODE_PROXY.equals(connectionMode) ? "Прокси (SOCKS5)" : "Туннель (весь трафик)", SETTINGS_MODE));
         addDivider(list);
         list.addView(settingsListRow(R.drawable.ic_public, "Сеть",
                 "DNS-сервер и MTU", SETTINGS_NETWORK));
         addDivider(list);
         list.addView(settingsListRow(R.drawable.ic_apps, "Приложения",
-                "Какие приложения используют VPN", SETTINGS_APPS));
+                "Какие приложения используют туннель", SETTINGS_APPS));
         addDivider(list);
         list.addView(settingsListRow(R.drawable.ic_dark_mode, "Вид",
                 "Тема и автопрокрутка логов", SETTINGS_INTERFACE));
@@ -1166,8 +1166,8 @@ public final class MainActivity extends Activity {
     private View buildModeSettings() {
         LinearLayout section = page();
         TextView hint = text(
-                "VPN направляет через системный туннель весь трафик устройства. "
-                        + "Прокси поднимает локальный SOCKS5-сервер без запроса VPN-разрешения - "
+                "Туннель направляет через систему весь трафик устройства. "
+                        + "Прокси поднимает локальный SOCKS5-сервер без запроса разрешения на туннель - "
                         + "адрес нужно указать вручную в приложениях, которые поддерживают прокси.",
                 12, secondary, false);
         section.addView(hint, matchWrap());
@@ -1178,12 +1178,12 @@ public final class MainActivity extends Activity {
         modeGroupParams.topMargin = dp(14);
         section.addView(modeGroup, modeGroupParams);
 
-        RadioButton vpnOption = modeRadio("VPN - весь трафик устройства");
-        RadioButton proxyOption = modeRadio("Прокси (SOCKS5) - без системного VPN");
-        modeGroup.addView(vpnOption);
+        RadioButton tunnelOption = modeRadio("Туннель - весь трафик устройства");
+        RadioButton proxyOption = modeRadio("Прокси (SOCKS5) - без системного туннеля");
+        modeGroup.addView(tunnelOption);
         modeGroup.addView(proxyOption);
         if (MODE_PROXY.equals(editorConnectionMode)) proxyOption.setChecked(true);
-        else vpnOption.setChecked(true);
+        else tunnelOption.setChecked(true);
 
         boolean proxySelected = MODE_PROXY.equals(editorConnectionMode);
 
@@ -1295,7 +1295,7 @@ public final class MainActivity extends Activity {
 
         modeGroup.setOnCheckedChangeListener((group, checkedId) -> {
             tap(group);
-            editorConnectionMode = checkedId == proxyOption.getId() ? MODE_PROXY : MODE_VPN;
+            editorConnectionMode = checkedId == proxyOption.getId() ? MODE_PROXY : MODE_TUNNEL;
             boolean nowProxy = MODE_PROXY.equals(editorConnectionMode);
             setViewVisibleAnimated(portRow, nowProxy);
             setViewVisibleAnimated(lanRow, nowProxy);
@@ -1512,7 +1512,7 @@ public final class MainActivity extends Activity {
     private View buildAboutSettings() {
         LinearLayout section = page();
         TextView intro = text(
-                "OpenFlux - экспериментальный VPN-клиент поверх документ-транспорта. "
+                "OpenFlux - экспериментальный туннель-клиент поверх документ-транспорта. "
                         + "Это доработанный форк общедоступного проекта под Android.",
                 13, secondary, false);
         section.addView(intro, matchWrap());
@@ -1969,8 +1969,8 @@ public final class MainActivity extends Activity {
     private View buildAppsSettings() {
         LinearLayout section = page();
         TextView hint = text(
-                "Выберите, какие приложения используют VPN-туннель. По умолчанию - все приложения, кроме OpenFlux. "
-                        + "Действует только в режиме VPN - в режиме прокси приложения подключаются к SOCKS5 сами.",
+                "Выберите, какие приложения используют туннель. По умолчанию - все приложения, кроме OpenFlux. "
+                        + "Действует только в режиме туннеля - в режиме прокси приложения подключаются к SOCKS5 сами.",
                 12, secondary, false);
         section.addView(hint, matchWrap());
 
@@ -2362,24 +2362,24 @@ public final class MainActivity extends Activity {
     }
 
     private boolean isConnectionRunning() {
-        return isProxyMode() ? OpenFluxProxyService.isRunning() : OpenFluxVpnService.isRunning();
+        return isProxyMode() ? OpenFluxProxyService.isRunning() : OpenFluxTunnelService.isRunning();
     }
 
     private String connectionStatus() {
-        return isProxyMode() ? OpenFluxProxyService.getStatus() : OpenFluxVpnService.getStatus();
+        return isProxyMode() ? OpenFluxProxyService.getStatus() : OpenFluxTunnelService.getStatus();
     }
 
     private String connectionLastError() {
-        return isProxyMode() ? OpenFluxProxyService.getLastError() : OpenFluxVpnService.getLastError();
+        return isProxyMode() ? OpenFluxProxyService.getLastError() : OpenFluxTunnelService.getLastError();
     }
 
     private void toggleConnection() {
         if (isConnectionRunning()) {
             boolean proxyMode = isProxyMode();
-            Intent stop = new Intent(this, proxyMode ? OpenFluxProxyService.class : OpenFluxVpnService.class);
-            stop.setAction(proxyMode ? OpenFluxProxyService.ACTION_STOP : OpenFluxVpnService.ACTION_STOP);
+            Intent stop = new Intent(this, proxyMode ? OpenFluxProxyService.class : OpenFluxTunnelService.class);
+            stop.setAction(proxyMode ? OpenFluxProxyService.ACTION_STOP : OpenFluxTunnelService.ACTION_STOP);
             startService(stop);
-            appendLog(proxyMode ? "Запрошена остановка прокси" : "Запрошена остановка VPN");
+            appendLog(proxyMode ? "Запрошена остановка прокси" : "Запрошена остановка туннеля");
             return;
         }
         boolean isMax = "oneme".equals(transportType);
@@ -2410,29 +2410,29 @@ public final class MainActivity extends Activity {
             return;
         }
         Intent permission = VpnService.prepare(this);
-        if (permission != null) startActivityForResult(permission, VPN_PERMISSION_REQUEST);
-        else startVpn();
+        if (permission != null) startActivityForResult(permission, TUNNEL_PERMISSION_REQUEST);
+        else startTunnel();
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == VPN_PERMISSION_REQUEST && resultCode == RESULT_OK) startVpn();
-        else if (requestCode == VPN_PERMISSION_REQUEST) appendLog("[ERROR] Разрешение на создание VPN не выдано");
+        if (requestCode == TUNNEL_PERMISSION_REQUEST && resultCode == RESULT_OK) startTunnel();
+        else if (requestCode == TUNNEL_PERMISSION_REQUEST) appendLog("[ERROR] Разрешение на создание туннеля не выдано");
     }
 
-    private void startVpn() {
-        Intent intent = new Intent(this, OpenFluxVpnService.class);
-        intent.setAction(OpenFluxVpnService.ACTION_START);
-        intent.putExtra(OpenFluxVpnService.EXTRA_DOCUMENT_URL, documentUrl);
-        intent.putExtra(OpenFluxVpnService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
-        intent.putExtra(OpenFluxVpnService.EXTRA_TRANSPORT_TYPE, transportType);
-        intent.putExtra(OpenFluxVpnService.EXTRA_CODEC, codec);
-        intent.putExtra(OpenFluxVpnService.EXTRA_MAX_TOKEN, maxToken);
-        intent.putExtra(OpenFluxVpnService.EXTRA_MAX_UID, maxUid);
-        intent.putExtra(OpenFluxVpnService.EXTRA_DNS_SERVER, dnsServer);
-        intent.putExtra(OpenFluxVpnService.EXTRA_MTU, mtu);
+    private void startTunnel() {
+        Intent intent = new Intent(this, OpenFluxTunnelService.class);
+        intent.setAction(OpenFluxTunnelService.ACTION_START);
+        intent.putExtra(OpenFluxTunnelService.EXTRA_DOCUMENT_URL, documentUrl);
+        intent.putExtra(OpenFluxTunnelService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
+        intent.putExtra(OpenFluxTunnelService.EXTRA_TRANSPORT_TYPE, transportType);
+        intent.putExtra(OpenFluxTunnelService.EXTRA_CODEC, codec);
+        intent.putExtra(OpenFluxTunnelService.EXTRA_MAX_TOKEN, maxToken);
+        intent.putExtra(OpenFluxTunnelService.EXTRA_MAX_UID, maxUid);
+        intent.putExtra(OpenFluxTunnelService.EXTRA_DNS_SERVER, dnsServer);
+        intent.putExtra(OpenFluxTunnelService.EXTRA_MTU, mtu);
         startForegroundService(intent);
-        appendLog("Запуск VPN…");
+        appendLog("Запуск туннеля…");
     }
 
     private void startProxy() {
@@ -2455,17 +2455,17 @@ public final class MainActivity extends Activity {
     }
 
     private void updateStatus() {
-        if (statusView == null || vpnButton == null) return;
+        if (statusView == null || tunnelButton == null) return;
         boolean proxyMode = isProxyMode();
         String state = connectionStatus();
         boolean running = isConnectionRunning();
         statusView.setText(state);
-        vpnButtonText.setText(running
-                ? (proxyMode ? "Остановить прокси" : "Остановить VPN")
-                : (proxyMode ? "Запустить прокси" : "Запустить VPN"));
+        tunnelButtonText.setText(running
+                ? (proxyMode ? "Остановить прокси" : "Остановить туннель")
+                : (proxyMode ? "Запустить прокси" : "Запустить туннель"));
         int stateColor;
         boolean transitional = false;
-        long connectedAt = proxyMode ? OpenFluxProxyService.getConnectedAtMillis() : OpenFluxVpnService.getConnectedAtMillis();
+        long connectedAt = proxyMode ? OpenFluxProxyService.getConnectedAtMillis() : OpenFluxTunnelService.getConnectedAtMillis();
         if (uptimeView != null) {
             uptimeView.setText(connectedAt == 0L ? "" : formatUptime(System.currentTimeMillis() - connectedAt));
         }
@@ -2483,12 +2483,12 @@ public final class MainActivity extends Activity {
             transitional = true;
         } else {
             stateColor = Color.rgb(154, 160, 166);
-            statusDetail.setText(proxyMode ? "Прокси сейчас не используется" : "VPN сейчас не используется");
+            statusDetail.setText(proxyMode ? "Прокси сейчас не используется" : "Туннель сейчас не используется");
         }
         if (state != null && !state.equals(lastAnnouncedState)) {
             if ("Подключено".equals(state)) {
                 vibrateSuccess();
-                appendLog("[SUCCESS] Подключено (" + (proxyMode ? "прокси" : "VPN") + ")");
+                appendLog("[SUCCESS] Подключено (" + (proxyMode ? "прокси" : "туннель") + ")");
             } else if ("Ошибка".equals(state)) {
                 vibrateError();
             }
@@ -2502,9 +2502,9 @@ public final class MainActivity extends Activity {
         // a distinct neutral tone instead of also going red, so "tap to
         // disconnect" doesn't read as an alarm/error state on top of the
         // now-red "tap to connect" button.
-        int vpnFill = running ? Color.rgb(66, 66, 66) : Color.rgb(234, 26, 26);
-        int vpnPressed = running ? Color.rgb(45, 45, 45) : Color.rgb(179, 18, 18);
-        animateVpnButtonFill(vpnFill, vpnPressed);
+        int tunnelFill = running ? Color.rgb(66, 66, 66) : Color.rgb(234, 26, 26);
+        int tunnelPressed = running ? Color.rgb(45, 45, 45) : Color.rgb(179, 18, 18);
+        animateTunnelButtonFill(tunnelFill, tunnelPressed);
 
         String error = connectionLastError();
         if (error != null && !error.isEmpty() && !error.equals(lastShownError)) {
@@ -2540,14 +2540,14 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void animateVpnButtonFill(int fill, int pressed) {
-        if (vpnButton == null) return;
-        if (lastVpnButtonFill == fill) return;
-        int from = lastVpnButtonFill == -1 ? fill : lastVpnButtonFill;
-        lastVpnButtonFill = fill;
+    private void animateTunnelButtonFill(int fill, int pressed) {
+        if (tunnelButton == null) return;
+        if (lastTunnelButtonFill == fill) return;
+        int from = lastTunnelButtonFill == -1 ? fill : lastTunnelButtonFill;
+        lastTunnelButtonFill = fill;
         ValueAnimator animator = ValueAnimator.ofArgb(from, fill);
         animator.setDuration(260);
-        animator.addUpdateListener(a -> vpnButton.setBackground(buttonBackground((int) a.getAnimatedValue(), pressed)));
+        animator.addUpdateListener(a -> tunnelButton.setBackground(buttonBackground((int) a.getAnimatedValue(), pressed)));
         animator.start();
     }
 
@@ -2614,7 +2614,7 @@ public final class MainActivity extends Activity {
     }
 
     // Document URLs are effectively passwords (docs/GUIDE*.md: "this link is
-    // equivalent to your VPN password"), and the transport's own debug lines
+    // equivalent to your tunnel password"), and the transport's own debug lines
     // ([YDOCS]/[VOLGA]) print full URLs, WebSocket endpoints and resolved IPs
     // verbatim for diagnostics. Opt-in (off by default, Settings -> "Вид")
     // since it makes the log noisier and less useful for real debugging -

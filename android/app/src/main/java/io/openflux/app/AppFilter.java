@@ -1,9 +1,9 @@
 package io.openflux.app;
 
 /**
- * Shared constants for the per-app VPN routing filter, read/written by
+ * Shared constants for the per-app tunnel routing filter, read/written by
  * MainActivity's "Приложения" settings tab and applied by
- * OpenFluxVpnService when it builds the tunnel.
+ * OpenFluxTunnelService when it builds the tunnel.
  */
 final class AppFilter {
     static final String PREFS_NAME = "openflux_app_filter";

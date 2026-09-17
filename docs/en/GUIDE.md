@@ -57,7 +57,7 @@ from [GitHub Releases](https://github.com/damnurmum/OpenFlux-Android/releases/la
    and the server need write access to exchange data through the document.
 4. Copy the document link - you'll need it on both the phone and the server.
 
-> This link is effectively your VPN password - don't publish it or share it
+> This link is effectively your tunnel password - don't publish it or share it
 > with anyone. Anyone with edit access to the document can disrupt the
 > connection (without being able to decrypt traffic, but they don't need to
 > for that).
@@ -217,17 +217,17 @@ The server side is done. Now let's set up the phone.
      it into the `encryption-key` file on the server (Step 3.2).
 5. You can leave **Network** (DNS server, MTU) alone - the defaults work for
    most setups.
-6. Go back to the **Home** tab and tap **"Start VPN"**. Android will show its
-   standard system prompt to set up a VPN connection - confirm it (this is a
+6. Go back to the **Home** tab and tap **"Start Tunnel"**. Android will show
+   its standard system prompt to set up a VPN connection - confirm it (this is a
    generic Android dialog, not something specific to OpenFlux).
 7. If everything's set up correctly, the status switches to **"Connected"**.
    If something's off, open the **Logs** tab for the technical details.
 
 Done - your phone's traffic now goes through your own server.
 
-Don't want a full system VPN? Under **Settings -> Mode of operation**, switch
+Don't want a full system tunnel? Under **Settings -> Mode of operation**, switch
 to **Proxy (SOCKS5)** instead - it uses the same document link and secret, runs
-as a local SOCKS5 server on the phone with no VPN permission prompt, and can
+as a local SOCKS5 server on the phone with no tunnel permission prompt, and can
 optionally be exposed to your local network (with a login/password) so another
 device can use it too.
 

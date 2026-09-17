@@ -1,6 +1,7 @@
 // Proxy mode exposes a local SOCKS5 listener backed by the same encrypted
-// document transport as the VPN packet mode, but routed through an in-process
-// gVisor TCP/IP stack (tunnel.TCPTunnel) instead of an Android VpnService TUN.
+// document transport as the tunnel packet mode, but routed through an
+// in-process gVisor TCP/IP stack (tunnel.TCPTunnel) instead of an Android
+// VpnService TUN.
 // This mirrors exactly what the desktop CLI's client mode already does in
 // main.go, so it needs no changes on the exit node / VDS side.
 package mobile

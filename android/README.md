@@ -9,7 +9,7 @@ the source code or APK.
 
 - Android 8 (API 26) or newer, with `arm64-v8a`, `armeabi-v7a`, `x86_64`, `x86`
   and universal APKs;
-- two connection modes: system-wide VPN (`VpnService`), or a local SOCKS5
+- two connection modes: system-wide tunnel (`VpnService`), or a local SOCKS5
   proxy that other apps can be pointed at manually, optionally exposed to the
   local network with authentication;
 - IPv4/TCP traffic is forwarded through OpenFlux and the exit node;

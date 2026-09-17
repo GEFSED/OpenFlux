@@ -1,7 +1,7 @@
 <div align="center">
   <img src="design/logo/icon.svg" width="112" alt="Логотип OpenFlux">
   <h1>OpenFlux Android</h1>
-  <p>Зашифрованный VPN через документ-транспорт - для Android, десктопных клиентов и Linux-выходных нод.</p>
+  <p>Зашифрованный туннель через документ-транспорт - для Android, десктопных клиентов и Linux-выходных нод.</p>
   <p>
     <a href="https://github.com/damnurmum/OpenFlux-Android/releases/latest"><img src="https://img.shields.io/github/v/release/damnurmum/OpenFlux-Android?display_name=tag&amp;sort=semver&amp;style=flat-square&amp;color=EA1A1A" alt="Последний релиз"></a>
     <a href="https://github.com/damnurmum/OpenFlux-Android/actions/workflows/ci.yml"><img src="https://github.com/damnurmum/OpenFlux-Android/actions/workflows/ci.yml/badge.svg" alt="Статус CI"></a>
@@ -19,7 +19,7 @@
 
 > Этот репозиторий - экспериментальный, независимо поддерживаемый форк
 > [p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux),
-> добавляющий нативный Android VPN-клиент поверх апстримного ядра
+> добавляющий нативный Android-клиент туннеля поверх апстримного ядра
 > (транспорты + выходная нода). Что именно меняет форк - см.
 > [docs/ru/FORK.md](docs/ru/FORK.md). `main` остаётся wire-совместимым с текущими
 > бинарниками exit-node/клиента апстрима; отдельная ветка `experimental`
@@ -38,7 +38,7 @@ MAX) вместо обычного VPN-протокола. Этот форк д�
 новичков по развёртыванию выходной ноды на VPS и подключению с Android.
 
 ```text
-Android VPN или SOCKS5-клиент -> зашифрованный документ-транспорт -> Linux-выходная нода -> Интернет
+Android-туннель или SOCKS5-клиент -> зашифрованный документ-транспорт -> Linux-выходная нода -> Интернет
 ```
 
 ## Возможности
@@ -46,7 +46,7 @@ Android VPN или SOCKS5-клиент -> зашифрованный докум�
 - Android 8+ клиент на системном API `VpnService`, сборки под ARM, ARM64,
   x86 и x86_64;
 - второй режим подключения на Android - локальный SOCKS5-прокси, когда
-  системный VPN не нужен целиком - опционально доступен из локальной сети
+  системный туннель не нужен целиком - опционально доступен из локальной сети
   с авторизацией SOCKS5, плюс `socks://`-ссылка и QR-код;
 - профили: сохраняйте несколько конфигураций выходной ноды (транспорт, URL
   документа, секрет) и переключайтесь между ними без повторного ввода;
@@ -261,7 +261,7 @@ gomobile init
 `x86`, плюс `OpenFlux-android-universal-debug.apk` для устройств с неизвестной
 архитектурой. Перенесите подходящий APK на устройство с Android 8+,
 установите, создайте профиль со своим URL документа и общим секретом, затем
-подтвердите системный запрос на VPN.
+подтвердите системный запрос на туннель.
 
 Настройки сохраняются при обычном обновлении приложения "поверх", если ID
 приложения и сертификат подписи не меняются. Очистка данных приложения или
@@ -294,7 +294,7 @@ OpenFlux-Android/
   socks5/                          # SOCKS5-сервер (fallback на клиенте)
   network/, utils/                 # Контрольные суммы/разбор пакетов, логирование
   mobile/                          # gomobile-мост, используется Android-приложением
-  android/                         # Android VPN-клиент (добавление этого форка)
+  android/                         # Android-клиент туннеля (добавление этого форка)
   build_android_app.sh             # Сборка Android APK
   deploy/openflux.service          # Пример systemd-юнита для выходной ноды
 ```

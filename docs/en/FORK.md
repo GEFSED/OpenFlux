@@ -8,7 +8,7 @@ It preserves the upstream Git history and remains licensed under GPL-3.0-or-late
 
 - native Android `VpnService` client with an Android 11-style UI and a
   phone-Settings-style vertical navigation;
-- a second Android connection mode, Proxy (SOCKS5), alongside the VPN mode,
+- a second Android connection mode, Proxy (SOCKS5), alongside the tunnel mode,
   with optional local-network access and SOCKS5 authentication;
 - encrypted Android Keystore storage for the document URL and shared secret;
 - optional end-to-end AES-256-GCM transport encryption with scrypt key

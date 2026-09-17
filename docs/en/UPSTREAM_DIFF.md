@@ -31,7 +31,7 @@ work with raw plaintext with no such leading byte.
 Result: if a client from this fork sends a packet to an upstream exit node
 (or vice versa), the receiving side decrypts a packet with an extra leading
 byte and the IP header gets corrupted. This isn't limited to DNS relay - it
-affects any data transfer, since both VPN mode and Proxy mode in the Android
+affects any data transfer, since both tunnel mode and Proxy mode in the Android
 app use the same code. The divergence started back when ping frames were
 added, well before the recent DNS work.
 
