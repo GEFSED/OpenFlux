@@ -44,6 +44,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.animation.DecelerateInterpolator;
+import android.view.animation.LinearInterpolator;
 import android.view.animation.OvershootInterpolator;
 import android.widget.BaseAdapter;
 import android.widget.Button;
@@ -103,7 +104,6 @@ public final class MainActivity extends Activity {
     static final String SETTINGS_PREFS_NAME = "openflux_settings";
     private static final int TUNNEL_PERMISSION_REQUEST = 42;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 43;
-    private static final String DEFAULT_DNS = "1.1.1.1";
     private static final int DEFAULT_MTU = 1400;
     private static final int PAGE_HOME = 0;
     private static final int PAGE_PROFILES = 1;
@@ -145,7 +145,9 @@ public final class MainActivity extends Activity {
     private int hint;
     private int logColor;
 
-    private LinearLayout root;
+    private FrameLayout root;
+    private View navScrim;
+    private View navDeadZone;
     private FrameLayout content;
     private EditText urlInput;
     private EditText encryptionInput;
@@ -160,13 +162,13 @@ public final class MainActivity extends Activity {
     private ImageButton visibilityButton;
     private ImageButton encryptionVisibilityButton;
     private ImageButton proxyPasswordVisibilityButton;
-    private TextView statusDot;
-    private TextView statusView;
-    private TextView statusDetail;
     private TextView logView;
     private ScrollView logScroll;
     private LinearLayout tunnelButton;
+    private ImageView tunnelPowerIcon;
     private TextView tunnelButtonText;
+    private TextView uptimeView;
+    private View ringWave;
     private String documentUrl;
     private String encryptionSecret;
     private String transportType = "yandex";
@@ -185,7 +187,6 @@ public final class MainActivity extends Activity {
     private String editorMaxUid = "";
     private EditText profileNameInput;
     private PopupWindow profileDropdown;
-    private TextView uptimeView;
     private String dnsServer;
     private int mtu;
     private String connectionMode = MODE_TUNNEL;
@@ -199,18 +200,26 @@ public final class MainActivity extends Activity {
     // applyNetworkSettings/applyModeSettings). Seeded from the live fields
     // each time the corresponding sub-page opens (openSettingsDetail).
     private String editorDnsServer = "";
+    private boolean editorDnsAuto = true;
     private int editorMtu;
     private String editorConnectionMode = MODE_TUNNEL;
     private int editorProxyPort = DEFAULT_PROXY_PORT;
     private boolean editorProxyLanAccess;
     private boolean editorProxyAuthEnabled;
+    private boolean editorDarkMode;
+    private boolean editorAutoScroll;
+    private boolean editorShowSensitiveLogs;
+    private String editorAppFilterMode = AppFilter.MODE_OFF;
+    private final LinkedHashSet<String> editorSelectedApps = new LinkedHashSet<>();
     private String logs = "";
     private String lastShownError = "";
     private boolean encryptionVisible;
     private boolean proxyPasswordVisible;
     private SecureSettings secureSettings;
     private boolean shellAnimated;
-    private ObjectAnimator dotPulse;
+    private int navBottomInset;
+    private int gestureInset = -1;
+    private ObjectAnimator ringPulse;
     private int lastTunnelButtonFill = -1;
     private Vibrator vibrator;
     private String lastAnnouncedState = "";
@@ -249,7 +258,7 @@ public final class MainActivity extends Activity {
         selectedProfileId = profileStore.getSelectedId();
         migrateLegacyProfileIfNeeded();
         applySelectedProfileToFields();
-        dnsServer = prefs.getString("dns_server", DEFAULT_DNS);
+        dnsServer = prefs.getString("dns_server", "");
         mtu = prefs.getInt("mtu", DEFAULT_MTU);
         connectionMode = MODE_PROXY.equals(prefs.getString("connection_mode", MODE_TUNNEL)) ? MODE_PROXY : MODE_TUNNEL;
         proxyPort = prefs.getInt("proxy_port", DEFAULT_PROXY_PORT);
@@ -324,13 +333,16 @@ public final class MainActivity extends Activity {
 
     private void applyPalette() {
         if (darkMode) {
-            background = Color.rgb(18, 18, 18);
-            surface = Color.rgb(30, 30, 30);
-            text = Color.rgb(241, 243, 244);
-            secondary = Color.rgb(189, 193, 198);
-            border = Color.rgb(60, 64, 67);
-            accent = Color.rgb(255, 107, 107);
-            hint = Color.rgb(154, 160, 166);
+            // Deep navy dark theme matching upstream's OpenFluxAndroid palette
+            // (bg_deep/bg_card/bg_card_stroke/accent_blue) rather than a
+            // neutral grey dark mode.
+            background = Color.rgb(8, 11, 18);
+            surface = Color.rgb(19, 23, 34);
+            text = Color.WHITE;
+            secondary = Color.rgb(138, 146, 166);
+            border = Color.rgb(42, 52, 70);
+            accent = Color.rgb(79, 124, 255);
+            hint = Color.rgb(90, 98, 114);
             logColor = Color.rgb(218, 220, 224);
         } else {
             background = Color.rgb(248, 249, 250);
@@ -338,7 +350,7 @@ public final class MainActivity extends Activity {
             text = Color.rgb(32, 33, 36);
             secondary = Color.rgb(95, 99, 104);
             border = Color.rgb(218, 220, 224);
-            accent = Color.rgb(234, 26, 26);
+            accent = Color.rgb(79, 124, 255);
             hint = Color.rgb(128, 134, 139);
             logColor = Color.rgb(60, 64, 67);
         }
@@ -348,6 +360,15 @@ public final class MainActivity extends Activity {
         Window window = getWindow();
         window.setStatusBarColor(background);
         window.setNavigationBarColor(background);
+        // API 29+ draws its own translucent scrim behind the gesture handle
+        // for contrast by default, regardless of setNavigationBarColor - it
+        // shows up as a mismatched grey strip under our own dark nav bar.
+        // targetSdk 35 also enforces edge-to-edge (setNavigationBarColor is
+        // ignored there), so our own root background showing through behind
+        // the handle is what actually determines the color on those devices.
+        if (Build.VERSION.SDK_INT >= 29) {
+            window.setNavigationBarContrastEnforced(false);
+        }
         window.getDecorView().setSystemUiVisibility(darkMode ? 0
                 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
     }
@@ -355,27 +376,81 @@ public final class MainActivity extends Activity {
     private void buildShell() {
         int side = dp(20);
         int top = dp(16);
-        int bottom = dp(6);
-        root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(side, top, side, bottom);
-        root.setBackgroundColor(background);
-        root.setOnApplyWindowInsetsListener((view, insets) -> {
-            view.setPadding(side, top + insets.getSystemWindowInsetTop(), side,
-                    bottom + insets.getSystemWindowInsetBottom());
-            return insets;
-        });
-        root.addView(buildCompactHeader(), new LinearLayout.LayoutParams(-1, dp(54)));
+
+        // Nav is a floating, fully-rounded pill (Telegram-style) with side
+        // margins - its own row here, not overlapping content, header+content
+        // get the usual side margins via body.
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(side, top, side, 0);
+        body.addView(buildCompactHeader(), new LinearLayout.LayoutParams(-1, dp(54)));
 
         content = new FrameLayout(this);
         LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(-1, 0, 1f);
         contentParams.topMargin = dp(16);
-        root.addView(content, contentParams);
-        root.addView(buildBottomNav(), new LinearLayout.LayoutParams(-1, dp(68)));
+        body.addView(content, contentParams);
+
+        // root is a FrameLayout so content can scroll behind the floating nav
+        // pill: body fills the whole screen, a gradient scrim fades content
+        // out just above the pill, and the pill itself draws on top of that.
+        root = new FrameLayout(this);
+        root.setBackgroundColor(background);
+        root.addView(body, new FrameLayout.LayoutParams(-1, -1));
+        // Fade is purely decorative and taller than the pill (it tapers out
+        // above it) - it must NOT intercept clicks, or it blocks buttons that
+        // are still visible (just fading a little) higher up in that taper.
+        navScrim = new View(this);
+        navScrim.setBackground(navScrimDrawable());
+        navScrim.setClickable(false);
+        root.addView(navScrim, navScrimLayoutParams());
+        // Dead zone is a separate element sized to exactly the pill's own
+        // footprint (not the taller fade) - only that band is blocked from
+        // clicks reaching whatever content scrolled behind it.
+        navDeadZone = new View(this);
+        navDeadZone.setClickable(true);
+        root.addView(navDeadZone, navDeadZoneLayoutParams());
+        root.addView(buildBottomNav(), navLayoutParams());
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            body.setPadding(side, top + insets.getSystemWindowInsetTop(), side, 0);
+            int bottom = insets.getSystemWindowInsetBottom();
+            // The first call happens before any keyboard can be open, so that
+            // bottom inset is purely the gesture-nav bar - remember it as the
+            // baseline. With windowSoftInputMode=adjustResize, opening the
+            // keyboard later inflates this same bottom inset by far more than
+            // any gesture bar ever is; treat that as "keyboard open" and hide
+            // the pill instead of letting it get dragged up with it.
+            if (gestureInset < 0) gestureInset = bottom;
+            boolean keyboardOpen = bottom > gestureInset + dp(50);
+            navBottomInset = gestureInset;
+            View nav = root.getChildAt(root.getChildCount() - 1);
+            navScrim.setVisibility(keyboardOpen ? View.GONE : View.VISIBLE);
+            navDeadZone.setVisibility(keyboardOpen ? View.GONE : View.VISIBLE);
+            nav.setVisibility(keyboardOpen ? View.GONE : View.VISIBLE);
+            navScrim.setLayoutParams(navScrimLayoutParams());
+            navDeadZone.setLayoutParams(navDeadZoneLayoutParams());
+            nav.setLayoutParams(navLayoutParams());
+            return insets;
+        });
+
         setContentView(root);
         root.setAlpha(0f);
         root.animate().alpha(1f).setDuration(shellAnimated ? 200 : 340).start();
         shellAnimated = true;
+        disableFocusHighlight(root);
+    }
+
+    // API 26+ draws its own grey "default focus highlight" rectangle behind
+    // any focusable view on top of whatever background/ripple it already has
+    // - visible here as a washed-out grey box around icons. Kill it tree-wide
+    // since every page gets rebuilt from scratch on each tab/page switch.
+    private void disableFocusHighlight(View view) {
+        view.setDefaultFocusHighlightEnabled(false);
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                disableFocusHighlight(group.getChildAt(i));
+            }
+        }
     }
 
     private View buildCompactHeader() {
@@ -386,7 +461,7 @@ public final class MainActivity extends Activity {
         ImageView logo = new ImageView(this);
         logo.setContentDescription("Логотип OpenFlux");
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        logo.setBackground(rounded(Color.rgb(234, 26, 26), Color.TRANSPARENT, 0, 10));
+        logo.setBackground(rounded(Color.rgb(79, 124, 255), Color.TRANSPARENT, 0, 10));
         logo.setImageResource(R.drawable.ic_openflux_foreground);
         logo.setClipToOutline(true);
         header.addView(logo, new LinearLayout.LayoutParams(dp(44), dp(44)));
@@ -396,7 +471,7 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams titlesParams = new LinearLayout.LayoutParams(0, -2, 1f);
         titlesParams.leftMargin = dp(12);
         TextView title = text("OpenFlux", 21, text, true);
-        TextView subtitle = text("Туннель через Yandex Docs", 12, secondary, false);
+        TextView subtitle = text("Зашифрованный туннель", 12, secondary, false);
         titles.addView(title);
         titles.addView(subtitle);
         header.addView(titles, titlesParams);
@@ -505,12 +580,52 @@ public final class MainActivity extends Activity {
         }
     }
 
+    // Floating rounded pill, not a full-width bar - side + bottom margins,
+    // with the bottom one padded out by whatever gesture-nav inset is
+    // currently known (see buildShell()'s insets listener).
+    private FrameLayout.LayoutParams navLayoutParams() {
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-1, navHeight(), Gravity.BOTTOM);
+        params.leftMargin = dp(12);
+        params.rightMargin = dp(12);
+        params.bottomMargin = dp(10) + navBottomInset;
+        return params;
+    }
+
+    private int navHeight() {
+        return dp(68);
+    }
+
+    // Gradient scrim behind the pill: transparent at the top, fading down to
+    // the app background, so content scrolling behind the pill fades out
+    // instead of being clipped by a flat rectangle. Purely decorative -
+    // taller than the pill itself, so it must stay non-clickable.
+    private FrameLayout.LayoutParams navScrimLayoutParams() {
+        int height = navHeight() + dp(10) + navBottomInset + dp(48);
+        return new FrameLayout.LayoutParams(-1, height, Gravity.BOTTOM);
+    }
+
+    // Dead zone: full width (unlike the floating pill, which has side
+    // margins), but only as tall as the pill's own footprint - it stops
+    // exactly where the pill starts, so it never blocks clicks on content
+    // still visible higher up in the fade above it.
+    private FrameLayout.LayoutParams navDeadZoneLayoutParams() {
+        int height = navHeight() + dp(10) + navBottomInset;
+        return new FrameLayout.LayoutParams(-1, height, Gravity.BOTTOM);
+    }
+
+    private Drawable navScrimDrawable() {
+        GradientDrawable drawable = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.TRANSPARENT, background});
+        return drawable;
+    }
+
     private View buildBottomNav() {
         LinearLayout nav = new LinearLayout(this);
         nav.setOrientation(LinearLayout.HORIZONTAL);
         nav.setGravity(Gravity.CENTER);
-        nav.setPadding(dp(4), dp(5), dp(4), dp(3));
-        nav.setBackground(rounded(surface, border, 1, 16));
+        nav.setPadding(dp(4), dp(6), dp(4), dp(6));
+        nav.setBackground(rounded(surface, border, 1, 34));
+        nav.setElevation(dp(4));
         nav.addView(navItem(R.drawable.ic_home, "Главная", PAGE_HOME), weighted());
         nav.addView(navItem(R.drawable.ic_public, "Профили", PAGE_PROFILES), weighted());
         nav.addView(navItem(R.drawable.ic_terminal, "Логи", PAGE_LOGS), weighted());
@@ -523,21 +638,24 @@ public final class MainActivity extends Activity {
         item.setOrientation(LinearLayout.VERTICAL);
         item.setGravity(Gravity.CENTER);
         item.setBackground(ripple(Color.TRANSPARENT, 14));
+        item.setContentDescription(label);
+        boolean active = page == currentPage;
+
+        // Active tab's icon sits on its own colored pill, not just a tinted
+        // glyph on the bar's background.
+        FrameLayout iconWrap = new FrameLayout(this);
+        if (active) iconWrap.setBackground(rounded(accent, Color.TRANSPARENT, 0, 18));
         ImageView image = new ImageView(this);
         image.setImageResource(icon);
-        boolean active = page == currentPage;
-        image.setImageTintList(ColorStateList.valueOf(active ? accent : secondary));
-        item.addView(image, new LinearLayout.LayoutParams(dp(24), dp(24)));
+        image.setImageTintList(ColorStateList.valueOf(active ? Color.WHITE : secondary));
+        iconWrap.addView(image, new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
+        item.addView(iconWrap, new LinearLayout.LayoutParams(dp(48), dp(40)));
         if (active) {
-            image.setScaleX(0.6f);
-            image.setScaleY(0.6f);
-            image.animate().scaleX(1f).scaleY(1f).setDuration(280)
+            iconWrap.setScaleX(0.6f);
+            iconWrap.setScaleY(0.6f);
+            iconWrap.animate().scaleX(1f).scaleY(1f).setDuration(280)
                     .setInterpolator(new OvershootInterpolator(4f)).start();
         }
-        TextView title = text(label, 11, active ? accent : secondary, active);
-        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(-2, -2);
-        titleParams.topMargin = dp(2);
-        item.addView(title, titleParams);
         item.setOnClickListener(v -> {
             if (page == currentPage) return;
             tap(v);
@@ -555,10 +673,12 @@ public final class MainActivity extends Activity {
                 : page == PAGE_PROFILES ? buildProfilesPage()
                 : page == PAGE_LOGS ? buildLogsPage() : buildSettingsPage();
         crossfadeContent(pageView);
-        LinearLayout oldNav = (LinearLayout) root.getChildAt(root.getChildCount() - 1);
+        View oldNav = root.getChildAt(root.getChildCount() - 1);
+        ViewGroup.LayoutParams navParams = oldNav.getLayoutParams();
         root.removeView(oldNav);
-        root.addView(buildBottomNav(), new LinearLayout.LayoutParams(-1, dp(68)));
+        root.addView(buildBottomNav(), navParams);
         updateStatus();
+        disableFocusHighlight(root);
     }
 
     // crossfadeContent swaps the FrameLayout's page content with a short fade
@@ -586,12 +706,21 @@ public final class MainActivity extends Activity {
         settingsSubTab = tab;
         if (tab == SETTINGS_NETWORK) {
             editorDnsServer = dnsServer;
+            editorDnsAuto = dnsServer.isEmpty();
             editorMtu = mtu;
         } else if (tab == SETTINGS_MODE) {
             editorConnectionMode = connectionMode;
             editorProxyPort = proxyPort;
             editorProxyLanAccess = proxyLanAccess;
             editorProxyAuthEnabled = proxyAuthEnabled;
+        } else if (tab == SETTINGS_INTERFACE) {
+            editorDarkMode = darkMode;
+            editorAutoScroll = autoScroll;
+            editorShowSensitiveLogs = showSensitiveLogs;
+        } else if (tab == SETTINGS_APPS) {
+            editorAppFilterMode = appFilterMode;
+            editorSelectedApps.clear();
+            editorSelectedApps.addAll(selectedApps);
         }
         showPage(PAGE_SETTINGS);
     }
@@ -833,84 +962,91 @@ public final class MainActivity extends Activity {
     }
 
     private View buildHomePage() {
-        if (dotPulse != null) {
-            dotPulse.cancel();
-            dotPulse = null;
+        if (ringPulse != null) {
+            ringPulse.cancel();
+            ringPulse = null;
         }
         lastTunnelButtonFill = -1;
 
         boolean proxyMode = MODE_PROXY.equals(connectionMode);
         LinearLayout page = page();
-        TextView heading = text("Подключение", 25, text, true);
-        page.addView(heading);
-        TextView intro = text(proxyMode
-                ? "Локальный SOCKS5-прокси через документ-транспорт, без системного туннеля."
-                : "Защищённый системный туннель через документ-транспорт.", 13, secondary, false);
-        LinearLayout.LayoutParams introParams = matchWrap();
-        introParams.topMargin = dp(4);
-        page.addView(intro, introParams);
 
-        LinearLayout status = new LinearLayout(this);
-        status.setOrientation(LinearLayout.HORIZONTAL);
-        status.setGravity(Gravity.CENTER_VERTICAL);
-        status.setPadding(dp(18), dp(18), dp(18), dp(18));
-        status.setBackground(rounded(surface, border, 1, 12));
-        status.setElevation(dp(1));
-        statusDot = new TextView(this);
-        LinearLayout.LayoutParams dot = new LinearLayout.LayoutParams(dp(13), dp(13));
-        dot.rightMargin = dp(15);
-        status.addView(statusDot, dot);
-        LinearLayout statusCopy = new LinearLayout(this);
-        statusCopy.setOrientation(LinearLayout.VERTICAL);
-        statusView = text("Остановлено", 17, text, true);
-        statusDetail = text("Туннель сейчас не используется", 13, secondary, false);
-        statusCopy.addView(statusView);
-        statusCopy.addView(statusDetail);
-        status.addView(statusCopy, new LinearLayout.LayoutParams(0, -2, 1f));
-        uptimeView = text("", 13, secondary, true);
-        status.addView(uptimeView, new LinearLayout.LayoutParams(-2, -2));
-        LinearLayout.LayoutParams statusParams = matchWrap();
-        statusParams.topMargin = dp(28);
-        page.addView(status, statusParams);
-        staggerIn(status, 30);
-
-        LinearLayout.LayoutParams selectorParams = matchWrap();
-        selectorParams.topMargin = dp(14);
-        View profileSelector = buildProfileSelectorRow();
-        page.addView(profileSelector, selectorParams);
-        staggerIn(profileSelector, 80);
+        // Big circular connect button: two static concentric rings (in the
+        // spirit of the original OpenFluxAndroid app's main toggle) plus a
+        // slow expanding/fading "wave" ring behind them, tinted to match the
+        // button's own current color (see animateTunnelButtonFill). Status
+        // and connection time live inside the button itself, Happ-style,
+        // instead of a separate status card.
+        FrameLayout buttonStack = new FrameLayout(this);
+        buttonStack.setClipChildren(false);
+        ringWave = new View(this);
+        ringWave.setBackground(rounded(Color.TRANSPARENT, accent, 2, 70));
+        buttonStack.addView(ringWave, new FrameLayout.LayoutParams(dp(140), dp(140), Gravity.CENTER));
+        View ringOuter = new View(this);
+        ringOuter.setBackground(ringOutline());
+        buttonStack.addView(ringOuter, new FrameLayout.LayoutParams(dp(200), dp(200), Gravity.CENTER));
+        View ringMid = new View(this);
+        ringMid.setBackground(ringOutline());
+        buttonStack.addView(ringMid, new FrameLayout.LayoutParams(dp(170), dp(170), Gravity.CENTER));
 
         tunnelButton = new LinearLayout(this);
-        tunnelButton.setOrientation(LinearLayout.HORIZONTAL);
+        tunnelButton.setOrientation(LinearLayout.VERTICAL);
         tunnelButton.setGravity(Gravity.CENTER);
         tunnelButton.setClickable(true);
         tunnelButton.setFocusable(true);
         tunnelButton.setElevation(dp(2));
-        ImageView powerIcon = icon(R.drawable.ic_power, Color.WHITE);
-        LinearLayout.LayoutParams powerParams = new LinearLayout.LayoutParams(dp(24), dp(24));
-        powerParams.rightMargin = dp(10);
-        tunnelButton.addView(powerIcon, powerParams);
-        tunnelButtonText = text(proxyMode ? "Запустить прокси" : "Запустить туннель", 16, Color.WHITE, true);
-        tunnelButton.addView(tunnelButtonText, new LinearLayout.LayoutParams(-2, -2));
+        tunnelPowerIcon = icon(R.drawable.ic_power, Color.WHITE);
+        tunnelButton.addView(tunnelPowerIcon, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        tunnelButtonText = text("Остановлено", 13, Color.WHITE, true);
+        tunnelButtonText.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams statusTextParams = matchWrap();
+        statusTextParams.topMargin = dp(8);
+        tunnelButton.addView(tunnelButtonText, statusTextParams);
+        uptimeView = text("", 11, Color.WHITE, false);
+        uptimeView.setAlpha(0.85f);
+        uptimeView.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams uptimeParams = matchWrap();
+        uptimeParams.topMargin = dp(2);
+        tunnelButton.addView(uptimeView, uptimeParams);
         tunnelButton.setOnClickListener(v -> {
             bounce(v);
             toggleConnection();
         });
-        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(58));
-        buttonParams.topMargin = dp(16);
-        page.addView(tunnelButton, buttonParams);
-        staggerIn(tunnelButton, 130);
+        buttonStack.addView(tunnelButton, new FrameLayout.LayoutParams(dp(140), dp(140), Gravity.CENTER));
+
+        LinearLayout.LayoutParams stackParams = new LinearLayout.LayoutParams(dp(200), dp(200));
+        stackParams.gravity = Gravity.CENTER_HORIZONTAL;
+        stackParams.topMargin = dp(16);
+        page.addView(buttonStack, stackParams);
+        staggerIn(buttonStack, 30);
+
+        ringWave.setAlpha(0f);
+        ringPulse = ObjectAnimator.ofPropertyValuesHolder(ringWave,
+                PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.45f),
+                PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.45f),
+                PropertyValuesHolder.ofFloat(View.ALPHA, 0.5f, 0f));
+        ringPulse.setDuration(2600);
+        ringPulse.setRepeatCount(ValueAnimator.INFINITE);
+        ringPulse.setInterpolator(new LinearInterpolator());
+        // Started/stopped from updateStatus() via setRingPulsing() based on
+        // connection state, not unconditionally here.
+
+        LinearLayout.LayoutParams selectorParams = matchWrap();
+        selectorParams.topMargin = dp(20);
+        View profileSelector = buildProfileSelectorRow();
+        page.addView(profileSelector, selectorParams);
+        staggerIn(profileSelector, 80);
 
         TextView summaryTitle = label("АКТИВНЫЕ ПАРАМЕТРЫ");
         LinearLayout.LayoutParams summaryTitleParams = matchWrap();
-        summaryTitleParams.topMargin = dp(30);
+        summaryTitleParams.topMargin = dp(24);
         summaryTitleParams.bottomMargin = dp(8);
         page.addView(summaryTitle, summaryTitleParams);
         View activeParams = paramsCard(activeParamRows(proxyMode));
         LinearLayout.LayoutParams activeParamsParams = matchWrap();
         activeParamsParams.bottomMargin = dp(8);
         page.addView(activeParams, activeParamsParams);
-        staggerIn(activeParams, 180);
+        staggerIn(activeParams, 130);
         return wrapScroll(page);
     }
 
@@ -918,14 +1054,14 @@ public final class MainActivity extends Activity {
         if (proxyMode) {
             return new String[][]{
                     {"Режим", "Прокси (SOCKS5)"},
-                    {"DNS-сервер", dnsServer},
+                    {"DNS-сервер", dnsServer.isEmpty() ? "Авто" : dnsServer},
                     {"Локальный порт", String.valueOf(proxyPort)},
                     {"Доступ", proxyAccessSummary()},
             };
         }
         return new String[][]{
                 {"Режим", "Туннель (весь трафик)"},
-                {"DNS-сервер", dnsServer},
+                {"DNS-сервер", dnsServer.isEmpty() ? "Авто" : dnsServer},
                 {"MTU пакета", String.valueOf(mtu)},
                 {"Приложения", appFilterSummary()},
         };
@@ -1003,7 +1139,10 @@ public final class MainActivity extends Activity {
         logScroll.addView(logView, new ScrollView.LayoutParams(-1, -2));
         LinearLayout.LayoutParams logParams = new LinearLayout.LayoutParams(-1, 0, 1f);
         logParams.topMargin = dp(12);
-        logParams.bottomMargin = dp(10);
+        // Unlike pages that are fine fading behind the pill, log text must
+        // stay fully readable - the card's own bottom edge needs to end
+        // above the pill, not extend behind it with scroll-padding tricks.
+        logParams.bottomMargin = navClearance();
         page.addView(logScroll, logParams);
         return page;
     }
@@ -1034,16 +1173,21 @@ public final class MainActivity extends Activity {
             save.setTextSize(15);
             save.setTypeface(Typeface.DEFAULT_BOLD);
             save.setStateListAnimator(null);
-            save.setBackground(buttonBackground(Color.rgb(234, 26, 26), Color.rgb(179, 18, 18)));
+            save.setBackground(buttonBackground(Color.rgb(79, 124, 255), Color.rgb(59, 93, 191)));
             save.setOnClickListener(v -> {
                 bounce(v);
                 if (settingsSubTab == SETTINGS_NETWORK) applyNetworkSettings();
                 else if (settingsSubTab == SETTINGS_MODE) applyModeSettings();
+                else if (settingsSubTab == SETTINGS_INTERFACE) applyInterfaceSettings();
+                else if (settingsSubTab == SETTINGS_APPS) applyAppsSettings();
                 Toast.makeText(this, "Настройки сохранены", Toast.LENGTH_SHORT).show();
             });
             LinearLayout.LayoutParams saveParams = new LinearLayout.LayoutParams(-1, dp(52));
             saveParams.topMargin = dp(14);
-            saveParams.bottomMargin = dp(12);
+            // This button sits outside the scrollable section (as a fixed
+            // footer), so it needs its own clearance from the nav pill -
+            // the scroll section's internal padding doesn't cover it.
+            saveParams.bottomMargin = navClearance();
             page.addView(save, saveParams);
         }
         return page;
@@ -1091,6 +1235,8 @@ public final class MainActivity extends Activity {
     private View buildSettingsList() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        scroll.setPadding(0, 0, 0, navClearance());
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         list.setBackground(rounded(surface, border, 1, 12));
@@ -1280,8 +1426,8 @@ public final class MainActivity extends Activity {
         });
         section.addView(batteryRow, matchWrap());
 
-        LinearLayout alwaysOnRow = cardRow(R.drawable.ic_lock, "Настройки Always-on VPN",
-                "Включите \"Блокировать соединения без VPN\" для защиты от утечек при обрыве");
+        LinearLayout alwaysOnRow = cardRow(R.drawable.ic_lock, "Настройки Always-on Tunnel",
+                "Включите \"Блокировать соединения без туннеля\" для защиты от утечек при обрыве");
         alwaysOnRow.setClickable(true);
         alwaysOnRow.setFocusable(true);
         alwaysOnRow.setOnClickListener(v -> {
@@ -1536,17 +1682,28 @@ public final class MainActivity extends Activity {
 
         LinearLayout.LayoutParams mainRepoParams = matchWrap();
         mainRepoParams.topMargin = dp(20);
-        section.addView(aboutLinkRow("Основной репозиторий", "p1neappleXpress/OpenFlux", MAIN_REPO_URL),
-                mainRepoParams);
+        section.addView(aboutLinkRow(R.drawable.ic_github, "Основной репозиторий",
+                "p1neappleXpress/OpenFlux", MAIN_REPO_URL), mainRepoParams);
 
         LinearLayout.LayoutParams forkParams = matchWrap();
         forkParams.topMargin = dp(10);
-        section.addView(aboutLinkRow("Наш форк", "damnurmum/OpenFlux-Android", FORK_REPO_URL), forkParams);
+        section.addView(aboutLinkRow(R.drawable.ic_github, "Наш форк",
+                "damnurmum/OpenFlux-Android", FORK_REPO_URL), forkParams);
+
+        LinearLayout.LayoutParams telegramParams = matchWrap();
+        telegramParams.topMargin = dp(10);
+        section.addView(aboutLinkRow(R.drawable.ic_telegram, "Telegram чат",
+                "@openflux_chat", "https://t.me/openflux_chat"), telegramParams);
+
+        LinearLayout.LayoutParams discordParams = matchWrap();
+        discordParams.topMargin = dp(10);
+        section.addView(aboutLinkRow(R.drawable.ic_discord, "Discord",
+                "discord.gg/openfluxx", "https://discord.gg/8a4S3QAh62"), discordParams);
         return section;
     }
 
-    private View aboutLinkRow(String titleValue, String detailValue, String url) {
-        LinearLayout row = cardRow(R.drawable.ic_link, titleValue, detailValue);
+    private View aboutLinkRow(int iconRes, String titleValue, String detailValue, String url) {
+        LinearLayout row = cardRow(iconRes, titleValue, detailValue);
         row.setClickable(true);
         row.setFocusable(true);
         row.setOnClickListener(v -> {
@@ -1567,8 +1724,17 @@ public final class MainActivity extends Activity {
     private View wrapScroll(View sectionContent) {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        scroll.setPadding(0, 0, 0, navClearance());
         scroll.addView(sectionContent, new ScrollView.LayoutParams(-1, -2));
         return scroll;
+    }
+
+    // Content now scrolls behind the floating nav pill (for the fade effect
+    // behind it), so every scrollable page needs this much extra bottom room
+    // or its last item - often a Save button - ends up stuck under the pill.
+    private int navClearance() {
+        return navHeight() + dp(10) + navBottomInset + dp(16);
     }
 
     private View buildProfilesPage() {
@@ -1753,7 +1919,7 @@ public final class MainActivity extends Activity {
         save.setTextSize(15);
         save.setTypeface(Typeface.DEFAULT_BOLD);
         save.setStateListAnimator(null);
-        save.setBackground(buttonBackground(Color.rgb(234, 26, 26), Color.rgb(179, 18, 18)));
+        save.setBackground(buttonBackground(Color.rgb(79, 124, 255), Color.rgb(59, 93, 191)));
         save.setOnClickListener(v -> {
             bounce(v);
             String name = profileNameInput.getText().toString().trim();
@@ -1785,6 +1951,9 @@ public final class MainActivity extends Activity {
             deleteParams.bottomMargin = dp(12);
             section.addView(delete, deleteParams);
         }
+        // Bottom breathing room so the last button doesn't sit flush against
+        // the bottom navigation bar when the page is scrolled all the way down.
+        section.addView(new View(this), new LinearLayout.LayoutParams(-1, dp(24)));
         return section;
     }
 
@@ -1903,12 +2072,32 @@ public final class MainActivity extends Activity {
 
     private View buildNetworkSettings() {
         LinearLayout section = page();
+
+        Switch dnsAutoSwitch = settingSwitch(R.drawable.ic_public, "DNS-сервер: Авто",
+                "Тот же DNS, что использовала сеть до подключения туннеля - как у desktop-клиента",
+                editorDnsAuto);
+        View dnsAutoRow = (View) dnsAutoSwitch.getTag();
+        section.addView(dnsAutoRow, matchWrap());
+
         dnsInput = settingInput("DNS-сервер", editorDnsServer,
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        section.addView(settingRow(R.drawable.ic_public, "DNS-сервер", dnsInput));
-        section.addView(fieldHint(
-                "Для чего: сюда уходят запросы «какой IP у сайта», резолвится локально на "
-                        + "устройстве. Можно указать IP (1.1.1.1) или доменное имя (dns.google)."));
+        View dnsInputRow = settingRow(R.drawable.ic_public, "Свой DNS", dnsInput);
+        setInitialVisibility(dnsInputRow, !editorDnsAuto);
+        LinearLayout.LayoutParams dnsInputParams = matchWrap();
+        dnsInputParams.topMargin = dp(8);
+        section.addView(dnsInputRow, dnsInputParams);
+        View dnsHint = fieldHint(
+                "Сюда уходят запросы «какой IP у сайта», резолвится локально на устройстве. "
+                        + "Можно указать IP (1.1.1.1) или домен (dns.google).");
+        setInitialVisibility(dnsHint, !editorDnsAuto);
+        section.addView(dnsHint);
+
+        dnsAutoSwitch.setOnCheckedChangeListener((button, checked) -> {
+            tap(button);
+            editorDnsAuto = checked;
+            setViewVisibleAnimated(dnsInputRow, !checked);
+            setViewVisibleAnimated(dnsHint, !checked);
+        });
 
         mtuInput = settingInput("MTU", String.valueOf(editorMtu), InputType.TYPE_CLASS_NUMBER);
         LinearLayout.LayoutParams mtuParams = matchWrap();
@@ -1926,8 +2115,7 @@ public final class MainActivity extends Activity {
     // generic "Сохранить настройки" button in buildSettingsPage() - editing
     // these fields and pressing back without it discards the draft.
     private void applyNetworkSettings() {
-        String newDns = dnsInput.getText().toString().trim();
-        dnsServer = newDns.isEmpty() ? DEFAULT_DNS : newDns;
+        dnsServer = editorDnsAuto ? "" : dnsInput.getText().toString().trim();
         int newMtu;
         try {
             newMtu = Integer.parseInt(mtuInput.getText().toString().trim());
@@ -1936,6 +2124,25 @@ public final class MainActivity extends Activity {
         }
         mtu = Math.max(576, Math.min(1500, newMtu));
         persistSettings();
+    }
+
+    private void applyInterfaceSettings() {
+        autoScroll = editorAutoScroll;
+        showSensitiveLogs = editorShowSensitiveLogs;
+        getSharedPreferences(SETTINGS_PREFS_NAME, MODE_PRIVATE).edit()
+                .putBoolean("auto_scroll", autoScroll)
+                .putBoolean("show_sensitive_logs", showSensitiveLogs)
+                .apply();
+        // Rebuilds the whole shell/page when the theme actually changed, so
+        // it must run last - everything above needs to be committed first.
+        switchTheme(editorDarkMode);
+    }
+
+    private void applyAppsSettings() {
+        appFilterMode = editorAppFilterMode;
+        selectedApps.clear();
+        selectedApps.addAll(editorSelectedApps);
+        persistAppFilter();
     }
 
     private TextView fieldHint(String value) {
@@ -1951,18 +2158,17 @@ public final class MainActivity extends Activity {
     private View buildInterfaceSettings() {
         LinearLayout section = page();
         Switch themeSwitch = settingSwitch(R.drawable.ic_dark_mode, "Тёмная тема",
-                "До первого выбора используется тема телефона", darkMode);
+                "До первого выбора используется тема телефона", editorDarkMode);
         themeSwitch.setOnCheckedChangeListener((button, checked) -> {
             tap(button);
-            switchTheme(checked);
+            editorDarkMode = checked;
         });
         section.addView((View) themeSwitch.getTag());
         Switch scrollSwitch = settingSwitch(R.drawable.ic_terminal, "Автопрокрутка логов",
-                "Показывать последние события", autoScroll);
+                "Показывать последние события", editorAutoScroll);
         scrollSwitch.setOnCheckedChangeListener((button, checked) -> {
             tap(button);
-            autoScroll = checked;
-            getSharedPreferences(SETTINGS_PREFS_NAME, MODE_PRIVATE).edit().putBoolean("auto_scroll", checked).apply();
+            editorAutoScroll = checked;
         });
         LinearLayout.LayoutParams scrollSettingParams = matchWrap();
         scrollSettingParams.topMargin = dp(8);
@@ -1970,12 +2176,10 @@ public final class MainActivity extends Activity {
 
         Switch showSensitiveSwitch = settingSwitch(R.drawable.ic_lock, "Данные в логах",
                 "Показывать ссылки, IP и WSS адреса. При выключении скрываются под HIDDEN-URL",
-                showSensitiveLogs);
+                editorShowSensitiveLogs);
         showSensitiveSwitch.setOnCheckedChangeListener((button, checked) -> {
             tap(button);
-            showSensitiveLogs = checked;
-            getSharedPreferences(SETTINGS_PREFS_NAME, MODE_PRIVATE).edit()
-                    .putBoolean("show_sensitive_logs", checked).apply();
+            editorShowSensitiveLogs = checked;
         });
         LinearLayout.LayoutParams showSensitiveParams = matchWrap();
         showSensitiveParams.topMargin = dp(8);
@@ -2003,29 +2207,30 @@ public final class MainActivity extends Activity {
         modeGroup.addView(offButton);
         modeGroup.addView(whitelistButton);
         modeGroup.addView(blacklistButton);
-        if (AppFilter.MODE_WHITELIST.equals(appFilterMode)) whitelistButton.setChecked(true);
-        else if (AppFilter.MODE_BLACKLIST.equals(appFilterMode)) blacklistButton.setChecked(true);
+        if (AppFilter.MODE_WHITELIST.equals(editorAppFilterMode)) whitelistButton.setChecked(true);
+        else if (AppFilter.MODE_BLACKLIST.equals(editorAppFilterMode)) blacklistButton.setChecked(true);
         else offButton.setChecked(true);
 
         LinearLayout listContainer = new LinearLayout(this);
         listContainer.setOrientation(LinearLayout.VERTICAL);
-        listContainer.setVisibility(AppFilter.MODE_OFF.equals(appFilterMode) ? View.GONE : View.VISIBLE);
+        listContainer.setVisibility(AppFilter.MODE_OFF.equals(editorAppFilterMode) ? View.GONE : View.VISIBLE);
         LinearLayout.LayoutParams listContainerParams = new LinearLayout.LayoutParams(-1, 0, 1f);
         listContainerParams.topMargin = dp(14);
 
         ListView appListView = new ListView(this);
         appListView.setDivider(null);
+        appListView.setClipToPadding(false);
+        appListView.setPadding(0, 0, 0, navClearance());
         appListView.setAdapter(new AppListAdapter(loadInstalledAppsCached()));
         listContainer.addView(appListView, new LinearLayout.LayoutParams(-1, -1));
         section.addView(listContainer, listContainerParams);
 
         modeGroup.setOnCheckedChangeListener((group, checkedId) -> {
             tap(group);
-            if (checkedId == whitelistButton.getId()) appFilterMode = AppFilter.MODE_WHITELIST;
-            else if (checkedId == blacklistButton.getId()) appFilterMode = AppFilter.MODE_BLACKLIST;
-            else appFilterMode = AppFilter.MODE_OFF;
-            setViewVisibleAnimated(listContainer, !AppFilter.MODE_OFF.equals(appFilterMode));
-            persistAppFilter();
+            if (checkedId == whitelistButton.getId()) editorAppFilterMode = AppFilter.MODE_WHITELIST;
+            else if (checkedId == blacklistButton.getId()) editorAppFilterMode = AppFilter.MODE_BLACKLIST;
+            else editorAppFilterMode = AppFilter.MODE_OFF;
+            setViewVisibleAnimated(listContainer, !AppFilter.MODE_OFF.equals(editorAppFilterMode));
         });
 
         return section;
@@ -2161,12 +2366,11 @@ public final class MainActivity extends Activity {
             holder.icon.setImageDrawable(entry.icon);
             holder.label.setText(entry.label);
             holder.checkBox.setOnCheckedChangeListener(null);
-            holder.checkBox.setChecked(selectedApps.contains(entry.packageName));
+            holder.checkBox.setChecked(editorSelectedApps.contains(entry.packageName));
             holder.checkBox.setOnCheckedChangeListener((button, checked) -> {
                 tap(button);
-                if (checked) selectedApps.add(entry.packageName);
-                else selectedApps.remove(entry.packageName);
-                persistAppFilter();
+                if (checked) editorSelectedApps.add(entry.packageName);
+                else editorSelectedApps.remove(entry.packageName);
             });
             row.setOnClickListener(v -> holder.checkBox.setChecked(!holder.checkBox.isChecked()));
             return row;
@@ -2355,7 +2559,6 @@ public final class MainActivity extends Activity {
     }
 
     private void persistSettings() {
-        if (dnsServer.isEmpty()) dnsServer = DEFAULT_DNS;
         secureSettings.putString("document_url", documentUrl);
         secureSettings.putString("encryption_secret", encryptionSecret);
         secureSettings.putString("proxy_password", proxyPassword);
@@ -2472,36 +2675,24 @@ public final class MainActivity extends Activity {
     }
 
     private void updateStatus() {
-        if (statusView == null || tunnelButton == null) return;
+        if (tunnelButtonText == null || tunnelButton == null) return;
         boolean proxyMode = isProxyMode();
         String state = connectionStatus();
-        boolean running = isConnectionRunning();
-        statusView.setText(state);
-        tunnelButtonText.setText(running
-                ? (proxyMode ? "Остановить прокси" : "Остановить туннель")
-                : (proxyMode ? "Запустить прокси" : "Запустить туннель"));
-        int stateColor;
-        boolean transitional = false;
+        // Text sits on the button's own fill color, not the page background,
+        // so it stays a fixed white for contrast rather than status-colored.
+        tunnelButtonText.setText(state);
+
         long connectedAt = proxyMode ? OpenFluxProxyService.getConnectedAtMillis() : OpenFluxTunnelService.getConnectedAtMillis();
-        if (uptimeView != null) {
-            uptimeView.setText(connectedAt == 0L ? "" : formatUptime(System.currentTimeMillis() - connectedAt));
-        }
-        if ("Подключено".equals(state)) {
-            stateColor = darkMode ? Color.rgb(129, 201, 149) : Color.rgb(24, 128, 56);
-            statusDetail.setText(proxyMode
-                    ? "SOCKS5 на 127.0.0.1:" + proxyPort
-                    : "Трафик направляется через OpenFlux");
-        } else if ("Ошибка".equals(state)) {
-            stateColor = darkMode ? Color.rgb(242, 139, 130) : Color.rgb(217, 48, 37);
-            statusDetail.setText("Откройте вкладку «Логи»");
-        } else if (state != null && (state.contains("Подключ") || state.contains("Останав"))) {
-            stateColor = darkMode ? Color.rgb(253, 214, 99) : Color.rgb(249, 171, 0);
-            statusDetail.setText("Подождите несколько секунд…");
-            transitional = true;
+        if (connectedAt == 0L) {
+            // GONE, not just empty text: an empty-but-present line still
+            // reserves its height, which pushes the icon+status above dead
+            // center in the button while there's no time to show yet.
+            uptimeView.setVisibility(View.GONE);
         } else {
-            stateColor = Color.rgb(154, 160, 166);
-            statusDetail.setText(proxyMode ? "Прокси сейчас не используется" : "Туннель сейчас не используется");
+            uptimeView.setVisibility(View.VISIBLE);
+            uptimeView.setText(formatUptime(System.currentTimeMillis() - connectedAt));
         }
+
         if (state != null && !state.equals(lastAnnouncedState)) {
             if ("Подключено".equals(state)) {
                 vibrateSuccess();
@@ -2512,21 +2703,60 @@ public final class MainActivity extends Activity {
             lastAnnouncedState = state;
         }
 
-        statusDot.setBackground(rounded(stateColor, Color.TRANSPARENT, 0, 8));
-        setStatusDotPulsing(transitional);
-
-        // Not-running uses the brand red (matches the accent); running keeps
-        // a distinct neutral tone instead of also going red, so "tap to
-        // disconnect" doesn't read as an alarm/error state on top of the
-        // now-red "tap to connect" button.
-        int tunnelFill = running ? Color.rgb(66, 66, 66) : Color.rgb(234, 26, 26);
-        int tunnelPressed = running ? Color.rgb(45, 45, 45) : Color.rgb(179, 18, 18);
+        int tunnelFill;
+        int tunnelPressed;
+        boolean pulsing;
+        // Idle matches the "Активные параметры" card background instead of a
+        // fixed dark grey, so it also needs to pick readable content color -
+        // that card's own background is near-white in light mode.
+        boolean idle;
+        if ("Подключено".equals(state)) {
+            tunnelFill = Color.rgb(79, 124, 255);
+            tunnelPressed = Color.rgb(59, 93, 191);
+            pulsing = true;
+            idle = false;
+        } else if ("Ошибка".equals(state)) {
+            tunnelFill = Color.rgb(239, 68, 68);
+            tunnelPressed = Color.rgb(185, 28, 28);
+            pulsing = false;
+            idle = false;
+        } else if (state != null && (state.contains("Подключ") || state.contains("Останав"))) {
+            tunnelFill = Color.rgb(251, 191, 36);
+            tunnelPressed = Color.rgb(217, 119, 6);
+            pulsing = true;
+            idle = false;
+        } else {
+            tunnelFill = surface;
+            tunnelPressed = border;
+            pulsing = false;
+            idle = true;
+        }
         animateTunnelButtonFill(tunnelFill, tunnelPressed);
+        setRingPulsing(pulsing);
+
+        int contentColor = idle ? text : Color.WHITE;
+        tunnelButtonText.setTextColor(contentColor);
+        uptimeView.setTextColor(contentColor);
+        if (tunnelPowerIcon != null) {
+            tunnelPowerIcon.setImageTintList(ColorStateList.valueOf(contentColor));
+        }
 
         String error = connectionLastError();
         if (error != null && !error.isEmpty() && !error.equals(lastShownError)) {
             lastShownError = error;
             appendLog("[ERROR] " + error);
+        }
+    }
+
+    private void setRingPulsing(boolean pulsing) {
+        if (ringPulse == null || ringWave == null) return;
+        if (pulsing) {
+            if (!ringPulse.isRunning()) ringPulse.start();
+        } else if (ringPulse.isRunning()) {
+            ringPulse.cancel();
+            ringWave.setScaleX(1f);
+            ringWave.setScaleY(1f);
+            ringWave.setAlpha(0f);
         }
     }
 
@@ -2540,32 +2770,29 @@ public final class MainActivity extends Activity {
                 : String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds);
     }
 
-    private void setStatusDotPulsing(boolean pulsing) {
-        if (statusDot == null) return;
-        if (pulsing) {
-            if (dotPulse != null && dotPulse.isRunning()) return;
-            statusDot.setAlpha(1f);
-            dotPulse = ObjectAnimator.ofFloat(statusDot, "alpha", 1f, 0.28f);
-            dotPulse.setDuration(650);
-            dotPulse.setRepeatMode(ValueAnimator.REVERSE);
-            dotPulse.setRepeatCount(ValueAnimator.INFINITE);
-            dotPulse.start();
-        } else if (dotPulse != null) {
-            dotPulse.cancel();
-            dotPulse = null;
-            statusDot.setAlpha(1f);
-        }
-    }
-
     private void animateTunnelButtonFill(int fill, int pressed) {
         if (tunnelButton == null) return;
+        if (ringWave != null) ringWave.setBackground(rounded(Color.TRANSPARENT, fill, 2, 70));
         if (lastTunnelButtonFill == fill) return;
         int from = lastTunnelButtonFill == -1 ? fill : lastTunnelButtonFill;
         lastTunnelButtonFill = fill;
         ValueAnimator animator = ValueAnimator.ofArgb(from, fill);
         animator.setDuration(260);
-        animator.addUpdateListener(a -> tunnelButton.setBackground(buttonBackground((int) a.getAnimatedValue(), pressed)));
+        animator.addUpdateListener(a -> tunnelButton.setBackground(circleBackground((int) a.getAnimatedValue(), pressed)));
         animator.start();
+    }
+
+    // Static decorative ring around the big connect button - a thin stroke
+    // circle, no fill. A single large corner radius renders as a perfect
+    // circle regardless of the view's own size (GradientDrawable clips
+    // excess radius), so the same drawable works for both ring sizes.
+    private GradientDrawable ringOutline() {
+        return rounded(Color.TRANSPARENT, border, 1, 100);
+    }
+
+    private RippleDrawable circleBackground(int fill, int pressed) {
+        return new RippleDrawable(ColorStateList.valueOf(pressed), rounded(fill, Color.TRANSPARENT, 0, 70),
+                rounded(Color.WHITE, Color.TRANSPARENT, 0, 70));
     }
 
     // getLocalIpAddress finds this device's IPv4 address on whatever network
@@ -2743,7 +2970,10 @@ public final class MainActivity extends Activity {
     }
 
     private RippleDrawable ripple(int fill, int radius) {
-        return new RippleDrawable(ColorStateList.valueOf(darkMode ? 0x2FFFFFFF : 0x1F1A73E8),
+        // No ripple highlight color - it showed as a flat grey/tinted box
+        // over the whole rounded touch target instead of a subtle effect.
+        // Feedback on tap comes from tap()/bounce() (haptics + scale) instead.
+        return new RippleDrawable(ColorStateList.valueOf(Color.TRANSPARENT),
                 rounded(fill, Color.TRANSPARENT, 0, radius), rounded(Color.WHITE, Color.TRANSPARENT, 0, radius));
     }
 

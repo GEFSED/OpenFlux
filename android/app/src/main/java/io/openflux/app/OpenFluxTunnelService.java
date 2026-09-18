@@ -7,6 +7,9 @@ import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.Network;
 import android.net.VpnService;
 import android.os.Handler;
 import android.os.Looper;
@@ -18,6 +21,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
+import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.SocketTimeoutException;
 import java.util.Arrays;
@@ -179,7 +183,7 @@ public final class OpenFluxTunnelService extends VpnService {
         final String maxToken = maxTokenExtra == null ? "" : maxTokenExtra;
         String maxUidExtra = intent.getStringExtra(EXTRA_MAX_UID);
         final String maxUid = maxUidExtra == null ? "" : maxUidExtra;
-        if (dnsServer == null || dnsServer.trim().isEmpty()) dnsServer = "1.1.1.1";
+        if (dnsServer == null) dnsServer = "";
         int mtu = Math.max(576, Math.min(1500, intent.getIntExtra(EXTRA_MTU, 1400)));
 
         active = true;
@@ -194,7 +198,27 @@ public final class OpenFluxTunnelService extends VpnService {
         return START_STICKY;
     }
 
-    private void startTunnel(String transportType, String url, String encryptionSecret, String codec, String maxToken, String maxUid, String dnsServer, int mtu, int session) {
+    // Reads the DNS server the underlying network (Wi-Fi/mobile) was already
+    // using, before this VpnService takes over the default route. Called
+    // from startTunnel() prior to builder.establish(), so "active network"
+    // here still means the real network, not our own VPN.
+    private String autoDetectDns() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            Network network = cm.getActiveNetwork();
+            LinkProperties props = network == null ? null : cm.getLinkProperties(network);
+            if (props != null) {
+                for (InetAddress address : props.getDnsServers()) {
+                    if (address instanceof Inet4Address) return address.getHostAddress();
+                }
+            }
+        } catch (Exception ignored) {
+            // Fall through to the default below.
+        }
+        return "1.1.1.1";
+    }
+
+    private void startTunnel(String transportType, String url, String encryptionSecret, String codec, String maxToken, String maxUid, String dnsServerParam, int mtu, int session) {
         if (!isCurrent(session)) return;
         String error = Mobile.start(transportType, url, encryptionSecret, codec, maxToken, maxUid);
         if (error != null && !error.isEmpty()) {
@@ -214,6 +238,14 @@ public final class OpenFluxTunnelService extends VpnService {
             fail(session, "Yandex-транспорт не подключился за 30 секунд");
             return;
         }
+
+        // Empty means "auto", same as the desktop CLI client which never sets
+        // a DNS server at all and just relies on the network's own resolver.
+        // A full-tunnel VpnService can't leave DNS unset the same way (apps
+        // would have no resolver once the default route points at us), so
+        // instead we look up the DNS server the underlying network was
+        // already using before we took over routing, and relay to that.
+        final String dnsServer = dnsServerParam.trim().isEmpty() ? autoDetectDns() : dnsServerParam;
 
         try {
             // Builder.addDnsServer() only accepts a numeric IP - it throws
