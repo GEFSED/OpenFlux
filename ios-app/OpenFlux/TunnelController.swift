@@ -22,6 +22,7 @@ final class TunnelController: ObservableObject {
     @Published var connected = false
     @Published var log: String = ""
     @Published var stats: String = ""
+    @Published var startError: String?
 
     private var timer: Timer?
     private let bridgeQueue = DispatchQueue(label: "OpenFlux.socks-bridge", qos: .userInitiated)
@@ -34,6 +35,7 @@ final class TunnelController: ObservableObject {
     /// - port: local SOCKS5 port to listen on (127.0.0.1:port).
     func start(transport: TransportKind, url: String, maxToken: String, maxUid: String, port: Int, codec: String, encryptionSecret: String) {
         guard !running else { return }
+        startError = nil
         let addr = "127.0.0.1:\(port)"
         socksAddr = addr
         running = true
@@ -98,6 +100,9 @@ final class TunnelController: ObservableObject {
         }
 
         running = OpenFluxIsRunning() != 0
+        if !running {
+            startError = rc == 4 ? "Local port is busy. Choose another port in Advanced settings." : "Cannot start proxy. Check connection settings and the diagnostic log."
+        }
         startPolling()
     }
 
@@ -149,33 +154,4 @@ final class TunnelController: ObservableObject {
         }
     }
 
-    /// Connectivity check routed through the local SOCKS5 proxy.
-    func testThroughProxy() {
-        guard !socksAddr.isEmpty else { return }
-        appendLog("[app] test request via SOCKS5 \(socksAddr) ...")
-        let config = URLSessionConfiguration.ephemeral
-        let parts = socksAddr.split(separator: ":")
-        let host = String(parts.first ?? "127.0.0.1")
-        let port = Int(parts.last ?? "1080") ?? 1080
-        config.connectionProxyDictionary = [
-            "SOCKSEnable": 1,
-            "SOCKSProxy": host,
-            "SOCKSPort": port
-        ]
-        config.timeoutIntervalForRequest = 20
-        let session = URLSession(configuration: config)
-        let url = URL(string: "http://ifconfig.me/ip")!
-        let task = session.dataTask(with: url) { [weak self] data, _, err in
-            Task { @MainActor in
-                if let err = err {
-                    self?.appendLog("[app] test failed: \(err.localizedDescription)")
-                } else if let data = data, let body = String(data: data, encoding: .utf8) {
-                    self?.appendLog("[app] test OK, exit IP: \(body.trimmingCharacters(in: .whitespacesAndNewlines))")
-                } else {
-                    self?.appendLog("[app] test returned no data")
-                }
-            }
-        }
-        task.resume()
-    }
 }

@@ -8,6 +8,8 @@ import Combine
 final class VPNController: ObservableObject {
     @Published var status: String = "Disconnected"
     @Published var active = false
+    @Published var connected = false
+    @Published var loading = true
 
     private var manager: NETunnelProviderManager?
     private var startTask: Task<Void, Never>?
@@ -22,6 +24,7 @@ final class VPNController: ObservableObject {
     }
 
     private func load() async {
+        defer { loading = false }
         let managers = (try? await NETunnelProviderManager.loadAllFromPreferences()) ?? []
         manager = managers.first { ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == extensionBundleId }
         refreshStatus()
@@ -29,7 +32,7 @@ final class VPNController: ObservableObject {
 
     func start(transport: String, url: String, maxToken: String, maxUid: String,
                codec: String, encryptionSecret: String, udpForwarding: Bool) {
-        guard !active, !preparing else { return }
+        guard !loading, !active, !preparing else { return }
         preparing = true
         active = true
         status = "Preparing…"
@@ -75,9 +78,9 @@ final class VPNController: ObservableObject {
                 try await m.saveToPreferences()
                 profileSaved = true
                 try await m.loadFromPreferences()
-                try Task.checkCancellation()
                 self.manager = m
                 if let oldID = oldID, oldID != recordID, oldID.hasPrefix("vpn-") { try? store.delete(account: oldID) }
+                try Task.checkCancellation()
                 try m.connection.startVPNTunnel()
                 preparing = false
                 refreshStatus()
@@ -99,12 +102,13 @@ final class VPNController: ObservableObject {
 
     private func refreshStatus() {
         guard !preparing else { return }
+        connected = manager?.connection.status == .connected
         guard let conn = manager?.connection else { active = false; status = "Disconnected"; return }
         switch conn.status {
         case .connected:     status = "Connected";     active = true
         case .connecting:    status = "Connecting…";   active = true
         case .disconnecting: status = "Disconnecting…"; active = true
-        case .reasserting:   status = "Reasserting…";  active = true
+        case .reasserting:   status = "Reconnecting…";  active = true
         default:             status = "Disconnected";  active = false
         }
     }
