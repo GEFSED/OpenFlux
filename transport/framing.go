@@ -3,6 +3,7 @@ package transport
 import (
 	"encoding/binary"
 	"fmt"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -46,8 +47,10 @@ const DefaultCapabilities = CapabilityIPv4 | CapabilityTCP | CapabilityUDP | Cap
 var capabilityMagic = [5]byte{0x00, 'O', 'F', 'X', wireFormatVersion}
 
 var (
-	zstdEnc *zstd.Encoder
-	zstdDec *zstd.Decoder
+	zstdEnc           *zstd.Encoder
+	zstdDec           *zstd.Decoder
+	mobileEncoderOnce sync.Once
+	mobileEncoder     *zstd.Encoder
 )
 
 func init() {
@@ -92,34 +95,37 @@ func frameBatch(pkts [][]byte) []byte {
 // encodeBatch serializes packets into a single wire frame, compressing the
 // whole batch with zstd only when that actually shrinks it.
 func encodeBatch(pkts [][]byte) []byte {
-	return encodeBatchVersion(pkts, batchFormatVersion)
+	return encodeBatchUsing(pkts, zstdEnc)
 }
 
 func encodeBatchV3(pkts [][]byte, sessionID uint32, sequence uint64) []byte {
-	return encodeBatchVersion(pkts, wireFormatVersion, uint64(sessionID), sequence)
+	out := encodeBatch(pkts)
+	payload := out[2:]
+	header := make([]byte, wireV3HeaderLen, wireV3HeaderLen+len(payload))
+	header[0], header[1], header[2] = wireFormatVersion, out[1], wireTypeData
+	binary.BigEndian.PutUint32(header[4:8], sessionID)
+	binary.BigEndian.PutUint64(header[8:16], sequence)
+	binary.BigEndian.PutUint32(header[16:20], uint32(len(payload)))
+	return append(header, payload...)
 }
 
-func encodeBatchVersion(pkts [][]byte, version byte, metadata ...uint64) []byte {
-	framed := frameBatch(pkts)
-	compressed := zstdEnc.EncodeAll(framed, nil)
-	headerLen := 2
-	if version == wireFormatVersion {
-		headerLen = wireV3HeaderLen
-	}
-	makeHeader := func(flags byte, payloadLen int) []byte {
-		out := make([]byte, headerLen, headerLen+payloadLen)
-		out[0] = version
-		out[1] = flags
-		if version == wireFormatVersion {
-			out[2] = wireTypeData
-			if len(metadata) >= 2 {
-				binary.BigEndian.PutUint32(out[4:8], uint32(metadata[0]))
-				binary.BigEndian.PutUint64(out[8:16], metadata[1])
-			}
-			binary.BigEndian.PutUint32(out[16:20], uint32(payloadLen))
+// A smaller zstd window changes compression choices, not the batch wire format.
+// Lazy construction avoids reserving a second encoder in desktop processes.
+func encodeMobileBatch(pkts [][]byte) []byte {
+	mobileEncoderOnce.Do(func() {
+		var err error
+		mobileEncoder, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest),
+			zstd.WithEncoderConcurrency(1), zstd.WithWindowSize(64<<10), zstd.WithLowerEncoderMem(true))
+		if err != nil {
+			panic("mobile zstd initialization failed")
 		}
-		return out
-	}
+	})
+	return encodeBatchUsing(pkts, mobileEncoder)
+}
+
+func encodeBatchUsing(pkts [][]byte, encoder *zstd.Encoder) []byte {
+	framed := frameBatch(pkts)
+	compressed := encoder.EncodeAll(framed, nil)
 
 	if len(compressed) < len(framed) {
 		out := makeHeader(batchFlagZstd, len(compressed))
@@ -127,6 +133,12 @@ func encodeBatchVersion(pkts [][]byte, version byte, metadata ...uint64) []byte 
 	}
 	out := makeHeader(0, len(framed))
 	return append(out, framed...)
+}
+
+func makeHeader(flags byte, payloadLen int) []byte {
+	header := make([]byte, 2, 2+payloadLen)
+	header[0], header[1] = batchFormatVersion, flags
+	return header
 }
 
 // decodeBatch reverses encodeBatch, returning the original packets.

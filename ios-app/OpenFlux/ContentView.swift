@@ -6,21 +6,31 @@ struct ContentView: View {
 
     @AppStorage("transportKind") private var transportRaw: String = TransportKind.yandex.rawValue
     @AppStorage("docURL") private var docURL: String = ""
-    @AppStorage("maxToken") private var maxToken: String = ""
+    @State private var maxToken: String = ""
+    @State private var encryptionSecret: String = ""
+    @State private var credentialsError: String?
+    @AppStorage("codec") private var codec: String = "batched"
     @AppStorage("maxUid") private var maxUid: String = ""
     // Uncommon default port to avoid clashing with other local proxies.
     @AppStorage("socksPort") private var socksPort: String = "10808"
     @AppStorage("debugLog") private var debugLog: Bool = false
+    @AppStorage("udpForwarding") private var udpForwarding: Bool = false
     @State private var showInfo = false
 
     private var transport: TransportKind {
         TransportKind(rawValue: transportRaw) ?? .yandex
     }
 
+    // MAX has no document setting. Do not accidentally salt its encryption key
+    // with a hidden Yandex URL left over from a previous transport selection.
+    private var transportURL: String { transport == .max ? "" : docURL }
+
     private var canStart: Bool {
-        guard (Int(socksPort) ?? 0) > 0 else { return false }
+        guard (1...65535).contains(Int(socksPort) ?? 0), credentialsError == nil else { return false }
+        let secret = encryptionSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard secret.isEmpty || secret.unicodeScalars.count >= 16 else { return false }
         switch transport {
-        case .yandex: return !docURL.trimmingCharacters(in: .whitespaces).isEmpty
+        case .yandex, .vyandex: return !docURL.trimmingCharacters(in: .whitespaces).isEmpty
         case .max:    return !maxToken.isEmpty && !maxUid.isEmpty
         }
     }
@@ -37,9 +47,16 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .disabled(tunnel.running)
+                    .disabled(tunnel.running || vpn.active)
 
                     connectionFields
+
+                    Picker("Codec", selection: $codec) {
+                        Text("Batched").tag("batched")
+                        Text("Legacy").tag("legacy")
+                    }.pickerStyle(.segmented).disabled(tunnel.running || vpn.active)
+
+                    encryptionFields
 
                     portField
 
@@ -52,7 +69,7 @@ struct ContentView: View {
                 .padding()
             }
             .navigationTitle("OpenFlux")
-            .onAppear { OpenFluxSetDebug(debugLog ? 1 : 0) }
+            .onAppear { OpenFluxSetDebug(debugLog ? 1 : 0); loadCredentials() }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { showInfo = true } label: {
@@ -68,15 +85,64 @@ struct ContentView: View {
     @ViewBuilder
     private var connectionFields: some View {
         switch transport {
-        case .yandex:
+        case .yandex, .vyandex:
             field(title: "Yandex Docs URL",
                   placeholder: "https://docs.yandex.ru/docs/view?url=...",
                   text: $docURL)
         case .max:
-            field(title: "MAX token", placeholder: "auth token", text: $maxToken)
+            SecureField("MAX token", text: $maxToken)
+                .textInputAutocapitalization(.never).autocorrectionDisabled(true)
+                .textFieldStyle(.roundedBorder).disabled(tunnel.running || vpn.active)
             field(title: "MAX user ID", placeholder: "numeric id", text: $maxUid,
                   keyboard: .numberPad)
         }
+    }
+
+    private var encryptionFields: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Encryption").font(.caption).foregroundColor(.secondary)
+            SecureField("Encryption key", text: $encryptionSecret)
+                .textInputAutocapitalization(.never).autocorrectionDisabled(true)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Button("Paste") { encryptionSecret = UIPasteboard.general.string ?? "" }
+                Button("Clear") { encryptionSecret = ""; _ = saveCredentials() }
+                Spacer()
+                if !encryptionSecret.isEmpty { Label("Encryption enabled", systemImage: "lock.fill").font(.caption) }
+            }
+            Text("Оставьте пустым, чтобы отключить сквозное шифрование.")
+                .font(.caption2).foregroundColor(.secondary)
+            if let error = credentialsError { Text(error).font(.caption).foregroundColor(.red) }
+        }.disabled(tunnel.running || vpn.active)
+    }
+
+    private func loadCredentials() {
+        do {
+            let store = KeychainSecretStore()
+            if let data = try store.read(account: AppCredentials.account) {
+                let value = try JSONDecoder().decode(AppCredentials.self, from: data)
+                encryptionSecret = value.encryptionSecret
+                maxToken = value.maxToken
+            } else if let oldToken = UserDefaults.standard.string(forKey: "maxToken") {
+                // Migrate the pre-Keychain app setting once, removing it only
+                // after successful Keychain storage.
+                maxToken = oldToken
+                try store.write(JSONEncoder().encode(AppCredentials(maxToken: oldToken)), account: AppCredentials.account)
+            }
+            UserDefaults.standard.removeObject(forKey: "maxToken")
+            credentialsError = nil
+        } catch { credentialsError = "Cannot read shared Keychain. Check signing and device unlock." }
+    }
+
+    private func saveCredentials() -> Bool {
+        do {
+            encryptionSecret = encryptionSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard encryptionSecret.isEmpty || encryptionSecret.unicodeScalars.count >= 16 else { throw SecretStoreError.invalidSecret }
+            let value = AppCredentials(encryptionSecret: encryptionSecret, maxToken: maxToken)
+            try KeychainSecretStore().write(JSONEncoder().encode(value), account: AppCredentials.account)
+            credentialsError = nil
+            return true
+        } catch { credentialsError = "Cannot save credentials. Check key length, signing and device unlock."; return false }
     }
 
     private var portField: some View {
@@ -85,7 +151,7 @@ struct ContentView: View {
             TextField("10808", text: $socksPort)
                 .keyboardType(.numberPad)
                 .textFieldStyle(.roundedBorder)
-                .disabled(tunnel.running)
+                .disabled(tunnel.running || vpn.active)
         }
     }
 
@@ -99,11 +165,12 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                 } else {
                     Button {
+                        guard saveCredentials() else { return }
                         tunnel.start(transport: transport,
-                                     url: docURL,
+                                     url: transportURL,
                                      maxToken: maxToken,
                                      maxUid: maxUid,
-                                     port: Int(socksPort) ?? 10808)
+                                     port: Int(socksPort) ?? 10808, codec: codec, encryptionSecret: encryptionSecret)
                     } label: {
                         Label("Start", systemImage: "play.fill").frame(maxWidth: .infinity)
                     }
@@ -127,10 +194,14 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             Divider()
             HStack {
-                Text("System VPN (all traffic)").font(.subheadline).bold()
+                Text("System VPN").font(.subheadline).bold()
                 Spacer()
                 Text(vpn.status).font(.caption).foregroundColor(.secondary)
             }
+            Toggle("Forward UDP", isOn: $udpForwarding)
+                .disabled(vpn.active)
+            Text("Requires an exit node with UDP support. DNS still uses DNS-over-TLS.")
+                .font(.caption2).foregroundColor(.secondary)
             if vpn.active {
                 Button(role: .destructive) { vpn.stop() } label: {
                     Label("Stop VPN", systemImage: "bolt.slash.fill").frame(maxWidth: .infinity)
@@ -138,15 +209,17 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
             } else {
                 Button {
-                    vpn.start(transport: transport.rawValue, url: docURL,
-                              maxToken: maxToken, maxUid: maxUid)
+                    guard saveCredentials() else { return }
+                    vpn.start(transport: transport.rawValue, url: transportURL,
+                              maxToken: maxToken, maxUid: maxUid, codec: codec,
+                              encryptionSecret: encryptionSecret, udpForwarding: udpForwarding)
                 } label: {
                     Label("Start VPN", systemImage: "bolt.fill").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canStart)
             }
-            Text("Routes the whole device through the exit node (TCP + DNS-over-TCP).")
+            Text("Routes IPv4 TCP through the exit node, plus UDP when enabled.")
                 .font(.caption2).foregroundColor(.secondary)
         }
     }
@@ -160,7 +233,7 @@ struct ContentView: View {
                 .autocorrectionDisabled(true)
                 .keyboardType(keyboard)
                 .textFieldStyle(.roundedBorder)
-                .disabled(tunnel.running)
+                .disabled(tunnel.running || vpn.active)
         }
     }
 
