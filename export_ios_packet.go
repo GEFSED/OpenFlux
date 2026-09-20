@@ -91,6 +91,16 @@ func startPacketTunnel(tt, docURL, mToken, mUid, codec, secret string, key []byt
 		return C.int(startBadTransport)
 	}
 	o.PreparedKey = key
+	if packetBypass != nil {
+		if packetBypassKind != o.Transport || packetBypassURL != docURL {
+			return C.int(startBadConfig)
+		}
+		if o.Transport == "yandex" || o.Transport == "vyandex" {
+			o.DialContext = packetBypass.DialContext
+		}
+		packetBypass = nil // The transport owns the immutable snapshot now.
+		packetBypassKind, packetBypassURL = "", ""
+	}
 	t, err := transportstack.New(o)
 	if err != nil {
 		return C.int(startBadConfig)
@@ -223,6 +233,8 @@ func OpenFluxTunReadPacket(buf *C.char, max C.int) C.int {
 //export OpenFluxStopPacketTunnel
 func OpenFluxStopPacketTunnel() {
 	ptMu.Lock()
+	packetBypass = nil
+	packetBypassKind, packetBypassURL = "", ""
 	s := ptSession
 	ptStopped = true
 	// Keep serialization with Start until every old transport worker is stopped.

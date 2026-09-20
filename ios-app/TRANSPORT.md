@@ -101,20 +101,40 @@ limits even with encryption overhead. This PR adds no jumbo-packet fragmentation
 ## DNS and routing
 
 Yandex DoT (`77.88.8.8`, `common.dot.dns.yandex.net`) remains first; Google and
-Cloudflare are fallbacks. Before installing default/DNS routes, Go resolves the
-configured document host and the actual Yandex control endpoints, including
-`volga.yandex.ru` and `push.yandex.ru`. Their current IPv4 addresses receive /32
-excluded routes. Required lookup failure aborts startup with a sanitized error.
-The provider retains the existing Yandex prefix exclusions as a fallback for
-backend rotation; no guessed IP or new provider prefix is introduced. The source
-list is inherited from the previous provider, not a claim of provider-published
-or permanent ownership. Apple's route controls are documented in
+Cloudflare are fallbacks. Before installing default/DNS routes, the bridge builds
+an immutable bootstrap plan for the document/control endpoints. Each DoT lookup
+has a bounded timeout; at most two lookups run concurrently. For the exact Yandex
+bootstrap hosts (`disk`, `docs`, `docviewer`, `volga`, `push` under `yandex.ru`),
+failed DoT may fall back to the native system resolver **before VPN activation**.
+This is a carrier bootstrap operation, not a fallback for arbitrary user traffic.
+MAX retains strict DoT-only startup and requires all endpoints to resolve.
+
+Successful IPv4 answers become /32 exclusions and are cached for the carrier, so
+Volga authorization/relay/WebSocket connections do not require another successful
+DoT query after the TUN starts. A failed individual known Yandex host may rely on
+the existing Yandex CIDRs. Unknown/uncovered hosts fail setup without exposing
+their names or URLs. A hostname suffix alone never grants prefix fallback.
+
+The CIDRs previously in Swift are preserved verbatim in Go. The V2 bridge returns
+the full route snapshot used by both Swift network settings and a **Yandex-only
+carrier dial guard**. It dials numeric addresses while HTTP Host/TLS SNI and
+certificate verification retain the hostname. Every actual IP must fall inside
+an installed /32 or CIDR; unresolved names are not assumed to be proof of prefix
+coverage. Reconnects can reuse bootstrap answers or try DoT again, but never call
+system DNS or dial an uncovered new address. A backend outside the snapshot
+fails safely until a new pre-VPN bootstrap, rather than looping into packetFlow.
+Device DNS and SOCKS destination resolution retain their original DoT-only policy.
+
+No guessed IP or new provider prefix is introduced. The prefix list is inherited
+from the previous provider, not a claim of provider-published or permanent
+ownership. Apple's route controls are documented in
 [NEPacketTunnelProvider](https://developer.apple.com/documentation/networkextension/nepackettunnelprovider).
 
 The transport may discover additional balancer/signaling/ICE endpoints during
-authorization. Static exclusions and pre-resolution cannot prove every future
-backend or interface switch is covered. Check actual socket destinations and
-packetFlow on a device, particularly after DNS changes and for MAX's dynamic ICE.
+authorization. Uncached Yandex endpoints still need secure resolution and a
+covered address; this change does not promise offline DNS for arbitrary future
+backends. Check actual socket destinations and packetFlow on a device, particularly
+after DNS changes and for MAX's dynamic ICE, which is not given Yandex's fallback.
 IPv6 forwarding and general UDP remain outside the existing IPv4/TCP core; this
 change does not claim an all-protocol leak-proof VPN or change exit-node modes.
 
@@ -137,6 +157,10 @@ and `.h` to `ios-app/Lib`, run `xcodegen generate`, and use `xcodebuild` with
 part of this workflow. An unsigned compile does not verify shared-Keychain
 entitlements on a provisioned device.
 
+Before TestFlight upload, CURRENT_PROJECT_VERSION must be incremented from the already-used build number.
+The maintainer selects that next build number. This change performs no signing
+or upload and does not alter `CURRENT_PROJECT_VERSION`.
+
 Before release, use disposable test documents and keys with a matching upstream
 exit binary (never a working production VPS):
 
@@ -147,6 +171,9 @@ exit binary (never a working production VPS):
    and stop/start repeatedly. Confirm one read/write pair and `reasserting` recovery.
 4. Confirm transport and DoT sockets bypass packetFlow before/after reconnect;
    inspect changing Volga/push/balancer addresses and MAX ICE destinations.
+   Block TCP/853 while Yandex HTTPS remains available: verify native bootstrap
+   DNS, cached carrier dials, partial endpoint failure and safe rejection of an
+   uncovered backend. Verify ordinary destination DNS never uses system fallback.
 5. Measure `phys_footprint` at cold start, TLS handshake and sustained transfer;
    inspect Jetsam/EXC_RESOURCE reports. Include IPv4 packets above 4096 bytes.
 6. Verify actual signed app/extension Keychain sharing, first-unlock behavior,

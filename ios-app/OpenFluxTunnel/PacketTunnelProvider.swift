@@ -4,31 +4,12 @@ import NetworkExtension
 /// packet transport (IPv4 TCP plus local DNS-over-TLS).
 class PacketTunnelProvider: NEPacketTunnelProvider {
 
-    /// Networks that must NOT go through the tunnel: the Yandex backend the
-    /// transport talks to, plus the DoT DNS resolvers. Otherwise the
-    /// extension's own traffic loops back into itself.
-    static let bypassRoutes: [NEIPv4Route] = {
-        let cidrs: [(String, String)] = [
-            ("5.45.192.0", "255.255.192.0"),
-            ("5.255.192.0", "255.255.192.0"),
-            ("37.9.64.0", "255.255.192.0"),
-            ("37.140.128.0", "255.255.192.0"),
-            ("77.88.0.0", "255.255.192.0"),
-            ("84.201.128.0", "255.255.192.0"),
-            ("87.250.224.0", "255.255.224.0"),
-            ("90.156.176.0", "255.255.252.0"),
-            ("93.158.128.0", "255.255.192.0"),
-            ("95.108.128.0", "255.255.128.0"),
-            ("100.43.64.0", "255.255.224.0"),
-            ("178.154.128.0", "255.255.128.0"),
-            ("213.180.192.0", "255.255.224.0"),
-            // DoT DNS resolvers used by the Go client.
-            ("8.8.8.8", "255.255.255.255"),
-            ("1.1.1.1", "255.255.255.255"),
-        ]
-        return cidrs.map { NEIPv4Route(destinationAddress: $0.0, subnetMask: $0.1) }
-    }()
-
+    /// Go supplies both the inherited Yandex CIDRs and fresh /32 routes. Its
+    /// carrier dialer enforces this exact snapshot, including after reconnect.
+    private struct BypassRoute: Decodable {
+        let destination: String
+        let mask: String
+    }
 
     private let lifecycle = DispatchQueue(label: "OpenFlux.packet.lifecycle")
     private let stateLock = NSLock()
@@ -81,23 +62,23 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     throw SecretStoreError.invalidRecord
                 }
 
-                // Resolve using Go's Yandex-first DoT resolver, BEFORE capturing DNS/default routes.
+                // Bootstrap BEFORE capturing DNS/default routes: DoT preferred,
+                // system fallback restricted to Yandex carrier endpoints only.
                 let routeJSON = transport.withCString { tt in
                     url.withCString { u in
-                        OpenFluxResolveBypassIPv4(UnsafeMutablePointer(mutating: tt), UnsafeMutablePointer(mutating: u))
+                        OpenFluxResolveBypassIPv4V2(UnsafeMutablePointer(mutating: tt), UnsafeMutablePointer(mutating: u))
                     }
                 }
                 guard let routeJSON = routeJSON else { throw Self.failure(7, "Cannot resolve transport bypass routes") }
                 let routeData = Data(String(cString: routeJSON).utf8)
                 OpenFluxFreeString(routeJSON)
-                let ips = try JSONDecoder().decode([String].self, from: routeData)
+                let routes = try JSONDecoder().decode([BypassRoute].self, from: routeData)
+                guard !routes.isEmpty else { throw Self.failure(7, "Missing transport bypass routes") }
                 let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
                 let ipv4 = NEIPv4Settings(addresses: ["10.10.10.2"], subnetMasks: ["255.255.255.0"])
                 ipv4.includedRoutes = [NEIPv4Route.default()]
-                // Existing prefixes cover backend rotation; current endpoint addresses
-                // add precise /32 exclusions without inventing new provider IP ranges.
-                ipv4.excludedRoutes = Self.bypassRoutes + ips.map {
-                    NEIPv4Route(destinationAddress: $0, subnetMask: "255.255.255.255")
+                ipv4.excludedRoutes = routes.map {
+                    NEIPv4Route(destinationAddress: $0.destination, subnetMask: $0.mask)
                 }
                 settings.ipv4Settings = ipv4
                 settings.mtu = 1500

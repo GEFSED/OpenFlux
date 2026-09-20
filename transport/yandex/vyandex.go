@@ -25,6 +25,7 @@ import (
 )
 
 type VolgaConfig struct {
+	DialContext transport.DialContextFunc
 	// Mobile limits alter resources only, not framing or authentication.
 	LowMemory           bool
 	MaxConnsPerHost     int
@@ -164,7 +165,7 @@ func authorize(docURL string, limits VolgaConfig) (*volgaAuth, error) {
 	utils.Debugf("[VOLGA] authorizing document")
 
 	jar, _ := cookiejar.New(nil)
-	authTransport := &http.Transport{MaxIdleConns: 100, MaxIdleConnsPerHost: 100, IdleConnTimeout: 90 * time.Second}
+	authTransport := &http.Transport{DialContext: limits.DialContext, MaxIdleConns: 100, MaxIdleConnsPerHost: 100, IdleConnTimeout: 90 * time.Second}
 	if limits.LowMemory {
 		authTransport.MaxIdleConns = 4
 		authTransport.MaxIdleConnsPerHost = 2
@@ -474,6 +475,7 @@ type relayClient struct {
 
 func newRelayClient(auth *volgaAuth, cfg VolgaConfig, stats *VolgaStats) *relayClient {
 	tr := &http.Transport{
+		DialContext:         cfg.DialContext,
 		MaxConnsPerHost:     cfg.MaxConnsPerHost,
 		MaxIdleConns:        cfg.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.MaxIdleConnsPerHost,
@@ -852,6 +854,7 @@ func (w *wsListener) connect() error {
 	header.Set("Cookie", strings.Join(cookieParts, "; "))
 
 	dialer := websocket.Dialer{
+		NetDialContext:   w.config.DialContext,
 		HandshakeTimeout: w.config.WSHandshakeTimeout,
 		ReadBufferSize:   w.config.WSBufferSize,
 		WriteBufferSize:  w.config.WSBufferSize,
@@ -1044,6 +1047,7 @@ func NewYandexVolgaTransport(docURL string, cfg transport.TransportConfig, prese
 	if len(preset) > 0 {
 		vc = preset[0]
 	}
+	vc.DialContext = cfg.DialContext
 	return &YandexVolgaTransport{
 		BaseTransport: transport.NewBaseTransport(cfg),
 		docURL:        docURL,

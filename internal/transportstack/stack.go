@@ -22,6 +22,7 @@ const (
 )
 
 type Options struct {
+	DialContext                      transport.DialContextFunc
 	Transport, URL, MAXToken, MAXUID string
 	Codec, EncryptionSecret          string
 	// PreparedKey is the output of transport.DeriveEncryptionKey, NOT a new
@@ -51,6 +52,7 @@ func New(o Options) (transport.Transport, error) {
 		}
 	}
 	cfg := transport.DefaultConfig()
+	cfg.DialContext = o.DialContext
 	if o.Mobile {
 		cfg.MaxQueueSize = 256
 	}

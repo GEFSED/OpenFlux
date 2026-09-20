@@ -171,6 +171,9 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
 		}
+		if dial := t.GetConfig().DialContext; dial != nil {
+			dialer.NetDialContext = dial
+		}
 		headers := http.Header{}
 		headers.Set("User-Agent", "Mozilla/5.0")
 		headers.Set("Origin", info.Origin)
@@ -442,6 +445,11 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 			return nil
 		},
 		Timeout: 15 * time.Second,
+	}
+	if t.BaseTransport != nil && t.GetConfig().DialContext != nil {
+		client.Transport = &http.Transport{DialContext: t.GetConfig().DialContext,
+			MaxIdleConns: 4, MaxIdleConnsPerHost: 2, IdleConnTimeout: 30 * time.Second}
+		defer client.CloseIdleConnections()
 	}
 
 	utils.Debugf("[YDOCS] requesting document configuration")
