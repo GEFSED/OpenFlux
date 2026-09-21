@@ -50,6 +50,12 @@ final class PerfDiagnostics {
                 if (closed.get()) return;
                 try {
                     JSONObject data = new JSONObject(Mobile.performanceSnapshot());
+                    JSONObject tun = OpenFluxTunnelService.tunDiagnosticsSnapshot();
+                    java.util.Iterator<String> tunKeys = tun.keys();
+                    while (tunKeys.hasNext()) {
+                        String key = tunKeys.next();
+                        data.put(key, tun.get(key));
+                    }
                     long now = SystemClock.elapsedRealtime(), cpu = Process.getElapsedCpuTime();
                     long up = data.optLong("upload_bytes"), down = data.optLong("download_bytes");
                     // A reconnect resets packet counters; never report negative rates.
@@ -72,7 +78,7 @@ final class PerfDiagnostics {
                     data.put("application_id", BuildConfig.APPLICATION_ID);
                     data.put("measurement_scope", "packet VPN; SOCKS5 profiles not applied; rates sample every 2s while visible");
                     data.put("carrier_status", ReturnPathStatus.describe(data));
-                    data.put("acceptance", "Return-path retest only; A/B suspended. transport_started/connected do not prove Internet access.");
+                    data.put("acceptance", "TUN classification retest only: Legacy + Baseline. A/B suspended; packet receipt is not proof of Internet access.");
                     String report = data.toString(2);
                     ui.post(() -> { if (!closed.get() && !activity.isDestroyed()) { latest[0] = report; text.setText(report); } });
                 } catch (Exception ignored) {

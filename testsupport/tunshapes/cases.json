@@ -1,0 +1,38 @@
+[
+  {
+    "name": "A_valid_ipv4_tcp_158",
+    "version": 4,
+    "buffer_len": 158,
+    "total_length": 158,
+    "valid_ipv4": true,
+    "length_relation": "exact",
+    "sha256": "ca8f66a061e46a1cfa0742022ef49e47f98829788fbf04f1c4e1644aea70ed78"
+  },
+  {
+    "name": "B_authenticated_non_ip_158",
+    "version": 3,
+    "buffer_len": 158,
+    "total_length": -1,
+    "valid_ipv4": false,
+    "length_relation": "not_ipv4",
+    "sha256": "0953a701b59ee5be7c33b3b1eb24f38753551a93699143d36538a36500225321"
+  },
+  {
+    "name": "C_ipv4_with_trailing_bytes",
+    "version": 4,
+    "buffer_len": 158,
+    "total_length": 100,
+    "valid_ipv4": true,
+    "length_relation": "lt_buffer",
+    "sha256": "7ea1de9d61990d094da848d0b63c040ef40096c6d970f7ebc79cf7d4f7063558"
+  },
+  {
+    "name": "D_truncated_ipv4",
+    "version": 4,
+    "buffer_len": 158,
+    "total_length": 180,
+    "valid_ipv4": false,
+    "length_relation": "gt_buffer",
+    "sha256": "40646a6d38fde580879c92e4a3093689983644a3d55e169f2b96952ba68e5314"
+  }
+]

@@ -1,3 +1,5 @@
+> CURRENT RESULT = BlockedByAndroidTunWriteEINVAL. Retest #2 confirms Legacy control codec (user confirmed), authenticated return reached mobile (158 bytes), then Android TUN write failed with EINVAL. Root cause remains unproven. A/B is suspended. Prior report below is historical.
+
 # Baseline return-path regression: diagnostic build 2
 
 Previous result: **BlockedByRealAndroidReturnPathRegression**.

@@ -45,7 +45,7 @@ android {
         perflab {
             initWith debug
             applicationIdSuffix ".perflab"
-            versionNameSuffix "-perflab.2"
+            versionNameSuffix "-perflab.3"
             manifestPlaceholders = [appLabel: "OpenFlux Perf Lab"]
             buildConfigField "boolean", "PERF_LAB", "true"
             matchingFallbacks = ["debug"]
@@ -61,6 +61,9 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     buildFeatures { buildConfig true }
+    sourceSets {
+        test.resources.srcDir(rootProject.file("../testsupport/tunshapes"))
+    }
 
     packagingOptions {
         jniLibs {
@@ -76,9 +79,9 @@ dependencies {
     implementation "com.google.zxing:core:3.5.3"
 }
 
-// Keep ordinary v1.0.0 versioning unchanged. This is Perf Lab diagnostic #2.
+// Keep ordinary v1.0.0 versioning unchanged. This is Perf Lab diagnostic #3.
 android.applicationVariants.all { variant ->
     if (variant.buildType.name == "perflab") {
-        variant.outputs.each { output -> output.versionCodeOverride = 11 }
+        variant.outputs.each { output -> output.versionCodeOverride = 12 }
     }
 }

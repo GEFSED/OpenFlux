@@ -53,6 +53,13 @@ public final class OpenFluxTunnelService extends VpnService {
     private static volatile boolean running;
     private static volatile String status = "Остановлено";
     private static volatile String lastError = "";
+    private static volatile TunWriteDiagnostics tunDiagnostics =
+            BuildConfig.PERF_LAB ? new TunWriteDiagnostics() : null;
+
+    static org.json.JSONObject tunDiagnosticsSnapshot() throws org.json.JSONException {
+        TunWriteDiagnostics d = tunDiagnostics;
+        return d == null ? new org.json.JSONObject() : d.snapshot();
+    }
     // Lives on the service, not the Activity: MainActivity can be destroyed
     // and recreated (low memory, long time away) while this foreground
     // service keeps running, and the uptime shown on Home must survive that.
@@ -194,6 +201,9 @@ public final class OpenFluxTunnelService extends VpnService {
         status = "Подключение…";
         lastError = "";
         int session = generation.incrementAndGet();
+        if (BuildConfig.PERF_LAB) {
+            synchronized (outputLock) { tunDiagnostics = new TunWriteDiagnostics(); }
+        }
         String selectedDns = dnsServer;
         int selectedMtu = mtu;
         String finalUrl = url;
@@ -262,7 +272,7 @@ public final class OpenFluxTunnelService extends VpnService {
             Builder builder = new Builder()
                     .setSession(getApplicationInfo().loadLabel(getPackageManager()).toString())
                     .setMtu(mtu)
-                    .addAddress("10.10.10.2", 24)
+                    .addAddress(TunPacketClassifier.CLIENT_ADDRESS, 24)
                     .addRoute("0.0.0.0", 0)
                     .addDnsServer(dnsServerIp);
             applyAppFilter(builder);
@@ -367,11 +377,12 @@ public final class OpenFluxTunnelService extends VpnService {
                     if (!blocking) Thread.sleep(2);
                     continue;
                 }
-                inject(session, output, packet);
-                bytesReceived.addAndGet(packet.length);
+                boolean written = inject(session, output, packet, false);
+                if (!BuildConfig.PERF_LAB || written) bytesReceived.addAndGet(packet.length);
             }
         } catch (IOException exception) {
-            if (isCurrent(session)) fail(session, "Запись TUN: " + exception.getMessage());
+            if (isCurrent(session)) fail(session, "Запись TUN: " + (BuildConfig.PERF_LAB
+                    ? "errno=" + TunWriteErrno.from(exception) : exception.getMessage()));
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
@@ -392,9 +403,16 @@ public final class OpenFluxTunnelService extends VpnService {
                 if (isCurrent(session)) lastError = "DNS: сервер не ответил";
                 return;
             }
-            inject(session, output, buildDnsResponse(request, answer));
+            inject(session, output, buildDnsResponse(request, answer), true);
         } catch (IOException exception) {
-            if (isCurrent(session)) lastError = "DNS: " + exception.getMessage();
+            if (isCurrent(session)) {
+                if (BuildConfig.PERF_LAB && tunDiagnostics.atEinvalLimit()) {
+                    fail(session, "Запись TUN: предел 10 EINVAL для IPv4");
+                } else {
+                    lastError = "DNS: " + (BuildConfig.PERF_LAB
+                            ? "ошибка I/O, errno=" + TunWriteErrno.from(exception) : exception.getMessage());
+                }
+            }
         }
     }
 
@@ -413,10 +431,17 @@ public final class OpenFluxTunnelService extends VpnService {
         }
     }
 
-    private void inject(int session, FileOutputStream output, byte[] packet) throws IOException {
-        if (!isCurrent(session) || output == null || packet == null) return;
+    private boolean inject(int session, FileOutputStream output, byte[] packet, boolean localDns) throws IOException {
+        if (!isCurrent(session) || output == null || packet == null) return false;
         synchronized (outputLock) {
-            if (isCurrent(session)) output.write(packet);
+            if (!isCurrent(session)) return false;
+            if (BuildConfig.PERF_LAB) {
+                return tunDiagnostics.write(packet, output::write, TunWriteErrno::from, localDns)
+                        == TunWriteDiagnostics.Outcome.WRITTEN;
+            }
+            // Production path: unchanged write and exception propagation.
+            output.write(packet);
+            return true;
         }
     }
 
