@@ -101,6 +101,10 @@ public final class OpenFluxTileService extends TileService {
             intent.putExtra(OpenFluxTunnelService.EXTRA_DOCUMENT_URL, selected.documentUrl);
             intent.putExtra(OpenFluxTunnelService.EXTRA_ENCRYPTION_SECRET, selected.encryptionSecret);
             intent.putExtra(OpenFluxTunnelService.EXTRA_TRANSPORT_TYPE, selected.transportType);
+            intent.putExtra(OpenFluxTunnelService.EXTRA_CODEC, selected.codec);
+            intent.putExtra(OpenFluxTunnelService.EXTRA_PERF_PROFILE, selected.performanceProfile);
+            intent.putExtra(OpenFluxTunnelService.EXTRA_MAX_TOKEN, selected.maxToken);
+            intent.putExtra(OpenFluxTunnelService.EXTRA_MAX_UID, selected.maxUid);
             intent.putExtra(OpenFluxTunnelService.EXTRA_DNS_SERVER, prefs.getString("dns_server", "1.1.1.1"));
             intent.putExtra(OpenFluxTunnelService.EXTRA_MTU, prefs.getInt("mtu", 1400));
             startForegroundService(intent);
@@ -126,7 +130,7 @@ public final class OpenFluxTileService extends TileService {
         boolean proxyMode = isProxyMode();
         boolean running = proxyMode ? OpenFluxProxyService.isRunning() : OpenFluxTunnelService.isRunning();
         tile.setIcon(Icon.createWithResource(this, R.drawable.ic_openflux_notification));
-        tile.setLabel("OpenFlux");
+        tile.setLabel(getApplicationInfo().loadLabel(getPackageManager()));
         tile.setState(running ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         if (Build.VERSION.SDK_INT >= 29) {
             tile.setSubtitle(proxyMode ? "Прокси" : "Туннель");

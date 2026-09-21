@@ -1,0 +1,71 @@
+name: Android Performance Lab
+on:
+  push:
+    branches: [codex/android-volga-perf-lab]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  go:
+    name: Go and mobile tests, race, vet, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            mobile/go.sum
+      - name: Check both modules
+        run: |
+          test -z "$(gofmt -l mobile/*.go transport/batched*.go transport/perf_config_test.go transport/yandex/vyandex.go transport/yandex/perf*.go)"
+          for module in . mobile; do
+            (cd "$module" && go test ./... && go test -race ./... && go vet ./... && go build ./...)
+          done
+          git diff --check
+  android:
+    name: Perf Lab APKs and profile tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+      - run: yes | sdkmanager --licenses > /dev/null || true
+      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+      - run: go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
+      - run: go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
+      - name: Build separate debug-signed Perf Lab application
+        run: BUILD_TYPE=perflab GRADLE_BIN="$(command -v gradle)" ./build_android_app.sh
+      - run: cd android && gradle --no-daemon testPerflabUnitTest
+      - name: Verify application identity and checksums
+        run: |
+          for apk in dist/*-perflab.apk; do
+            "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > "$apk.badging.txt"
+            grep -q "package: name='io.openflux.app.perflab'" "$apk.badging.txt"
+            grep -q "application-label:'OpenFlux Perf Lab'" "$apk.badging.txt"
+          done
+          cd dist
+          sha256sum *-perflab.apk > SHA256SUMS
+          printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, experimental; baseline default.\n' "$GITHUB_SHA" > BUILD.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenFlux-Android-PerfLab-${{ github.sha }}
+          path: |
+            dist/*-perflab.apk
+            dist/*.badging.txt
+            dist/SHA256SUMS
+            dist/BUILD.txt
+          if-no-files-found: error
+          retention-days: 30

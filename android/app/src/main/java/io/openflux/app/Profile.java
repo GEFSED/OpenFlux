@@ -14,6 +14,12 @@ final class Profile {
     String documentUrl = "";
     String encryptionSecret = "";
     String codec = "batched";
+    String performanceProfile = "baseline";
+
+    static String normalizePerformanceProfile(String value) {
+        if ("balanced".equals(value) || "low_latency".equals(value) || "throughput".equals(value)) return value;
+        return "baseline";
+    }
     String maxToken = "";
     String maxUid = "";
 
@@ -26,6 +32,7 @@ final class Profile {
         o.put("documentUrl", documentUrl);
         o.put("encryptionSecret", encryptionSecret);
         o.put("codec", codec);
+        o.put("performanceProfile", normalizePerformanceProfile(performanceProfile));
         o.put("maxToken", maxToken);
         o.put("maxUid", maxUid);
         return o;
@@ -40,6 +47,7 @@ final class Profile {
         p.documentUrl = o.optString("documentUrl", "");
         p.encryptionSecret = o.optString("encryptionSecret", "");
         p.codec = o.optString("codec", "batched");
+        p.performanceProfile = normalizePerformanceProfile(o.optString("performanceProfile", "baseline"));
         p.maxToken = o.optString("maxToken", "");
         p.maxUid = o.optString("maxUid", "");
         return p;

@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches-ignore: [codex/android-volga-perf-lab]
   pull_request:
   workflow_dispatch:
 

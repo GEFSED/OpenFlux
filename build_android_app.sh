@@ -9,6 +9,9 @@ GRADLE_BIN="${GRADLE_BIN:-}"
 BUILD_TYPE="${BUILD_TYPE:-debug}"
 
 case "$BUILD_TYPE" in
+    perflab)
+        GRADLE_TASK="assemblePerflab"
+        ;;
     debug)
         GRADLE_TASK="assembleDebug"
         ;;
@@ -20,7 +23,7 @@ case "$BUILD_TYPE" in
         : "${ANDROID_KEY_PASSWORD:?Set ANDROID_KEY_PASSWORD for a release build}"
         ;;
     *)
-        echo "Unsupported BUILD_TYPE: $BUILD_TYPE (use debug or release)"
+        echo "Unsupported BUILD_TYPE: $BUILD_TYPE (use debug, perflab or release)"
         exit 1
         ;;
 esac

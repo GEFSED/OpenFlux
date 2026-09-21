@@ -120,6 +120,7 @@ public final class OpenFluxProxyService extends Service {
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        if (BuildConfig.PERF_LAB) Mobile.enablePerformanceLab();
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             stopProxy();
             return START_NOT_STICKY;
@@ -214,7 +215,8 @@ public final class OpenFluxProxyService extends Service {
 
     private synchronized void fail(int session, String message) {
         if (generation.get() != session) return;
-        lastError = message == null ? "Неизвестная ошибка" : message;
+        lastError = BuildConfig.PERF_LAB ? "Ошибка прокси (подробности скрыты в Perf Lab)"
+                : message == null ? "Неизвестная ошибка" : message;
         status = "Ошибка";
         connectedAtMillis = 0L;
         generation.incrementAndGet();
@@ -263,7 +265,7 @@ public final class OpenFluxProxyService extends Service {
         PendingIntent stopIntent = PendingIntent.getService(
                 this, 0, stop, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("OpenFlux")
+                .setContentTitle(getApplicationInfo().loadLabel(getPackageManager()))
                 .setContentText(text)
                 .setSmallIcon(R.drawable.ic_openflux_notification)
                 .setOngoing(true)

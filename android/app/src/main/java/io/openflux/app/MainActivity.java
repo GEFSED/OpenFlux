@@ -173,6 +173,8 @@ public final class MainActivity extends Activity {
     private String encryptionSecret;
     private String transportType = "yandex";
     private String codec = "batched";
+    private String performanceProfile = "baseline";
+    private String editorPerformanceProfile = "baseline";
     private String maxToken = "";
     private String maxUid = "";
     private ProfileStore profileStore;
@@ -245,6 +247,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        if (BuildConfig.PERF_LAB) Mobile.enablePerformanceLab();
         vibrator = getSystemService(Vibrator.class);
         SharedPreferences prefs = getSharedPreferences(SETTINGS_PREFS_NAME, MODE_PRIVATE);
         secureSettings = new SecureSettings(this);
@@ -765,6 +768,7 @@ public final class MainActivity extends Activity {
             encryptionSecret = p.encryptionSecret;
             transportType = p.transportType;
             codec = p.codec;
+            performanceProfile = p.performanceProfile;
             maxToken = p.maxToken;
             maxUid = p.maxUid;
         } else {
@@ -772,6 +776,7 @@ public final class MainActivity extends Activity {
             encryptionSecret = "";
             transportType = "yandex";
             codec = "batched";
+            performanceProfile = "baseline";
             maxToken = "";
             maxUid = "";
         }
@@ -814,6 +819,7 @@ public final class MainActivity extends Activity {
         editorIcon = existing != null ? existing.icon : "ic_public";
         editorTransportType = existing != null ? existing.transportType : "yandex";
         editorCodec = existing != null ? existing.codec : "batched";
+        editorPerformanceProfile = existing != null ? existing.performanceProfile : "baseline";
         editorMaxToken = existing != null ? existing.maxToken : "";
         editorMaxUid = existing != null ? existing.maxUid : "";
         profileEditorOpen = true;
@@ -860,6 +866,7 @@ public final class MainActivity extends Activity {
         target.documentUrl = docUrl;
         target.encryptionSecret = secret;
         target.codec = editorCodec;
+        target.performanceProfile = editorPerformanceProfile;
         target.maxToken = token;
         target.maxUid = uid;
         profileStore.save(profiles);
@@ -1047,6 +1054,17 @@ public final class MainActivity extends Activity {
         activeParamsParams.bottomMargin = dp(8);
         page.addView(activeParams, activeParamsParams);
         staggerIn(activeParams, 130);
+        if (BuildConfig.PERF_LAB) {
+            TextView perf = text("Performance profile: " + performanceProfile
+                    + "\nКандидаты: blocking receive; настройки Volga применяются только к vyandex."
+                    + "\nSOCKS5 сохраняет baseline. После смены профиля переподключите VPN.", 12, secondary, false);
+            page.addView(perf, matchWrap());
+            Button diagnostics = new Button(this);
+            diagnostics.setAllCaps(false);
+            diagnostics.setText("Диагностика производительности");
+            diagnostics.setOnClickListener(v -> PerfDiagnostics.show(this));
+            page.addView(diagnostics, matchWrap());
+        }
         return wrapScroll(page);
     }
 
@@ -1879,6 +1897,19 @@ public final class MainActivity extends Activity {
         codecLabelParams.bottomMargin = dp(8);
         section.addView(codecLabel, codecLabelParams);
         section.addView(buildCodecSelector(), matchWrap());
+        if (BuildConfig.PERF_LAB) {
+            section.addView(label("PERFORMANCE PROFILE (VPN)"), matchWrap());
+            android.widget.Spinner selector = new android.widget.Spinner(this);
+            String[] values = {"baseline", "balanced", "low_latency", "throughput"};
+            selector.setAdapter(new android.widget.ArrayAdapter<>(this,
+                    android.R.layout.simple_spinner_dropdown_item, new String[]{"Baseline", "Balanced", "Low latency", "Throughput"}));
+            selector.setSelection(java.util.Arrays.asList(values).indexOf(Profile.normalizePerformanceProfile(editorPerformanceProfile)));
+            selector.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+                public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) { editorPerformanceProfile = values[position]; }
+                public void onNothingSelected(android.widget.AdapterView<?> parent) { }
+            });
+            section.addView(selector, matchWrap());
+        }
 
         LinearLayout.LayoutParams urlParams = new LinearLayout.LayoutParams(-1, dp(56));
         urlParams.topMargin = dp(18);
@@ -2647,6 +2678,7 @@ public final class MainActivity extends Activity {
         intent.putExtra(OpenFluxTunnelService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
         intent.putExtra(OpenFluxTunnelService.EXTRA_TRANSPORT_TYPE, transportType);
         intent.putExtra(OpenFluxTunnelService.EXTRA_CODEC, codec);
+        intent.putExtra(OpenFluxTunnelService.EXTRA_PERF_PROFILE, performanceProfile);
         intent.putExtra(OpenFluxTunnelService.EXTRA_MAX_TOKEN, maxToken);
         intent.putExtra(OpenFluxTunnelService.EXTRA_MAX_UID, maxUid);
         intent.putExtra(OpenFluxTunnelService.EXTRA_DNS_SERVER, dnsServer);
