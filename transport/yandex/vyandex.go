@@ -113,6 +113,7 @@ func base64Encode(data []byte) string {
 func retainBase64Buffer(capacity int) bool { return capacity <= 256*1024 }
 
 type VolgaStats struct {
+	volgaReceiveCounters
 	PacketsSent    atomic.Uint64
 	PacketsRecv    atomic.Uint64
 	BytesSent      atomic.Uint64
@@ -713,6 +714,8 @@ func (r *relayClient) getFrontier() []interface{} {
 }
 
 type wsListener struct {
+	// Per-instance local-server seams; unset in production.
+	testWSURL string
 	// Per-instance dependency seam for local lifecycle tests (nil uses network).
 	connectFn func() error
 	auth      *volgaAuth
@@ -814,14 +817,22 @@ func (w *wsListener) connect() error {
 		WriteBufferSize:  4 << 20,
 	}
 
+	if w.testWSURL != "" {
+		wsURL = w.testWSURL
+	}
+
 	conn, resp, err := dialer.DialContext(w.ctx, wsURL, header)
 	if err != nil {
+		w.stats.wsConnectFailures.Add(1)
 		if resp != nil && resp.Body != nil {
 			resp.Body.Close()
 		}
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
+	w.stats.wsConnectSuccess.Add(1)
+	w.stats.wsConnected.Store(true)
+	defer w.stats.wsConnected.Store(false)
 	stopClose := context.AfterFunc(w.ctx, func() { conn.Close() })
 	defer stopClose()
 
@@ -845,19 +856,27 @@ func (w *wsListener) connect() error {
 }
 
 func (w *wsListener) handleMessage(raw []byte) {
+	w.stats.wsRawMessages.Add(1)
 	var envelope struct {
 		Operation string `json:"operation"`
 		Message   string `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
+		w.stats.wsJSONErrors.Add(1)
 		return
 	}
 
 	if envelope.Operation == "ping" {
+		w.stats.wsPingMessages.Add(1)
 		return
 	}
 	if envelope.Operation != "SESSION" && envelope.Operation != "WORKER" {
 		return
+	}
+	if envelope.Operation == "SESSION" {
+		w.stats.wsSessionMessages.Add(1)
+	} else {
+		w.stats.wsWorkerMessages.Add(1)
 	}
 	if envelope.Message == "" {
 		return
@@ -870,17 +889,21 @@ func (w *wsListener) handleMessage(raw []byte) {
 		Message json.RawMessage `json:"message"`
 	}
 	if err := json.Unmarshal([]byte(envelope.Message), &inner); err != nil {
+		w.stats.wsJSONErrors.Add(1)
 		return
 	}
 
 	if inner.UserID == w.auth.UserID {
+		w.stats.wsSelfIgnored.Add(1)
 		return
 	}
 
 	switch inner.T {
 	case "relay":
+		w.stats.wsRelayMessages.Add(1)
 		w.handleRelayMessage(inner.Message)
 	case "exchange":
+		w.stats.wsExchangeMessages.Add(1)
 		w.handleBundle(inner.Bundle)
 	}
 }
@@ -890,6 +913,7 @@ func (w *wsListener) handleRelayMessage(raw json.RawMessage) {
 		Bundle []json.RawMessage `json:"bundle"`
 	}
 	if err := json.Unmarshal(raw, &relay); err != nil {
+		w.stats.wsJSONErrors.Add(1)
 		return
 	}
 	for _, item := range relay.Bundle {
@@ -913,6 +937,8 @@ func (w *wsListener) handleBundle(raw json.RawMessage) {
 		for _, item := range asObject.Value {
 			w.handleBundleItem(item)
 		}
+	} else {
+		w.stats.wsJSONErrors.Add(1)
 	}
 }
 
@@ -928,16 +954,22 @@ func (w *wsListener) handleBundleItem(raw json.RawMessage) {
 		return
 	}
 
+	if !json.Valid(raw) {
+		w.stats.wsJSONErrors.Add(1)
+	}
 	var asStr string
 	if err := json.Unmarshal(raw, &asStr); err == nil && asStr != "" {
 		decoded, err := base64.StdEncoding.DecodeString(asStr)
 		if err != nil {
+			w.stats.wsBase64Errors.Add(1)
 			return
 		}
 		packets := decodeBatch(decoded)
 		w.stats.PacketsRecv.Add(uint64(len(packets)))
 		w.stats.BytesReceived.Add(uint64(len(decoded)))
 		for _, pkt := range packets {
+			w.stats.innerPackets.Add(1)
+			w.stats.innerBytes.Add(uint64(len(pkt)))
 			if w.onData != nil {
 				w.onData(pkt)
 			}

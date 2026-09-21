@@ -43,7 +43,8 @@ type BatchedTransport struct {
 	drops         atomic.Uint64
 	sendErrors    atomic.Uint64
 
-	running atomic.Bool
+	running         atomic.Bool
+	receiveCounters batchReceiveCounters
 
 	mu     sync.RWMutex
 	userCb func([]byte)
@@ -159,11 +160,15 @@ func (b *BatchedTransport) Receive(callback func([]byte)) {
 	b.mu.Unlock()
 
 	b.Transport.Receive(func(data []byte) {
+		b.receiveCounters.frames.Add(1)
 		pkts, err := decodeBatch(data)
 		if err != nil {
+			b.receiveCounters.errors.Add(1)
 			utils.Debugf("[BATCH] decode error (%d bytes): %v", len(data), err)
 			return
 		}
+		b.receiveCounters.success.Add(1)
+		b.receiveCounters.packets.Add(uint64(len(pkts)))
 		b.mu.RLock()
 		cb := b.userCb
 		b.mu.RUnlock()
@@ -243,6 +248,7 @@ func (b *BatchedTransport) flushLoop() {
 
 // BatchPerformance contains counters only, never payloads or credentials.
 type BatchPerformance struct {
+	BatchReceiveDiagnostics
 	BatchedConfig
 	QueueLen   int     `json:"queue_len"`
 	QueueDrops uint64  `json:"queue_drops"`
@@ -258,5 +264,5 @@ func (b *BatchedTransport) Performance() BatchPerformance {
 	if n > 0 {
 		avg = float64(p) / float64(n)
 	}
-	return BatchPerformance{BatchedConfig{b.maxBatchBytes, b.maxBatchCount, b.linger, cap(b.queue)}, len(b.queue), b.drops.Load(), n, p, b.sendErrors.Load(), avg}
+	return BatchPerformance{BatchedConfig: BatchedConfig{b.maxBatchBytes, b.maxBatchCount, b.linger, cap(b.queue)}, QueueLen: len(b.queue), QueueDrops: b.drops.Load(), Batches: n, Packets: p, SendErrors: b.sendErrors.Load(), Average: avg, BatchReceiveDiagnostics: b.receiveCounters.snapshot()}
 }

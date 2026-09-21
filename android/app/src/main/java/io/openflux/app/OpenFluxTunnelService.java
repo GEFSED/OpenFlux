@@ -362,7 +362,7 @@ public final class OpenFluxTunnelService extends VpnService {
         try {
             while (isCurrent(session)) {
                 byte[] packet = blocking ? Mobile.readWait(0) : Mobile.read();
-                if (!isCurrent(session)) break;
+                if (blocking && !isCurrent(session)) break;
                 if (packet == null || packet.length == 0) {
                     if (!blocking) Thread.sleep(2);
                     continue;

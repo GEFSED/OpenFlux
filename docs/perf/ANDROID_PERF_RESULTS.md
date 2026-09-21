@@ -1,3 +1,6 @@
+> RESULT = BlockedByRealAndroidReturnPathRegression
+> ReadyForUserAB is revoked. Real Android Baseline at 68e722d42b997c17460d890bfedd83de8b07d234 received zero bytes; ordinary v1.0.0 works with the same profile. Performance A/B is suspended. Prior measurements below are synthetic historical evidence only.
+
 # Local measurements and reproduction
 
 Measured on Windows amd64, Intel i7-11800H (16 logical CPUs), Go 1.26.4.

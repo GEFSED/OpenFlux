@@ -1,3 +1,6 @@
+> RESULT = BlockedByRealAndroidReturnPathRegression
+> ReadyForUserAB is revoked. Real Android Baseline at 68e722d42b997c17460d890bfedd83de8b07d234 received zero bytes; ordinary v1.0.0 works with the same profile. Performance A/B is suspended. Prior measurements below are synthetic historical evidence only.
+
 # OpenFlux Perf Lab: ручной A/B на Android
 
 Это экспериментальная сборка, победитель ещё не выбран. VPS, exit binary,

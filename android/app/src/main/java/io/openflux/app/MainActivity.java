@@ -1063,7 +1063,7 @@ public final class MainActivity extends Activity {
             page.addView(perf, matchWrap());
             Button diagnostics = new Button(this);
             diagnostics.setAllCaps(false);
-            diagnostics.setText("Диагностика производительности");
+            diagnostics.setText("Диагностика возвратного пути");
             diagnostics.setOnClickListener(v -> performanceDialog = PerfDiagnostics.show(this));
             page.addView(diagnostics, matchWrap());
         }
@@ -1900,7 +1900,7 @@ public final class MainActivity extends Activity {
         section.addView(codecLabel, codecLabelParams);
         section.addView(buildCodecSelector(), matchWrap());
         if (BuildConfig.PERF_LAB) {
-            section.addView(label("PERFORMANCE PROFILE (VPN)"), matchWrap());
+            section.addView(label("RETURN-PATH RETEST: BASELINE ONLY (A/B PAUSED)"), matchWrap());
             android.widget.Spinner selector = new android.widget.Spinner(this);
             String[] values = {"baseline", "balanced", "low_latency", "throughput"};
             selector.setAdapter(new android.widget.ArrayAdapter<>(this,

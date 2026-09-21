@@ -7,6 +7,12 @@ NDK_ROOT="${ANDROID_NDK_HOME:-$SDK_ROOT/ndk/27.0.12077973}"
 GOMOBILE_BIN="${GOMOBILE_BIN:-$(command -v gomobile || true)}"
 GRADLE_BIN="${GRADLE_BIN:-}"
 BUILD_TYPE="${BUILD_TYPE:-debug}"
+GOMOBILE_TARGET=android
+OUTPUT_ABIS="universal arm64-v8a armeabi-v7a x86_64 x86"
+if [ "$BUILD_TYPE" = perflab ] && [ "${PERFLAB_ARM64_ONLY:-0}" = 1 ]; then
+    GOMOBILE_TARGET=android/arm64
+    OUTPUT_ABIS=arm64-v8a
+fi
 
 case "$BUILD_TYPE" in
     perflab)
@@ -69,7 +75,7 @@ export PATH="$(dirname -- "$GOMOBILE_BIN"):$PATH"
     # release of anet has adapted to it yet. -checklinkname=0 downgrades
     # that to the old permissive behavior instead of a hard link failure.
     "$GOMOBILE_BIN" bind \
-        -target=android \
+        -target="$GOMOBILE_TARGET" \
         -androidapi=26 \
         -javapkg=io.openflux.bridge \
         -ldflags="-checklinkname=0" \
@@ -83,7 +89,7 @@ export PATH="$(dirname -- "$GOMOBILE_BIN"):$PATH"
 )
 
 OUTPUT_DIR="$SCRIPT_DIR/android/app/build/outputs/apk/$BUILD_TYPE"
-for ABI in universal arm64-v8a armeabi-v7a x86_64 x86; do
+for ABI in $OUTPUT_ABIS; do
     SOURCE_APK="$OUTPUT_DIR/app-$ABI-$BUILD_TYPE.apk"
     if [ ! -f "$SOURCE_APK" ]; then
         echo "Expected APK not found: $SOURCE_APK"

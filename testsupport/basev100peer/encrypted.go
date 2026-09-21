@@ -1,4 +1,4 @@
-package transport
+package basev100peer
 
 import (
 	"crypto/aes"
@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"golang.org/x/crypto/scrypt"
 )
@@ -42,14 +41,13 @@ var encryptedMagic = [3]byte{'O', 'F', 'X'}
 // docs/en/UPSTREAM_DIFF.md.
 type EncryptedTransport struct {
 	Transport
-	sendAEAD        cipher.AEAD
-	receiveAEAD     cipher.AEAD
-	sendDirection   byte
-	recvDirection   byte
-	seenMu          sync.Mutex
-	seen            map[string]struct{}
-	seenOrder       []string
-	receiveCounters encryptedReceiveCounters
+	sendAEAD      cipher.AEAD
+	receiveAEAD   cipher.AEAD
+	sendDirection byte
+	recvDirection byte
+	seenMu        sync.Mutex
+	seen          map[string]struct{}
+	seenOrder     []string
 }
 
 // NewEncryptedTransport wraps inner with a directional AES-256-GCM stream.
@@ -127,57 +125,26 @@ func (e *EncryptedTransport) Send(data []byte) error {
 	return e.Transport.Send(packet)
 }
 
+
 func (e *EncryptedTransport) Receive(callback func([]byte)) {
 	e.Transport.Receive(func(packet []byte) {
-		e.receiveCounters.packets.Add(1)
 		if len(packet) < encryptedHeader+e.receiveAEAD.NonceSize()+e.receiveAEAD.Overhead() {
-			e.receiveCounters.tooShort.Add(1)
 			return
 		}
 		header := packet[:encryptedHeader]
 		if header[0] != encryptedMagic[0] || header[1] != encryptedMagic[1] ||
-			header[2] != encryptedMagic[2] || header[3] != encryptedVersion {
-			e.receiveCounters.badHeader.Add(1)
-			return
-		}
-		if header[4] != e.recvDirection {
-			e.receiveCounters.wrongDirection.Add(1)
+			header[2] != encryptedMagic[2] || header[3] != encryptedVersion ||
+			header[4] != e.recvDirection {
 			return
 		}
 		nonceEnd := encryptedHeader + e.receiveAEAD.NonceSize()
 		nonce := packet[encryptedHeader:nonceEnd]
 		plaintext, err := e.receiveAEAD.Open(nil, nonce, packet[nonceEnd:], header)
-		if err != nil {
-			e.receiveCounters.decryptFail.Add(1)
+		if err != nil || !e.rememberNonce(nonce) {
 			return
 		}
-		if !e.rememberNonce(nonce) {
-			e.receiveCounters.replayDrop.Add(1)
-			return
-		}
-		e.receiveCounters.success.Add(1)
 		callback(plaintext)
 	})
-}
-
-type encryptedReceiveCounters struct {
-	packets, tooShort, badHeader, wrongDirection, decryptFail, replayDrop, success atomic.Uint64
-}
-
-// EncryptedReceiveDiagnostics exposes counts only. No keys, nonces or data.
-type EncryptedReceiveDiagnostics struct {
-	Packets        uint64 `json:"encrypted_receive_packets"`
-	TooShort       uint64 `json:"encrypted_receive_too_short"`
-	BadHeader      uint64 `json:"encrypted_receive_bad_header"`
-	WrongDirection uint64 `json:"encrypted_receive_wrong_direction"`
-	DecryptFail    uint64 `json:"encrypted_receive_decrypt_fail"`
-	ReplayDrop     uint64 `json:"encrypted_receive_replay_drop"`
-	Success        uint64 `json:"encrypted_receive_success"`
-}
-
-func (e *EncryptedTransport) ReceiveDiagnostics() EncryptedReceiveDiagnostics {
-	c := &e.receiveCounters
-	return EncryptedReceiveDiagnostics{c.packets.Load(), c.tooShort.Load(), c.badHeader.Load(), c.wrongDirection.Load(), c.decryptFail.Load(), c.replayDrop.Load(), c.success.Load()}
 }
 
 func (e *EncryptedTransport) rememberNonce(nonce []byte) bool {

@@ -17,12 +17,15 @@ android {
         buildConfigField "String", "PERF_COMMIT", '"' + (System.getenv("GITHUB_SHA") ?: "local") + '"'
     }
 
+    // Only the diagnostic build opts into an arm64-only artifact.
+    def diagnosticArm64 = System.getenv("PERFLAB_ARM64_ONLY") == "1"
     splits {
         abi {
             enable true
             reset()
-            include "arm64-v8a", "armeabi-v7a", "x86_64", "x86"
-            universalApk true
+            if (diagnosticArm64) { include "arm64-v8a" }
+            else { include "arm64-v8a", "armeabi-v7a", "x86_64", "x86" }
+            universalApk !diagnosticArm64
         }
     }
 
@@ -42,7 +45,7 @@ android {
         perflab {
             initWith debug
             applicationIdSuffix ".perflab"
-            versionNameSuffix "-perflab"
+            versionNameSuffix "-perflab.2"
             manifestPlaceholders = [appLabel: "OpenFlux Perf Lab"]
             buildConfigField "boolean", "PERF_LAB", "true"
             matchingFallbacks = ["debug"]
@@ -71,4 +74,11 @@ dependencies {
     testImplementation "org.json:json:20240303"
     implementation files("libs/openflux.aar")
     implementation "com.google.zxing:core:3.5.3"
+}
+
+// Keep ordinary v1.0.0 versioning unchanged. This is Perf Lab diagnostic #2.
+android.applicationVariants.all { variant ->
+    if (variant.buildType.name == "perflab") {
+        variant.outputs.each { output -> output.versionCodeOverride = 11 }
+    }
 }

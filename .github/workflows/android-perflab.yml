@@ -20,13 +20,15 @@ jobs:
             mobile/go.sum
       - name: Check both modules
         run: |
-          test -z "$(gofmt -l mobile/*.go transport/batched*.go transport/perf_config_test.go transport/yandex/vyandex.go transport/yandex/perf*.go)"
+          test -z "$(gofmt -l mobile/*.go transport/batched*.go transport/encrypted.go transport/receive_diagnostics*.go transport/perf_config_test.go transport/yandex/vyandex*.go transport/yandex/*diagnostics*.go transport/yandex/return_path_test.go transport/yandex/perf*.go)"
           for module in . mobile; do
             (cd "$module" && go test ./... && go test -race ./... && go vet ./... && go build ./...)
           done
           git diff --check
   android:
-    name: Perf Lab APKs and profile tests
+    env:
+      PERFLAB_ARM64_ONLY: "1"
+    name: Return-path diagnostic arm64 APK and Java tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,12 +56,13 @@ jobs:
           for apk in dist/*-perflab.apk; do
             "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > "$apk.badging.txt"
             grep -q "package: name='io.openflux.app.perflab'" "$apk.badging.txt"
+            grep -q "versionCode='11' versionName='1.0.0-perflab.2'" "$apk.badging.txt"
             grep -q "application-label:'OpenFlux Perf Lab'" "$apk.badging.txt"
           done
           cd dist
           sha256sum *-perflab.apk > SHA256SUMS
           cat SHA256SUMS
-          printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, experimental; baseline default.\n' "$GITHUB_SHA" > BUILD.txt
+          printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, return-path diagnostic only; use Baseline. A/B suspended.\n' "$GITHUB_SHA" > BUILD.txt
       - uses: actions/upload-artifact@v4
         with:
           name: OpenFlux-Android-PerfLab-${{ github.sha }}

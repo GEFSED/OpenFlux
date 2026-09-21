@@ -20,6 +20,7 @@ import (
 
 var client = packetClient{}
 var perfLab atomic.Bool
+var baselineActive atomic.Bool
 var loggingOnce sync.Once
 
 // EnablePerformanceLab must be called before starting either Android service.
@@ -47,6 +48,9 @@ type packetSession struct {
 	transport                                     transport.Transport
 	volga                                         *yandex.YandexVolgaTransport
 	outer                                         *transport.BatchedTransport
+	encrypted                                     *transport.EncryptedTransport
+	codec                                         string
+	callbackPackets, callbackBytes, enqueued      uint64
 	profile, transportType                        string
 	ready, stopped                                bool
 	packets                                       [][]byte
@@ -85,6 +89,11 @@ func Start(kind, url, secret, codec, maxToken, maxUid string) string {
 // StartWithProfile is used only by the experimental Android APK.
 func StartWithProfile(kind, url, secret, codec, maxToken, maxUid, profile string) string {
 	EnablePerformanceLab()
+	if normalizeProfile(profile) == "baseline" {
+		baselineActive.Store(true)
+		return baselineStart(kind, url, secret, codec, maxToken, maxUid)
+	}
+	baselineActive.Store(false)
 	return startClient(kind, url, secret, codec, maxToken, maxUid, profile, true)
 }
 func startClient(kind, url, secret, codec, maxToken, maxUid, profile string, lab bool) string {
@@ -145,6 +154,7 @@ func finishStart(s *packetSession, trans transport.Transport) string {
 	return ""
 }
 func buildPacketTransport(s *packetSession, url, secret, codec, maxToken, maxUid string, lab bool) (transport.Transport, error) {
+	s.codec = codec
 	cfg := transport.DefaultConfig()
 	var inner transport.Transport
 	switch s.transportType {
@@ -187,13 +197,17 @@ func wrapPacketTransport(s *packetSession, inner transport.Transport, url, secre
 		if url != "" {
 			context = url
 		}
-		return transport.NewEncryptedTransport(inner, secret, context, false)
+		var err error
+		s.encrypted, err = transport.NewEncryptedTransport(inner, secret, context, false)
+		return s.encrypted, err
 	}
 	return inner, nil
 }
 func (s *packetSession) enqueue(data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.callbackPackets++
+	s.callbackBytes += uint64(len(data))
 	if s.stopped {
 		return
 	}
@@ -206,6 +220,7 @@ func (s *packetSession) enqueue(data []byte) {
 	}
 	s.packets[(s.head+s.count)%len(s.packets)] = packet
 	s.count++
+	s.enqueued++
 	s.received += uint64(len(packet))
 	select {
 	case s.notify <- struct{}{}:
@@ -230,11 +245,18 @@ func (s *packetSession) stop() {
 	}
 }
 func Stop() {
+	if baselineActive.Load() {
+		baselineStop()
+		return
+	}
 	if s := currentSession(); s != nil {
 		s.stop()
 	}
 }
 func IsConnected() bool {
+	if baselineActive.Load() {
+		return baselineIsConnected()
+	}
 	s := currentSession()
 	if s == nil {
 		return false
@@ -245,6 +267,9 @@ func IsConnected() bool {
 	return ready && tr != nil && tr.IsConnected()
 }
 func Send(packet []byte) string {
+	if baselineActive.Load() {
+		return baselineSend(packet)
+	}
 	s := currentSession()
 	if s == nil {
 		return "Транспорт не запущен"
@@ -279,6 +304,9 @@ func (s *packetSession) read() []byte {
 
 // Read retains its nonblocking compatibility semantics.
 func Read() []byte {
+	if baselineActive.Load() {
+		return baselineRead()
+	}
 	if s := currentSession(); s != nil {
 		return s.read()
 	}
@@ -336,8 +364,10 @@ func ReadLogs() string {
 func PerformanceSnapshot() string {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	result := map[string]any{"profile": "baseline", "transport": "none", "connected": false, "go_heap_alloc": m.HeapAlloc, "go_heap_sys": m.HeapSys, "go_heap_inuse": m.HeapInuse, "go_stack_inuse": m.StackInuse, "goroutines": runtime.NumGoroutine(), "gc_count": m.NumGC, "gc_pause_ns": m.PauseTotalNs, "total_alloc_bytes": m.TotalAlloc}
-	if s := currentSession(); s != nil {
+	result := map[string]any{"profile": "baseline", "transport": "none", "connected": false, "transport_started": false, "ws_connected": false, "go_heap_alloc": m.HeapAlloc, "go_heap_sys": m.HeapSys, "go_heap_inuse": m.HeapInuse, "go_stack_inuse": m.StackInuse, "goroutines": runtime.NumGoroutine(), "gc_count": m.NumGC, "gc_pause_ns": m.PauseTotalNs, "total_alloc_bytes": m.TotalAlloc}
+	if baselineActive.Load() {
+		baselineSnapshot(result)
+	} else if s := currentSession(); s != nil {
 		s.mu.Lock()
 		result["profile"] = s.profile
 		result["transport"] = safeTransportName(s.transportType)
@@ -348,6 +378,11 @@ func PerformanceSnapshot() string {
 		result["receive_queue_len"] = s.count
 		result["receive_queue_cap"] = len(s.packets)
 		result["receive_drops"] = s.drops
+		result["codec"] = safeCodecName(s.codec)
+		result["mobile_callback_packets"] = s.callbackPackets
+		result["mobile_callback_bytes"] = s.callbackBytes
+		result["receive_ring_enqueued"] = s.enqueued
+		result["receive_ring_dropped"] = s.drops
 		result["read_calls"] = s.reads
 		result["read_wait_calls"] = s.waits
 		result["read_timeouts"] = s.timeouts
@@ -356,15 +391,24 @@ func PerformanceSnapshot() string {
 		ready := s.ready && !s.stopped
 		var volga *yandex.YandexVolgaTransport
 		var outer *transport.BatchedTransport
+		var encrypted *transport.EncryptedTransport
 		var tr transport.Transport
 		if ready {
 			volga, outer, tr = s.volga, s.outer, s.transport
+			encrypted = s.encrypted
 		}
 		s.mu.Unlock()
 		if ready && tr != nil {
 			result["connected"] = tr.IsConnected()
+			result["transport_started"] = true
+			result["encryption_enabled"] = encrypted != nil
+			if encrypted != nil {
+				result["encrypted"] = encrypted.ReceiveDiagnostics()
+			}
 			if volga != nil {
-				result["volga"] = volga.Performance()
+				v := volga.Performance()
+				result["volga"] = v
+				result["ws_connected"] = v.WSConnected
 			}
 			if outer != nil {
 				result["outer"] = outer.Performance()
@@ -383,4 +427,11 @@ func safeTransportName(s string) string {
 		return s
 	}
 	return "unknown"
+}
+
+func safeCodecName(codec string) string {
+	if codec == "legacy" {
+		return "legacy"
+	}
+	return "batched"
 }
