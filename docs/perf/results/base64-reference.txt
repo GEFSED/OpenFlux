@@ -1,0 +1,14 @@
+goos: windows
+goarch: amd64
+pkg: openflux/transport/yandex
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+BenchmarkPerfBase64Candidates/1KiB/initial=4KiB/retain=256KiB-16         	  123538	      1346 ns/op	1040.02 MB/s	    2073 B/op	       2 allocs/op
+BenchmarkPerfBase64Candidates/1KiB/initial=4KiB/retain=16384KiB-16       	  132878	      1387 ns/op	1009.40 MB/s	    2073 B/op	       2 allocs/op
+BenchmarkPerfBase64Candidates/1KiB/initial=16384KiB/retain=256KiB-16     	     235	    659754 ns/op	   2.12 MB/s	16780450 B/op	       4 allocs/op
+BenchmarkPerfBase64Candidates/1KiB/initial=16384KiB/retain=16384KiB-16   	  122604	      1292 ns/op	1083.58 MB/s	    2209 B/op	       2 allocs/op
+BenchmarkPerfBase64Candidates/63KiB/initial=4KiB/retain=256KiB-16        	    3120	     55914 ns/op	1172.06 MB/s	   90228 B/op	       2 allocs/op
+BenchmarkPerfBase64Candidates/63KiB/initial=4KiB/retain=16384KiB-16      	    3195	     57455 ns/op	1140.62 MB/s	   90227 B/op	       2 allocs/op
+BenchmarkPerfBase64Candidates/63KiB/initial=16384KiB/retain=256KiB-16    	     207	    865478 ns/op	  75.72 MB/s	16869656 B/op	       5 allocs/op
+BenchmarkPerfBase64Candidates/63KiB/initial=16384KiB/retain=16384KiB-16  	    3470	     51581 ns/op	1270.52 MB/s	   94984 B/op	       2 allocs/op
+PASS
+ok  	openflux/transport/yandex	2.275s
