@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
@@ -29,9 +29,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = 081d214300c1067f17f6c0d02f84a8491f1a7b98
-          git diff --check HEAD^ HEAD
-          git diff --stat HEAD^ HEAD
+          git merge-base --is-ancestor 081d214300c1067f17f6c0d02f84a8491f1a7b98 HEAD
+          git diff --check 081d214300c1067f17f6c0d02f84a8491f1a7b98 HEAD
+          git diff --stat 081d214300c1067f17f6c0d02f84a8491f1a7b98 HEAD
           go version
           go env GOOS GOARCH GOAMD64 CGO_ENABLED
       - name: Root module tests
