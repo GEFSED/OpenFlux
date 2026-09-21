@@ -82,7 +82,7 @@ var reClientConfig = regexp.MustCompile(`<script[^>]*id="client-config"[^>]*>(.*
 
 var (
 	b64BufPool = sync.Pool{
-		New: func() interface{} { return make([]byte, 0, 16*1024*1024) },
+		New: func() interface{} { return make([]byte, 0, 4*1024) },
 	}
 	jsonBufPool = sync.Pool{
 		New: func() interface{} { return bytes.NewBuffer(make([]byte, 0, 128*1024)) },
@@ -102,9 +102,15 @@ func base64Encode(data []byte) string {
 	}
 	base64.StdEncoding.Encode(buf, data)
 	out := string(buf)
-	b64BufPool.Put(buf[:0])
+	// Measurements in docs/perf: 256 KiB retains common batches while avoiding
+	// multi-MiB retention per concurrent worker. Oversized buffers are transient.
+	if retainBase64Buffer(cap(buf)) {
+		b64BufPool.Put(buf[:0])
+	}
 	return out
 }
+
+func retainBase64Buffer(capacity int) bool { return capacity <= 256*1024 }
 
 type VolgaStats struct {
 	PacketsSent    atomic.Uint64
@@ -116,6 +122,7 @@ type VolgaStats struct {
 	WSReconnects   atomic.Uint64
 	QueueDrops     atomic.Uint64
 	WorkerBusy     atomic.Int64
+	PeakWorkerBusy atomic.Int64
 	BatchesSent    atomic.Uint64
 	PacketsBatched atomic.Uint64
 }
@@ -428,8 +435,8 @@ type relayClient struct {
 
 	httpClient *http.Client
 	workers    int
-	queue      chan []byte
 	batchQueue chan []byte
+	enqueueMu  sync.Mutex
 	wg         sync.WaitGroup
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -463,7 +470,6 @@ func newRelayClient(auth *volgaAuth, cfg VolgaConfig, stats *VolgaStats) *relayC
 			Jar:       auth.Session.Jar,
 		},
 		workers:    cfg.WorkerCount,
-		queue:      make(chan []byte, cfg.QueueSize),
 		batchQueue: make(chan []byte, cfg.QueueSize),
 		ctx:        ctx,
 		cancel:     cancel,
@@ -480,13 +486,26 @@ func (r *relayClient) Start() {
 }
 
 func (r *relayClient) Stop() {
+	r.enqueueMu.Lock()
 	r.cancel()
-	close(r.queue)
-	close(r.batchQueue)
+	r.enqueueMu.Unlock()
 	r.wg.Wait()
+	r.httpClient.CloseIdleConnections()
+	for {
+		select {
+		case <-r.batchQueue:
+		default:
+			return
+		}
+	}
 }
 
 func (r *relayClient) Send(data []byte) error {
+	r.enqueueMu.Lock()
+	defer r.enqueueMu.Unlock()
+	if err := r.ctx.Err(); err != nil {
+		return err
+	}
 	if len(data) == 0 {
 		return nil
 	}
@@ -498,6 +517,8 @@ func (r *relayClient) Send(data []byte) error {
 	copy(cp, data)
 
 	select {
+	case <-r.ctx.Done():
+		return r.ctx.Err()
 	case r.batchQueue <- cp:
 		return nil
 	default:
@@ -521,7 +542,12 @@ func (r *relayClient) worker(id int) {
 		if len(batch) == 0 {
 			return
 		}
-		r.stats.WorkerBusy.Add(1)
+		busy := r.stats.WorkerBusy.Add(1)
+		for peak := r.stats.PeakWorkerBusy.Load(); busy > peak; peak = r.stats.PeakWorkerBusy.Load() {
+			if r.stats.PeakWorkerBusy.CompareAndSwap(peak, busy) {
+				break
+			}
+		}
 		err := r.sendBatch(batch)
 		if err != nil {
 			r.stats.HTTPReqsFailed.Add(1)
@@ -687,14 +713,17 @@ func (r *relayClient) getFrontier() []interface{} {
 }
 
 type wsListener struct {
-	auth   *volgaAuth
-	config VolgaConfig
-	stats  *VolgaStats
-	relay  *relayClient
-	onData func([]byte)
+	// Per-instance dependency seam for local lifecycle tests (nil uses network).
+	connectFn func() error
+	auth      *volgaAuth
+	config    VolgaConfig
+	stats     *VolgaStats
+	relay     *relayClient
+	onData    func([]byte)
 
 	ctx    context.Context
 	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 func newWSListener(auth *volgaAuth, cfg VolgaConfig, stats *VolgaStats,
@@ -713,11 +742,13 @@ func newWSListener(auth *volgaAuth, cfg VolgaConfig, stats *VolgaStats,
 }
 
 func (w *wsListener) Start() {
-	go w.run()
+	w.wg.Add(1)
+	go func() { defer w.wg.Done(); w.run() }()
 }
 
 func (w *wsListener) Stop() {
 	w.cancel()
+	w.wg.Wait()
 }
 
 func (w *wsListener) run() {
@@ -730,7 +761,11 @@ func (w *wsListener) run() {
 		default:
 		}
 
-		if err := w.connect(); err != nil {
+		connect := w.connect
+		if w.connectFn != nil {
+			connect = w.connectFn
+		}
+		if err := connect(); err != nil {
 			utils.Debugf("[VOLGA] WS error: %v", err)
 		}
 		if w.ctx.Err() != nil {
@@ -779,11 +814,16 @@ func (w *wsListener) connect() error {
 		WriteBufferSize:  4 << 20,
 	}
 
-	conn, _, err := dialer.Dial(wsURL, header)
+	conn, resp, err := dialer.DialContext(w.ctx, wsURL, header)
 	if err != nil {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
+	stopClose := context.AfterFunc(w.ctx, func() { conn.Close() })
+	defer stopClose()
 
 	utils.Debugf("[VOLGA] WS connected: user=%s", w.auth.UserIDStr)
 
@@ -924,6 +964,10 @@ func decodeBatch(decoded []byte) [][]byte {
 
 type YandexVolgaTransport struct {
 	*transport.BaseTransport
+	// Defaults remain the real provider; tests substitute auth/WS without
+	// process-global hooks or external credentials/network traffic.
+	authorizeFn func(string) (*volgaAuth, error)
+	connectWSFn func(*wsListener) error
 
 	docURL string
 	config VolgaConfig
@@ -937,31 +981,57 @@ type YandexVolgaTransport struct {
 	onData   func([]byte)
 
 	keepAliveStop chan struct{}
+	lifecycle     sync.Mutex
+	relayMu       sync.RWMutex
+	loops         sync.WaitGroup
 }
 
 func NewYandexVolgaTransport(docURL string, cfg transport.TransportConfig) *YandexVolgaTransport {
+	return newYandexVolgaTransport(docURL, cfg, DefaultVolgaConfig())
+}
+
+func NewYandexVolgaTransportWithConfig(docURL string, cfg transport.TransportConfig, volga VolgaConfig) (*YandexVolgaTransport, error) {
+	if volga.WorkerCount < 1 || volga.WorkerCount > 2000 || volga.QueueSize < 1 || volga.QueueSize > 1000000 || volga.BatchSize < 1 || volga.BatchSize > 1024 || volga.BatchTimeout < 0 || volga.BatchTimeout > time.Second || volga.BatchMaxBytes < 1 || volga.MaxIdleConns < 1 || volga.MaxIdleConnsPerHost < 1 || volga.RelayTimeout <= 0 || volga.KeepAliveInterval <= 0 || volga.WSReadTimeout <= 0 {
+		return nil, fmt.Errorf("invalid Volga configuration")
+	}
+	return newYandexVolgaTransport(docURL, cfg, volga), nil
+}
+func newYandexVolgaTransport(docURL string, cfg transport.TransportConfig, volga VolgaConfig) *YandexVolgaTransport {
 	return &YandexVolgaTransport{
 		BaseTransport: transport.NewBaseTransport(cfg),
 		docURL:        docURL,
-		config:        DefaultVolgaConfig(),
+		config:        volga,
 		stats:         &VolgaStats{},
 		keepAliveStop: make(chan struct{}),
 	}
 }
 
 func (t *YandexVolgaTransport) Start() error {
+	t.lifecycle.Lock()
+	defer t.lifecycle.Unlock()
+	if t.IsRunning() {
+		return nil
+	}
+	t.keepAliveStop = make(chan struct{})
 	if err := t.BaseTransport.Start(); err != nil {
 		return err
 	}
 
 	utils.Debugf("[VOLGA] authorizing...")
-	auth, err := authorize(t.docURL)
+	authorizer := authorize
+	if t.authorizeFn != nil {
+		authorizer = t.authorizeFn
+	}
+	auth, err := authorizer(t.docURL)
 	if err != nil {
+		t.BaseTransport.Stop()
 		return fmt.Errorf("auth: %w", err)
 	}
 	t.auth = auth
 
+	t.relayMu.Lock()
 	t.relay = newRelayClient(auth, t.config, t.stats)
+	t.relayMu.Unlock()
 	t.relay.Start()
 
 	t.ws = newWSListener(auth, t.config, t.stats, t.relay, func(data []byte) {
@@ -973,10 +1043,15 @@ func (t *YandexVolgaTransport) Start() error {
 		}
 		t.RecordReceive(len(data))
 	})
+	if t.connectWSFn != nil {
+		listener := t.ws
+		t.ws.connectFn = func() error { return t.connectWSFn(listener) }
+	}
 	t.ws.Start()
 
-	go t.keepAliveLoop()
-	go t.statsLoop()
+	t.loops.Add(2)
+	go func() { defer t.loops.Done(); t.keepAliveLoop() }()
+	go func() { defer t.loops.Done(); t.statsLoop() }()
 	t.SetConnected(true)
 
 	utils.Debugf("[VOLGA] transport started: user=%d(%s) rp=%s",
@@ -985,6 +1060,8 @@ func (t *YandexVolgaTransport) Start() error {
 }
 
 func (t *YandexVolgaTransport) Stop() error {
+	t.lifecycle.Lock()
+	defer t.lifecycle.Unlock()
 	select {
 	case <-t.keepAliveStop:
 	default:
@@ -996,15 +1073,22 @@ func (t *YandexVolgaTransport) Stop() error {
 	if t.relay != nil {
 		t.relay.Stop()
 	}
+	t.loops.Wait()
+	if t.auth != nil && t.auth.Session != nil {
+		t.auth.Session.CloseIdleConnections()
+	}
 	t.SetConnected(false)
 	return t.BaseTransport.Stop()
 }
 
 func (t *YandexVolgaTransport) Send(data []byte) error {
-	if t.relay == nil {
+	t.relayMu.RLock()
+	r := t.relay
+	t.relayMu.RUnlock()
+	if r == nil {
 		return fmt.Errorf("transport not started")
 	}
-	return t.relay.Send(data)
+	return r.Send(data)
 }
 
 func (t *YandexVolgaTransport) Receive(callback func([]byte)) {

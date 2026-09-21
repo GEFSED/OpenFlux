@@ -36,7 +36,7 @@ func (f *fakeTransport) Receive(cb func([]byte)) {
 	f.cb = cb
 	f.mu.Unlock()
 }
-func (f *fakeTransport) IsConnected() bool    { return true }
+func (f *fakeTransport) IsConnected() bool     { return true }
 func (f *fakeTransport) Stats() TransportStats { return TransportStats{} }
 
 func (f *fakeTransport) sendCount() int {
@@ -57,7 +57,7 @@ func (f *fakeTransport) firstSent() []byte {
 func TestBatchedTransportRoundTripPreservesPacketsAndOrder(t *testing.T) {
 	inner := &fakeTransport{loopback: true}
 	bt := NewBatchedTransport(inner)
-	bt.lingerMs = 10
+	bt.linger = 10 * time.Millisecond
 
 	var mu sync.Mutex
 	var got [][]byte
@@ -97,7 +97,7 @@ func TestBatchedTransportRoundTripPreservesPacketsAndOrder(t *testing.T) {
 func TestBatchedTransportCoalescesBurstIntoOneMessage(t *testing.T) {
 	inner := &fakeTransport{}
 	bt := NewBatchedTransport(inner)
-	bt.lingerMs = 50
+	bt.linger = 50 * time.Millisecond
 	if err := bt.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
