@@ -101,6 +101,15 @@ Windows timer scheduling produced ~346 polls/s rather than the nominal maximum
 This is wakeup/read-call evidence, not a measured Android CPU/battery saving.
 Phone diagnostics include process CPU time, PSS, Java/native heaps for manual A/B.
 
+A second pair of 300-second runs measured OS process CPU time (Windows
+GetProcessTimes; Linux/Darwin reproduction uses getrusage). Polling: 104075 reads,
+**1.546875 CPU seconds**; blocking: one read/one wait, **0 CPU seconds reported**,
+meaning below the accounting resolution, not zero energy use. Both ended with
+two goroutines. They ran in separate processes; no radio, keepalive, JNI or UI
+was active. Raw output is in `results/idle-windows-amd64.txt`. Android CPU and
+battery still require the phone A/B. The diagnostics sampler runs only while
+its dialog is visible and is shut down when the Activity stops.
+
 ## Reproduction
 
 Go 1.26.4 or a compatible toolchain, no credentials needed. From repository root:

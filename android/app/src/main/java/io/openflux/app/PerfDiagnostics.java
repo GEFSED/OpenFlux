@@ -21,7 +21,7 @@ import io.openflux.bridge.mobile.Mobile;
 
 /** Local numeric diagnostics only. Never reads saved profiles, credentials or logs. */
 final class PerfDiagnostics {
-    static void show(Activity activity) {
+    static AlertDialog show(Activity activity) {
         TextView text = new TextView(activity);
         text.setPadding(24, 16, 24, 16);
         text.setTextIsSelectable(true);
@@ -78,5 +78,6 @@ final class PerfDiagnostics {
                 }
             }
         }, 0, 2, TimeUnit.SECONDS);
+        return dialog;
     }
 }

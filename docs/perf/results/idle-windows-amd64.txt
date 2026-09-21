@@ -1,0 +1,13 @@
+=== RUN   TestPerfIdle
+    perf_test.go:235: process_cpu_seconds=1.546875 supported=true
+    perf_test.go:237: {"after_heap":606616,"before_heap":608032,"gc_count":3,"goroutines":2,"mode":"polling","read_calls":104075,"seconds":300.002074,"total_alloc_bytes":6248,"wait_calls":0}
+--- PASS: TestPerfIdle (300.00s)
+PASS
+ok  	openflux-mobile	300.444s
+
+=== RUN   TestPerfIdle
+    perf_test.go:235: process_cpu_seconds=0.000000 supported=true
+    perf_test.go:237: {"after_heap":606008,"before_heap":607280,"gc_count":3,"goroutines":2,"mode":"blocking","read_calls":1,"seconds":300.0036584,"total_alloc_bytes":6312,"wait_calls":1}
+--- PASS: TestPerfIdle (300.01s)
+PASS
+ok  	openflux-mobile	300.439s

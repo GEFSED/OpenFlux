@@ -45,6 +45,26 @@ func TestVolgaStartStop100Cycles(t *testing.T) {
 	}
 }
 
+func TestVolgaStopDoesNotBlockCallbackSend(t *testing.T) {
+	cfg := DefaultVolgaConfig()
+	cfg.WorkerCount = 1
+	cfg.QueueSize = 16
+	tr := offlineVolga(cfg)
+	entered := make(chan struct{})
+	tr.connectWSFn = func(ws *wsListener) error { close(entered); <-ws.ctx.Done(); return tr.Send(nil) }
+	if err := tr.Start(); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	stopped := make(chan struct{})
+	go func() { tr.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Stop held the Send lock while joining a callback")
+	}
+}
+
 // Complete Start/Stop control path with synthetic auth and an idle cancellable
 // WS connection. Excludes real TLS/auth/WS-buffer allocations; phone PSS is
 // still required. Never issues an external HTTP request.

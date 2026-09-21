@@ -208,6 +208,7 @@ func TestPerfIdle(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&before)
 	start := time.Now()
+	cpuBefore := perfProcessCPUSeconds()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -230,6 +231,8 @@ func TestPerfIdle(t *testing.T) {
 	<-done
 	runtime.GC()
 	runtime.ReadMemStats(&after)
+	cpuAfter := perfProcessCPUSeconds()
+	t.Logf("process_cpu_seconds=%.6f supported=%v", cpuAfter-cpuBefore, cpuBefore >= 0 && cpuAfter >= 0)
 	data, _ := json.Marshal(map[string]any{"mode": mode, "seconds": time.Since(start).Seconds(), "read_calls": s.reads, "wait_calls": s.waits, "before_heap": before.HeapAlloc, "after_heap": after.HeapAlloc, "total_alloc_bytes": after.TotalAlloc - before.TotalAlloc, "gc_count": after.NumGC - before.NumGC, "goroutines": runtime.NumGoroutine()})
 	t.Log(string(data))
 }

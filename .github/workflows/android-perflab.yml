@@ -58,6 +58,7 @@ jobs:
           done
           cd dist
           sha256sum *-perflab.apk > SHA256SUMS
+          cat SHA256SUMS
           printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, experimental; baseline default.\n' "$GITHUB_SHA" > BUILD.txt
       - uses: actions/upload-artifact@v4
         with:

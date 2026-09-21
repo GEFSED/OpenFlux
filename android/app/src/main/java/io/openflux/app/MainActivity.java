@@ -175,6 +175,7 @@ public final class MainActivity extends Activity {
     private String codec = "batched";
     private String performanceProfile = "baseline";
     private String editorPerformanceProfile = "baseline";
+    private android.app.AlertDialog performanceDialog;
     private String maxToken = "";
     private String maxUid = "";
     private ProfileStore profileStore;
@@ -324,6 +325,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onStop() {
+        if (performanceDialog != null) { performanceDialog.dismiss(); performanceDialog = null; }
         handler.removeCallbacks(refresh);
         captureLogs();
         super.onStop();
@@ -1062,7 +1064,7 @@ public final class MainActivity extends Activity {
             Button diagnostics = new Button(this);
             diagnostics.setAllCaps(false);
             diagnostics.setText("Диагностика производительности");
-            diagnostics.setOnClickListener(v -> PerfDiagnostics.show(this));
+            diagnostics.setOnClickListener(v -> performanceDialog = PerfDiagnostics.show(this));
             page.addView(diagnostics, matchWrap());
         }
         return wrapScroll(page);
