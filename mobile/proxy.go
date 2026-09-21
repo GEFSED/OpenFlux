@@ -57,8 +57,7 @@ func StartProxy(transportType, documentURL, encryptionSecret, codec, maxToken, m
 	}
 	proxy.mu.Unlock()
 
-	utils.EnableDebug()
-	utils.SetLogSink(appendLog)
+	configureLogging()
 	appendLog(fmt.Sprintf("[ANDROID] Запуск прокси-транспорта %s", transportType))
 
 	config := transport.DefaultConfig()
