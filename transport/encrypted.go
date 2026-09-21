@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"sync"
 
+	"universal-bypass-tool/internal/receivediag"
+
 	"golang.org/x/crypto/scrypt"
 )
 
@@ -127,21 +129,38 @@ func (e *EncryptedTransport) Send(data []byte) error {
 
 func (e *EncryptedTransport) Receive(callback func([]byte)) {
 	e.Transport.Receive(func(packet []byte) {
+		receivediag.Default.Add(receivediag.AESPackets, 1)
 		if len(packet) < encryptedHeader+e.receiveAEAD.NonceSize()+e.receiveAEAD.Overhead() {
+			receivediag.Default.Add(receivediag.AESTooShort, 1)
+			receivediag.Default.Fail(receivediag.AESTooShortLayer)
 			return
 		}
 		header := packet[:encryptedHeader]
 		if header[0] != encryptedMagic[0] || header[1] != encryptedMagic[1] ||
-			header[2] != encryptedMagic[2] || header[3] != encryptedVersion ||
-			header[4] != e.recvDirection {
+			header[2] != encryptedMagic[2] || header[3] != encryptedVersion {
+			receivediag.Default.Add(receivediag.AESBadMagic, 1)
+			receivediag.Default.Fail(receivediag.AESHeader)
+			return
+		}
+		if header[4] != e.recvDirection {
+			receivediag.Default.Add(receivediag.AESWrongDirection, 1)
+			receivediag.Default.Fail(receivediag.AESDirection)
 			return
 		}
 		nonceEnd := encryptedHeader + e.receiveAEAD.NonceSize()
 		nonce := packet[encryptedHeader:nonceEnd]
 		plaintext, err := e.receiveAEAD.Open(nil, nonce, packet[nonceEnd:], header)
-		if err != nil || !e.rememberNonce(nonce) {
+		if err != nil {
+			receivediag.Default.Add(receivediag.AESDecryptFail, 1)
+			receivediag.Default.Fail(receivediag.AESDecrypt)
 			return
 		}
+		if !e.rememberNonce(nonce) {
+			receivediag.Default.Add(receivediag.AESReplayDrop, 1)
+			return
+		}
+		receivediag.Default.Add(receivediag.AESDecryptSuccess, 1)
+		receivediag.Default.Add(receivediag.AESPlaintextBytes, len(plaintext))
 		callback(plaintext)
 	})
 }

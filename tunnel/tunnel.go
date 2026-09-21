@@ -16,6 +16,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/waiter"
 
+	"universal-bypass-tool/internal/receivediag"
 	"universal-bypass-tool/transport"
 	"universal-bypass-tool/utils"
 )
@@ -121,6 +122,10 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 	}
 
 	trans.Receive(func(data []byte) {
+		if isExitNode && mode == ExitModeProxy {
+			receivediag.Default.Add(receivediag.ProxyPackets, 1)
+			receivediag.Default.Add(receivediag.ProxyBytes, len(data))
+		}
 		tunnelEP.InjectInbound(data)
 	})
 

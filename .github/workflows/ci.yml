@@ -1,61 +1,76 @@
-name: CI
-
+name: Exit receive diagnostics (Linux only)
 on:
   push:
-  pull_request:
+    branches: [codex/exit-receive-diag]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
-  go:
-    name: Go tests & Linux binaries
-    runs-on: ubuntu-latest
+  validate:
+    name: Linux Go tests, race, vet and diagnostic exit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GOTOOLCHAIN: local
+      CGO_ENABLED: "1"
+      GOOS: linux
+      GOARCH: amd64
+      GOAMD64: v1
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-          cache: true
-      - run: go test ./...
-      - run: go vet ./...
-      - name: Build Linux server/client binaries
+          go-version: "1.26.4"
+          cache: false
+      - name: Verify exact source base and diff
+        shell: bash
         run: |
-          mkdir -p dist
-          GOOS=linux GOARCH=amd64 go build -o dist/OpenFlux-linux-amd64 .
-          GOOS=linux GOARCH=arm64 go build -o dist/OpenFlux-linux-arm64 .
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = 081d214300c1067f17f6c0d02f84a8491f1a7b98
+          git diff --check HEAD^ HEAD
+          git diff --stat HEAD^ HEAD
+          go version
+          go env GOOS GOARCH GOAMD64 CGO_ENABLED
+      - name: Root module tests
+        run: go test ./...
+      - name: Root module race tests
+        run: go test -race ./...
+      - name: Root module vet
+        run: go vet ./...
+      - name: Root module build
+        run: go build ./...
+      - name: Shared transport consumer module validation
+        working-directory: mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./...
+          go test -race ./...
+          go vet ./...
+          go build ./...
+      - name: Build separate Linux amd64 diagnostic exit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/openflux-diag"
+          go build -o "$RUNNER_TEMP/openflux-diag/openflux-diag" .
+          {
+            printf "SOURCE_SHA="
+            git rev-parse HEAD
+            printf "PRODUCTION_SOURCE_SHA=081d214300c1067f17f6c0d02f84a8491f1a7b98\n"
+            printf "RECEIVE_ORDER=Volga -> AES -> Legacy -> proxy\n"
+            go version
+            go version -m "$RUNNER_TEMP/openflux-diag/openflux-diag"
+          } > "$RUNNER_TEMP/openflux-diag/BUILD-INFO.txt"
+          cd "$RUNNER_TEMP/openflux-diag"
+          sha256sum openflux-diag | tee SHA256SUMS
+          cat BUILD-INFO.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: OpenFlux-linux-${{ github.sha }}
-          path: dist/OpenFlux-linux-*
+          name: openflux-exit-receive-diag-linux-amd64
+          path: ${{ runner.temp }}/openflux-diag/
           if-no-files-found: error
-          retention-days: 30
-
-  android:
-    name: Android debug APKs
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - uses: android-actions/setup-android@v3
-      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.14.3"
-      - run: go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
-      - run: go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
-      - run: GRADLE_BIN="$(command -v gradle)" ./build_android_app.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: OpenFlux-android-debug-${{ github.sha }}
-          path: dist/OpenFlux-android-*-debug.apk
-          if-no-files-found: error
-          retention-days: 30
+          retention-days: 7

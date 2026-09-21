@@ -16,7 +16,6 @@ import (
 	"universal-bypass-tool/transport/oneme"
 	"universal-bypass-tool/transport/yandex"
 	"universal-bypass-tool/tunnel"
-	"universal-bypass-tool/utils"
 )
 
 var (
@@ -67,7 +66,9 @@ func main() {
 	}
 
 	if *debug {
-		utils.EnableDebug()
+		// Legacy verbose logging includes provider credentials and packet addresses.
+		// This diagnostic build emits only closed-schema receive counters instead.
+		log.Printf("Receive diagnostics enabled; sensitive verbose logging suppressed")
 	}
 
 	log.Printf("=== Universal Bypass Tool ===")
@@ -126,7 +127,7 @@ func main() {
 	trans := transport.NewCompressedTransport(inner)
 
 	if err := trans.Start(); err != nil {
-		log.Fatalf("Failed to start transport: %v", err)
+		log.Fatal("Failed to start transport (details suppressed by receive diagnostics)")
 	}
 
 	tun := tunnel.NewTCPTunnelMode(trans, *exitNode, exitMode)

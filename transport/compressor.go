@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"io"
 
+	"universal-bypass-tool/internal/receivediag"
+
 	"github.com/pierrec/lz4/v4"
 )
 
@@ -27,11 +29,18 @@ func (c *CompressedTransport) Send(data []byte) error {
 
 func (c *CompressedTransport) Receive(callback func([]byte)) {
 	c.Transport.Receive(func(data []byte) {
+		receivediag.Default.Add(receivediag.LegacyFrames, 1)
 		decompressed, err := decompress(data)
 		if err != nil {
+			receivediag.Default.Add(receivediag.LegacyErrors, 1)
+			receivediag.Default.Add(receivediag.LegacyFallback, 1)
+			receivediag.Default.Add(receivediag.LegacyBytes, len(data))
+			receivediag.Default.Fail(receivediag.Legacy)
 			callback(data) // fallback
 			return
 		}
+		receivediag.Default.Add(receivediag.LegacySuccess, 1)
+		receivediag.Default.Add(receivediag.LegacyBytes, len(decompressed))
 		callback(decompressed)
 	})
 }

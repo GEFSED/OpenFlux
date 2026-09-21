@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"universal-bypass-tool/internal/receivediag"
 	"universal-bypass-tool/transport"
 	"universal-bypass-tool/utils"
 )
@@ -784,6 +786,8 @@ func (w *wsListener) connect() error {
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
+	log.Print("[RX-DIAG-STATE] ws_connected=1")
+	defer log.Print("[RX-DIAG-STATE] ws_connected=0")
 
 	utils.Debugf("[VOLGA] WS connected: user=%s", w.auth.UserIDStr)
 
@@ -898,6 +902,8 @@ func (w *wsListener) handleBundleItem(raw json.RawMessage) {
 		w.stats.PacketsRecv.Add(uint64(len(packets)))
 		w.stats.BytesReceived.Add(uint64(len(decoded)))
 		for _, pkt := range packets {
+			receivediag.Default.Add(receivediag.VolgaFrames, 1)
+			receivediag.Default.Add(receivediag.VolgaBytes, len(pkt))
 			if w.onData != nil {
 				w.onData(pkt)
 			}
@@ -1066,6 +1072,9 @@ func (t *YandexVolgaTransport) statsLoop() {
 			recvBytes := t.stats.BytesReceived.Load()
 			batches := t.stats.BatchesSent.Load()
 			batched := t.stats.PacketsBatched.Load()
+
+			// Reuse the existing stats ticker; no additional goroutine or timer.
+			log.Printf("[RX-DIAG] %s", receivediag.Default.Line())
 
 			utils.Debugf("[VOLGA-STATS] send %d pkt/s (%d KB/s) | http %d req/s fail %d | batch %d (avg %.1f pkt) | recv %d pkt/s (%d KB/s) | busy %d/%d",
 				(sent-lastSent)/5, (bytes-lastBytes)/5/1024,
