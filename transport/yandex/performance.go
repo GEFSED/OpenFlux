@@ -5,6 +5,7 @@ package yandex
 type VolgaPerformance struct {
 	VolgaReceiveDiagnostics
 	VolgaHTTPFailureDiagnostics
+	VolgaRateLimitDiagnostics
 	TransportStarted bool    `json:"transport_started"`
 	WorkerCount      int     `json:"worker_count"`
 	WorkersBusy      int64   `json:"workers_busy"`
@@ -25,7 +26,11 @@ type VolgaPerformance struct {
 func (t *YandexVolgaTransport) Performance() VolgaPerformance {
 	t.relayMu.RLock()
 	defer t.relayMu.RUnlock()
-	return volgaPerformance(t.config, t.stats, t.relayQueueLen(), t.IsRunning())
+	d := volgaPerformance(t.config, t.stats, t.relayQueueLen(), t.IsRunning())
+	if t.relay != nil && t.relay.rateLimit != nil {
+		d.VolgaRateLimitDiagnostics = t.relay.rateLimit.snapshot()
+	}
+	return d
 }
 
 func (t *YandexVolgaTransport) relayQueueLen() int {
@@ -57,5 +62,5 @@ func volgaPerformance(cfg VolgaConfig, s *VolgaStats, queued int, started bool) 
 	if requests > 0 {
 		failureRate = float64(failed) / float64(requests)
 	}
-	return VolgaPerformance{VolgaReceiveDiagnostics: s.volgaReceiveCounters.snapshot(), VolgaHTTPFailureDiagnostics: s.httpFailures.snapshot(failed), TransportStarted: started, WorkerCount: cfg.WorkerCount, WorkersBusy: s.WorkerBusy.Load(), PeakWorkersBusy: s.PeakWorkerBusy.Load(), QueueLen: queued, QueueCap: cfg.QueueSize, QueueDrops: s.QueueDrops.Load(), HTTPRequests: requests, HTTPFailures: failed, HTTPSuccesses: succeeded, HTTPFailureRate: failureRate, Batches: n, PacketsBatched: p, Average: avg, Reconnects: s.WSReconnects.Load()}
+	return VolgaPerformance{VolgaReceiveDiagnostics: s.volgaReceiveCounters.snapshot(), VolgaHTTPFailureDiagnostics: s.httpFailures.snapshot(failed), VolgaRateLimitDiagnostics: VolgaRateLimitDiagnostics{Enabled: cfg.RateLimit429GuardEnabled}, TransportStarted: started, WorkerCount: cfg.WorkerCount, WorkersBusy: s.WorkerBusy.Load(), PeakWorkersBusy: s.PeakWorkerBusy.Load(), QueueLen: queued, QueueCap: cfg.QueueSize, QueueDrops: s.QueueDrops.Load(), HTTPRequests: requests, HTTPFailures: failed, HTTPSuccesses: succeeded, HTTPFailureRate: failureRate, Batches: n, PacketsBatched: p, Average: avg, Reconnects: s.WSReconnects.Load()}
 }

@@ -42,7 +42,7 @@ func TestThroughputOneFactorConfigs(t *testing.T) {
 func TestProfileNamesAndDiagnostics(t *testing.T) {
 	baselineActive.Store(false)
 	t.Cleanup(Stop)
-	for _, name := range []string{"baseline", "balanced", "low_latency", "throughput", "throughput_current", "throughput_mem", "throughput_96", "throughput_w64", "throughput_w48", "throughput_w32"} {
+	for _, name := range []string{"baseline", "balanced", "low_latency", "throughput", "throughput_current", "throughput_mem", "throughput_96", "throughput_w64", "throughput_w48", "throughput_w32", "throughput_w32_429guard"} {
 		if normalizeProfile(name) != name {
 			t.Fatalf("profile name lost: %s", name)
 		}

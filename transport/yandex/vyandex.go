@@ -47,6 +47,8 @@ type VolgaConfig struct {
 	WSHandshakeTimeout time.Duration
 	WSReadTimeout      time.Duration
 	KeepAliveInterval  time.Duration
+
+	RateLimit429GuardEnabled bool
 }
 
 func DefaultVolgaConfig() VolgaConfig {
@@ -449,6 +451,8 @@ type relayClient struct {
 
 	mu       sync.Mutex
 	frontier string
+
+	rateLimit *relay429Gate
 }
 
 func newRelayClient(auth *volgaAuth, cfg VolgaConfig, stats *VolgaStats) *relayClient {
@@ -475,6 +479,7 @@ func newRelayClient(auth *volgaAuth, cfg VolgaConfig, stats *VolgaStats) *relayC
 		batchQueue: make(chan []byte, cfg.QueueSize),
 		ctx:        ctx,
 		cancel:     cancel,
+		rateLimit:  newRelay429Gate(cfg.RateLimit429GuardEnabled),
 	}
 }
 
@@ -682,17 +687,30 @@ func (r *relayClient) sendBatch(batch [][]byte) error {
 		req.Header.Set("Cookie", strings.Join(cookieParts, "; "))
 	}
 
+	var permit uint64
+	if r.rateLimit != nil {
+		permit, err = r.rateLimit.wait(r.ctx)
+		if err != nil {
+			return err
+		}
+	}
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		r.stats.httpFailures.recordNetwork(err)
 		return err
 	}
 	defer resp.Body.Close()
+	if r.rateLimit != nil && resp.StatusCode == http.StatusTooManyRequests {
+		r.rateLimit.rejected(resp.Header.Values("Retry-After"))
+	}
 	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != 204 && resp.StatusCode != 200 {
 		r.stats.httpFailures.recordStatus(resp.StatusCode)
 		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	if r.rateLimit != nil {
+		r.rateLimit.succeeded(permit)
 	}
 
 	r.stats.PacketsSent.Add(uint64(len(batch)))

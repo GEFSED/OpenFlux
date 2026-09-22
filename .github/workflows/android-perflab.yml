@@ -21,16 +21,34 @@ jobs:
             go.sum
             mobile/go.sum
       - name: Check committed diff
-        run: git diff --check f9adecf6e5c87cadef0401d6f8aa2c6ce5d240f8 HEAD
-      - name: Verify existing packet and relay runtime paths are unchanged
+        run: git diff --check b59dd844dd5b8262c92f0310d01d3e17cf49fdd5 HEAD
+      - name: Verify packet stack and disabled relay path are unchanged
         shell: bash
         run: |
-          git diff --exit-code f9adecf6e5c87cadef0401d6f8aa2c6ce5d240f8 HEAD -- mobile/mobile.go mobile/baseline_v100.go transport/batched.go transport/batched_baseline_v100.go transport/compressor.go transport/encrypted.go transport/yandex/vyandex.go transport/yandex/vyandex_baseline_v100.go transport/yandex/http_failure_diagnostics.go android/app/src/main/java/io/openflux/app/OpenFluxTunnelService.java
+          git diff --exit-code b59dd844dd5b8262c92f0310d01d3e17cf49fdd5 HEAD -- mobile/mobile.go mobile/baseline_v100.go transport/batched.go transport/batched_baseline_v100.go transport/compressor.go transport/encrypted.go transport/yandex/vyandex_baseline_v100.go transport/yandex/http_failure_diagnostics.go android/app/src/main/java/io/openflux/app/OpenFluxTunnelService.java
+          python3 - <<'PY'
+          import pathlib, subprocess
+          path = 'transport/yandex/vyandex.go'
+          before = subprocess.check_output(['git', 'show', 'b59dd844dd5b8262c92f0310d01d3e17cf49fdd5:' + path])
+          after = pathlib.Path(path).read_bytes()
+          additions = (
+              b'\n\tRateLimit429GuardEnabled bool\n',
+              b'\n\trateLimit *relay429Gate\n',
+              b'\t\trateLimit:  newRelay429Gate(cfg.RateLimit429GuardEnabled),\n',
+              b'\tvar permit uint64\n\tif r.rateLimit != nil {\n\t\tpermit, err = r.rateLimit.wait(r.ctx)\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t}\n',
+              b'\tif r.rateLimit != nil && resp.StatusCode == http.StatusTooManyRequests {\n\t\tr.rateLimit.rejected(resp.Header.Values("Retry-After"))\n\t}\n',
+              b'\tif r.rateLimit != nil {\n\t\tr.rateLimit.succeeded(permit)\n\t}\n',
+          )
+          for added in additions:
+              assert after.count(added) == 1, 'unexpected opt-in hook shape'
+              after = after.replace(added, b'')
+          assert after == before, 'relay changed beyond the guarded hooks'
+          PY
           echo "EXISTING_RUNTIME_PATHS_UNCHANGED=PASS"
       - name: Check both modules
         run: |
           go version
-          test -z "$(gofmt -l mobile/*.go transport/batched*.go transport/encrypted.go transport/receive_diagnostics*.go transport/perf_config_test.go transport/yandex/vyandex*.go transport/yandex/*diagnostics*.go transport/yandex/return_path_test.go transport/yandex/tun_shapes_test.go testsupport/tunshapes/*.go testsupport/productionv060peer/peer.go testsupport/productionv060peer/provenance_test.go transport/yandex/perf*.go)"
+          test -z "$(gofmt -l mobile/*.go transport/batched*.go transport/encrypted.go transport/receive_diagnostics*.go transport/perf_config_test.go transport/yandex/vyandex*.go transport/yandex/*diagnostics*.go transport/yandex/rate_limit_429*.go transport/yandex/return_path_test.go transport/yandex/tun_shapes_test.go testsupport/tunshapes/*.go testsupport/productionv060peer/peer.go testsupport/productionv060peer/provenance_test.go transport/yandex/perf*.go)"
           for module in . mobile; do
             (cd "$module" && go test ./... && go test -race ./... && go vet ./... && go build ./...)
           done
@@ -47,21 +65,21 @@ jobs:
           trap restore_fixed EXIT
           git show 36aee5302dc702a251c8362adfec25388708a06d:mobile/baseline_v100.go > mobile/baseline_v100.go
           git show 36aee5302dc702a251c8362adfec25388708a06d:mobile/mobile.go > mobile/mobile.go
-          if (cd mobile && go test -count=1 -run '^TestProductionV060LegacyCompatibility$/^(baseline|balanced|low_latency|throughput|throughput_current|throughput_mem|throughput_96|throughput_w64|throughput_w48|throughput_w32)$/^AES$' .) > "$RUNNER_TEMP/old-order.log" 2>&1; then
+          if (cd mobile && go test -count=1 -run '^TestProductionV060LegacyCompatibility$/^(baseline|balanced|low_latency|throughput|throughput_current|throughput_mem|throughput_96|throughput_w64|throughput_w48|throughput_w32|throughput_w32_429guard)$/^AES$' .) > "$RUNNER_TEMP/old-order.log" 2>&1; then
             echo "ERROR: regression test accepted the old wrapper order"
             exit 1
           fi
           cat "$RUNNER_TEMP/old-order.log"
-          test "$(grep -c 'client wire frame must begin with OFX/version before the production exit' "$RUNNER_TEMP/old-order.log")" -eq 10
+          test "$(grep -c 'client wire frame must begin with OFX/version before the production exit' "$RUNNER_TEMP/old-order.log")" -eq 11
           restore_fixed
           trap - EXIT
           git diff --exit-code -- mobile/baseline_v100.go mobile/mobile.go
-          echo "OLD_ORDER_REGRESSION_PROOF=PASS (all ten Legacy+AES profiles)"
+          echo "OLD_ORDER_REGRESSION_PROOF=PASS (all eleven Legacy+AES profiles)"
   android:
     needs: go
     env:
       PERFLAB_ARM64_ONLY: "1"
-    name: Worker-count experiment arm64 APK and Java tests
+    name: 429-guard experiment arm64 APK and Java tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,14 +107,14 @@ jobs:
           for apk in dist/*-perflab.apk; do
             "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > "$apk.badging.txt"
             grep -q "package: name='io.openflux.app.perflab'" "$apk.badging.txt"
-            grep -q "versionCode='15' versionName='1.0.0-perflab.6'" "$apk.badging.txt"
+            grep -q "versionCode='16' versionName='1.0.0-perflab.7'" "$apk.badging.txt"
             grep -q "application-label:'OpenFlux Perf Lab'" "$apk.badging.txt"
             grep -Fxq "native-code: 'arm64-v8a'" "$apk.badging.txt"
           done
           cd dist
           sha256sum *-perflab.apk > SHA256SUMS
           cat SHA256SUMS
-          printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, fixed worker-count A/B; Legacy + throughput_w64 / throughput_w48 / throughput_w32. Cold start each run.\n' "$GITHUB_SHA" > BUILD.txt
+          printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, 429-gate A/B; Legacy + throughput_w32 / throughput_w32_429guard. Cold start each; no relay batch retries.\n' "$GITHUB_SHA" > BUILD.txt
       - uses: actions/upload-artifact@v4
         with:
           name: OpenFlux-Android-PerfLab-${{ github.sha }}

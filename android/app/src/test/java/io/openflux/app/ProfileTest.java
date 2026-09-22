@@ -21,11 +21,12 @@ public class ProfileTest {
     @Test public void selectorLabelsAndPersistedValuesRemainDistinct() throws Exception {
         String[] expected = {"baseline", "balanced", "low_latency", "throughput",
                 "throughput_current", "throughput_mem", "throughput_96",
-                "throughput_w64", "throughput_w48", "throughput_w32"};
+                "throughput_w64", "throughput_w48", "throughput_w32", "throughput_w32_429guard"};
         String[] labels = {"Baseline", "Balanced", "Low latency", "Throughput",
                 "Throughput current (64 / 4096)", "Throughput memory (64 / 2048)",
                 "Throughput 96 workers (96 / 4096)", "Throughput 64 workers (64 / 4096)",
-                "Throughput 48 workers (48 / 4096)", "Throughput 32 workers (32 / 4096)"};
+                "Throughput 48 workers (48 / 4096)", "Throughput 32 workers (32 / 4096)",
+                "Throughput 32 + 429 guard"};
         assertArrayEquals(expected, Profile.performanceProfileValues());
         assertArrayEquals(labels, Profile.performanceProfileLabels());
         for (int position = 0; position < expected.length; position++) {

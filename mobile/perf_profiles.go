@@ -13,7 +13,7 @@ type perfConfig struct {
 
 func normalizeProfile(name string) string {
 	switch name {
-	case "balanced", "low_latency", "throughput", "throughput_current", "throughput_mem", "throughput_96", "throughput_w64", "throughput_w48", "throughput_w32":
+	case "balanced", "low_latency", "throughput", "throughput_current", "throughput_mem", "throughput_96", "throughput_w64", "throughput_w48", "throughput_w32", "throughput_w32_429guard":
 		return name
 	}
 	return "baseline"
@@ -38,7 +38,7 @@ func profileConfig(name string) perfConfig {
 		p.outer.MaxBatchBytes = 16 << 10
 		p.outer.Linger = time.Millisecond
 		p.outer.QueueDepth = 2048
-	case "throughput", "throughput_current", "throughput_mem", "throughput_96", "throughput_w64", "throughput_w48", "throughput_w32":
+	case "throughput", "throughput_current", "throughput_mem", "throughput_96", "throughput_w64", "throughput_w48", "throughput_w32", "throughput_w32_429guard":
 		p.volga.WorkerCount = 64
 		p.volga.QueueSize = 4096
 		p.volga.BatchSize = 32
@@ -55,9 +55,10 @@ func profileConfig(name string) perfConfig {
 		if name == "throughput_w48" {
 			p.volga.WorkerCount = 48
 		}
-		if name == "throughput_w32" {
+		if name == "throughput_w32" || name == "throughput_w32_429guard" {
 			p.volga.WorkerCount = 32
 		}
+		p.volga.RateLimit429GuardEnabled = name == "throughput_w32_429guard"
 	default:
 		return p
 	}

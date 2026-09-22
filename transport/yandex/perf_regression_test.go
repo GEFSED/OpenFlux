@@ -14,7 +14,7 @@ import (
 )
 
 func TestVolgaDefaultsUnchanged(t *testing.T) {
-	want := VolgaConfig{2000, 4000, 90 * time.Second, 30 * time.Second, 2000, 1000000, 20, 2 * time.Millisecond, 4 << 20, 5000000, 200, 500 * time.Millisecond, 30 * time.Second, 1.5, 10 * time.Second, 60 * time.Second, 10 * time.Second}
+	want := VolgaConfig{2000, 4000, 90 * time.Second, 30 * time.Second, 2000, 1000000, 20, 2 * time.Millisecond, 4 << 20, 5000000, 200, 500 * time.Millisecond, 30 * time.Second, 1.5, 10 * time.Second, 60 * time.Second, 10 * time.Second, false}
 	if DefaultVolgaConfig() != want {
 		t.Fatal("CLI defaults changed")
 	}
