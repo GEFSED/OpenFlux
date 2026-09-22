@@ -30,6 +30,9 @@ func SetDebug(on bool) {
 }
 
 func Debugf(format string, args ...interface{}) {
+	if relayDiagnosticMode.Load() {
+		return
+	}
 	if verbose {
 		message := fmt.Sprintf(format, args...)
 		debugLog.Output(2, message)

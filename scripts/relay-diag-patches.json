@@ -1,0 +1,86 @@
+[
+  {
+    "from": "type VolgaStats struct {\n",
+    "to": "type VolgaStats struct {\n\tdiag relayDiagnostics\n"
+  },
+  {
+    "from": "case r.batchQueue <- cp:\n\t\treturn nil",
+    "to": "case r.batchQueue <- cp:\n\t\tr.stats.diag.observeQueue(len(r.batchQueue))\n\t\treturn nil"
+  },
+  {
+    "from": "r.stats.WorkerBusy.Add(1)\n\t\terr := r.sendBatch(batch)",
+    "to": "busy := r.stats.WorkerBusy.Add(1)\n\t\tr.stats.diag.observeWorkers(busy)\n\t\terr := r.sendBatch(batch)"
+  },
+  {
+    "from": "\tencoded := base64Encode(blob.Bytes())",
+    "to": "\tr.stats.diag.batch(len(batch), totalBytes)\n\tencoded := base64Encode(blob.Bytes())"
+  },
+  {
+    "from": "if err := enc.Encode(payload); err != nil {\n\t\tjsonBufPool.Put(buf)",
+    "to": "if err := enc.Encode(payload); err != nil {\n\t\tr.stats.diag.prepareErrors.Add(1)\n\t\tjsonBufPool.Put(buf)"
+  },
+  {
+    "from": "req, err := http.NewRequestWithContext(r.ctx, \"POST\", urlStr, bytes.NewReader(bodyCopy))\n\tif err != nil {\n\t\treturn err",
+    "to": "req, err := http.NewRequestWithContext(r.ctx, \"POST\", urlStr, bytes.NewReader(bodyCopy))\n\tif err != nil {\n\t\tr.stats.diag.prepareErrors.Add(1)\n\t\treturn err"
+  },
+  {
+    "from": "\tresp, err := r.httpClient.Do(req)\n\tif err != nil {\n\t\treturn err\n\t}\n\tdefer resp.Body.Close()\n\tio.Copy(io.Discard, resp.Body)",
+    "to": "\tstarted := r.stats.diag.begin(len(bodyCopy), totalBytes)\n\tresp, err := r.httpClient.Do(req)\n\tif err != nil {\n\t\tr.stats.diag.finish(started, len(bodyCopy), totalBytes, 0, err, false)\n\t\treturn err\n\t}\n\tdefer resp.Body.Close()\n\t_, bodyErr := io.Copy(io.Discard, resp.Body)\n\tr.stats.diag.finish(started, len(bodyCopy), totalBytes, resp.StatusCode, nil, bodyErr != nil)"
+  },
+  {
+    "from": "\tdefer conn.Close()\n\n\tutils.Debugf",
+    "to": "\tdefer conn.Close()\n\tw.stats.diag.wsConnected.Store(1)\n\tw.stats.diag.wsConnects.Add(1)\n\tdefer func() {\n\t\tw.stats.diag.wsConnected.Store(0)\n\t\tw.stats.diag.wsDisconnects.Add(1)\n\t}()\n\n\tutils.Debugf"
+  },
+  {
+    "from": "return fmt.Errorf(\"dial: %w\", err)",
+    "to": "w.stats.diag.wsConnectFailures.Add(1)\n\t\treturn fmt.Errorf(\"dial: %w\", err)"
+  },
+  {
+    "from": "func (w *wsListener) handleMessage(raw []byte) {\n",
+    "to": "func (w *wsListener) handleMessage(raw []byte) {\n\tw.stats.diag.wsMessages.Add(1)\n\tw.stats.diag.wsMessageBytes.Add(uint64(len(raw)))\n"
+  },
+  {
+    "from": "if err := json.Unmarshal(raw, &envelope); err != nil {\n\t\treturn",
+    "to": "if err := json.Unmarshal(raw, &envelope); err != nil {\n\t\tw.stats.diag.wsJSONErrors.Add(1)\n\t\treturn"
+  },
+  {
+    "from": "if err := json.Unmarshal([]byte(envelope.Message), &inner); err != nil {\n\t\treturn",
+    "to": "if err := json.Unmarshal([]byte(envelope.Message), &inner); err != nil {\n\t\tw.stats.diag.wsJSONErrors.Add(1)\n\t\treturn"
+  },
+  {
+    "from": "if err := json.Unmarshal(raw, &relay); err != nil {\n\t\treturn",
+    "to": "if err := json.Unmarshal(raw, &relay); err != nil {\n\t\tw.stats.diag.wsJSONErrors.Add(1)\n\t\treturn"
+  },
+  {
+    "from": "\t\tdecoded, err := base64.StdEncoding.DecodeString(asStr)\n\t\tif err != nil {\n\t\t\treturn",
+    "to": "\t\tdecoded, err := base64.StdEncoding.DecodeString(asStr)\n\t\tif err != nil {\n\t\t\tw.stats.diag.wsBase64Errors.Add(1)\n\t\t\treturn"
+  },
+  {
+    "from": "\t\tfor _, pkt := range packets {\n\t\t\tif w.onData != nil {",
+    "to": "\t\tfor _, pkt := range packets {\n\t\t\tw.stats.diag.wsPayloadBytes.Add(uint64(len(pkt)))\n\t\t\tif w.onData != nil {"
+  },
+  {
+    "from": "ticker := time.NewTicker(5 * time.Second)",
+    "to": "ticker := time.NewTicker(2 * time.Second)"
+  },
+  {
+    "from": "\t\t\tsent := t.stats.PacketsSent.Load()",
+    "to": "\t\t\tt.stats.diag.emit(t.stats, t.relay, t.IsConnected())\n\t\t\tsent := t.stats.PacketsSent.Load()"
+  },
+  {
+    "from": "(sent-lastSent)/5, (bytes-lastBytes)/5/1024",
+    "to": "(sent-lastSent)/2, (bytes-lastBytes)/2/1024"
+  },
+  {
+    "from": "(httpReqs-lastHTTP)/5, failed-lastFailed",
+    "to": "(httpReqs-lastHTTP)/2, failed-lastFailed"
+  },
+  {
+    "from": "(batches-lastBatches)/5,",
+    "to": "(batches-lastBatches)/2,"
+  },
+  {
+    "from": "(recv-lastRecv)/5, (recvBytes-lastRecvBytes)/5/1024",
+    "to": "(recv-lastRecv)/2, (recvBytes-lastRecvBytes)/2/1024"
+  }
+]

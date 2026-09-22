@@ -107,6 +107,7 @@ func base64Encode(data []byte) string {
 }
 
 type VolgaStats struct {
+	diag relayDiagnostics
 	PacketsSent    atomic.Uint64
 	PacketsRecv    atomic.Uint64
 	BytesSent      atomic.Uint64
@@ -499,6 +500,7 @@ func (r *relayClient) Send(data []byte) error {
 
 	select {
 	case r.batchQueue <- cp:
+		r.stats.diag.observeQueue(len(r.batchQueue))
 		return nil
 	default:
 		r.stats.QueueDrops.Add(1)
@@ -521,7 +523,8 @@ func (r *relayClient) worker(id int) {
 		if len(batch) == 0 {
 			return
 		}
-		r.stats.WorkerBusy.Add(1)
+		busy := r.stats.WorkerBusy.Add(1)
+		r.stats.diag.observeWorkers(busy)
 		err := r.sendBatch(batch)
 		if err != nil {
 			r.stats.HTTPReqsFailed.Add(1)
@@ -574,6 +577,7 @@ func (r *relayClient) sendBatch(batch [][]byte) error {
 		totalBytes += len(p)
 	}
 
+	r.stats.diag.batch(len(batch), totalBytes)
 	encoded := base64Encode(blob.Bytes())
 	blobBufPool.Put(blob)
 
@@ -623,6 +627,7 @@ func (r *relayClient) sendBatch(batch [][]byte) error {
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(payload); err != nil {
+		r.stats.diag.prepareErrors.Add(1)
 		jsonBufPool.Put(buf)
 		return err
 	}
@@ -633,6 +638,7 @@ func (r *relayClient) sendBatch(batch [][]byte) error {
 	urlStr := fmt.Sprintf("https://volga.yandex.ru/session/main/%s/relay", r.auth.RequestPath)
 	req, err := http.NewRequestWithContext(r.ctx, "POST", urlStr, bytes.NewReader(bodyCopy))
 	if err != nil {
+		r.stats.diag.prepareErrors.Add(1)
 		return err
 	}
 	req.Header.Set("User-Agent", volgaUserAgent)
@@ -654,12 +660,15 @@ func (r *relayClient) sendBatch(batch [][]byte) error {
 		req.Header.Set("Cookie", strings.Join(cookieParts, "; "))
 	}
 
+	started := r.stats.diag.begin(len(bodyCopy), totalBytes)
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
+		r.stats.diag.finish(started, len(bodyCopy), totalBytes, 0, err, false)
 		return err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	_, bodyErr := io.Copy(io.Discard, resp.Body)
+	r.stats.diag.finish(started, len(bodyCopy), totalBytes, resp.StatusCode, nil, bodyErr != nil)
 
 	if resp.StatusCode != 204 && resp.StatusCode != 200 {
 		return fmt.Errorf("status %d", resp.StatusCode)
@@ -781,9 +790,16 @@ func (w *wsListener) connect() error {
 
 	conn, _, err := dialer.Dial(wsURL, header)
 	if err != nil {
+		w.stats.diag.wsConnectFailures.Add(1)
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
+	w.stats.diag.wsConnected.Store(1)
+	w.stats.diag.wsConnects.Add(1)
+	defer func() {
+		w.stats.diag.wsConnected.Store(0)
+		w.stats.diag.wsDisconnects.Add(1)
+	}()
 
 	utils.Debugf("[VOLGA] WS connected: user=%s", w.auth.UserIDStr)
 
@@ -805,11 +821,14 @@ func (w *wsListener) connect() error {
 }
 
 func (w *wsListener) handleMessage(raw []byte) {
+	w.stats.diag.wsMessages.Add(1)
+	w.stats.diag.wsMessageBytes.Add(uint64(len(raw)))
 	var envelope struct {
 		Operation string `json:"operation"`
 		Message   string `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
+		w.stats.diag.wsJSONErrors.Add(1)
 		return
 	}
 
@@ -830,6 +849,7 @@ func (w *wsListener) handleMessage(raw []byte) {
 		Message json.RawMessage `json:"message"`
 	}
 	if err := json.Unmarshal([]byte(envelope.Message), &inner); err != nil {
+		w.stats.diag.wsJSONErrors.Add(1)
 		return
 	}
 
@@ -850,6 +870,7 @@ func (w *wsListener) handleRelayMessage(raw json.RawMessage) {
 		Bundle []json.RawMessage `json:"bundle"`
 	}
 	if err := json.Unmarshal(raw, &relay); err != nil {
+		w.stats.diag.wsJSONErrors.Add(1)
 		return
 	}
 	for _, item := range relay.Bundle {
@@ -892,12 +913,14 @@ func (w *wsListener) handleBundleItem(raw json.RawMessage) {
 	if err := json.Unmarshal(raw, &asStr); err == nil && asStr != "" {
 		decoded, err := base64.StdEncoding.DecodeString(asStr)
 		if err != nil {
+			w.stats.diag.wsBase64Errors.Add(1)
 			return
 		}
 		packets := decodeBatch(decoded)
 		w.stats.PacketsRecv.Add(uint64(len(packets)))
 		w.stats.BytesReceived.Add(uint64(len(decoded)))
 		for _, pkt := range packets {
+			w.stats.diag.wsPayloadBytes.Add(uint64(len(pkt)))
 			if w.onData != nil {
 				w.onData(pkt)
 			}
@@ -1048,7 +1071,7 @@ func (t *YandexVolgaTransport) keepAliveLoop() {
 }
 
 func (t *YandexVolgaTransport) statsLoop() {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	var lastSent, lastBytes, lastHTTP, lastFailed, lastRecv, lastRecvBytes, lastBatches, lastBatched uint64
@@ -1058,6 +1081,7 @@ func (t *YandexVolgaTransport) statsLoop() {
 		case <-t.keepAliveStop:
 			return
 		case <-ticker.C:
+			t.stats.diag.emit(t.stats, t.relay, t.IsConnected())
 			sent := t.stats.PacketsSent.Load()
 			bytes := t.stats.BytesSent.Load()
 			httpReqs := t.stats.HTTPReqsSent.Load()
@@ -1068,11 +1092,11 @@ func (t *YandexVolgaTransport) statsLoop() {
 			batched := t.stats.PacketsBatched.Load()
 
 			utils.Debugf("[VOLGA-STATS] send %d pkt/s (%d KB/s) | http %d req/s fail %d | batch %d (avg %.1f pkt) | recv %d pkt/s (%d KB/s) | busy %d/%d",
-				(sent-lastSent)/5, (bytes-lastBytes)/5/1024,
-				(httpReqs-lastHTTP)/5, failed-lastFailed,
-				(batches-lastBatches)/5,
+				(sent-lastSent)/2, (bytes-lastBytes)/2/1024,
+				(httpReqs-lastHTTP)/2, failed-lastFailed,
+				(batches-lastBatches)/2,
 				float64(batched-lastBatched)/float64(maxU64(batches-lastBatches, 1)),
-				(recv-lastRecv)/5, (recvBytes-lastRecvBytes)/5/1024,
+				(recv-lastRecv)/2, (recvBytes-lastRecvBytes)/2/1024,
 				t.stats.WorkerBusy.Load(), t.config.WorkerCount)
 
 			lastSent, lastBytes = sent, bytes

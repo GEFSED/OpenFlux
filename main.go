@@ -27,6 +27,7 @@ var (
 )
 
 func main() {
+	utils.ConfigureRelayDiagnosticLogging()
 	//os.Setenv("GODEBUG", "netdns=go")
 	fmt.Print("written by p1neappleXpress\n")
 
