@@ -1,0 +1,11 @@
+{
+  "commit": "8566f727c8238436728758f139130cef433147b7",
+  "source_dir": "transport",
+  "sha256_before_package_rename": {
+    "batched.go": "6be3152ef8c31b7db73f2cf3d91deb1cec3daa3a3cfb91e874cad48755ee929e",
+    "framing.go": "a15b77b853218bb6c6ba09845d9a7c19703b92a5b80b52188c7b987bfed0a8b1",
+    "compressor.go": "4622752cf6d4de29bb2e27c724f32a5bef51261e1be9e21f2816ec1c24498b7c",
+    "encrypted.go": "7c5e680b897cf797a06d7c4c4d7449bce63953d04cc787f206fb5fad8d7e9576"
+  },
+  "modification": "package transport -> package basev100peer only"
+}

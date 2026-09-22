@@ -44,6 +44,7 @@ public final class OpenFluxTunnelService extends VpnService {
     public static final String EXTRA_DNS_SERVER = "dns_server";
     public static final String EXTRA_MTU = "mtu";
     public static final String EXTRA_CODEC = "codec";
+    public static final String EXTRA_PERFORMANCE_MODE = "performance_mode";
     public static final String EXTRA_MAX_TOKEN = "max_token";
     public static final String EXTRA_MAX_UID = "max_uid";
 
@@ -179,6 +180,7 @@ public final class OpenFluxTunnelService extends VpnService {
         }
         String codecExtra = intent.getStringExtra(EXTRA_CODEC);
         final String codec = codecExtra == null || codecExtra.isEmpty() ? "batched" : codecExtra;
+        final String performanceMode = PerformanceMode.effective(transportType, intent.getStringExtra(EXTRA_PERFORMANCE_MODE));
         String maxTokenExtra = intent.getStringExtra(EXTRA_MAX_TOKEN);
         final String maxToken = maxTokenExtra == null ? "" : maxTokenExtra;
         String maxUidExtra = intent.getStringExtra(EXTRA_MAX_UID);
@@ -194,7 +196,7 @@ public final class OpenFluxTunnelService extends VpnService {
         String selectedDns = dnsServer;
         int selectedMtu = mtu;
         String finalUrl = url;
-        workers.execute(() -> startTunnel(transportType, finalUrl, encryptionSecret, codec, maxToken, maxUid, selectedDns, selectedMtu, session));
+        workers.execute(() -> startTunnel(transportType, finalUrl, encryptionSecret, codec, maxToken, maxUid, performanceMode, selectedDns, selectedMtu, session));
         return START_STICKY;
     }
 
@@ -218,9 +220,9 @@ public final class OpenFluxTunnelService extends VpnService {
         return "1.1.1.1";
     }
 
-    private void startTunnel(String transportType, String url, String encryptionSecret, String codec, String maxToken, String maxUid, String dnsServerParam, int mtu, int session) {
+    private void startTunnel(String transportType, String url, String encryptionSecret, String codec, String maxToken, String maxUid, String performanceMode, String dnsServerParam, int mtu, int session) {
         if (!isCurrent(session)) return;
-        String error = Mobile.start(transportType, url, encryptionSecret, codec, maxToken, maxUid);
+        String error = Mobile.startWithMode(transportType, url, encryptionSecret, codec, maxToken, maxUid, performanceMode);
         if (error != null && !error.isEmpty()) {
             fail(session, error);
             return;
@@ -284,7 +286,7 @@ public final class OpenFluxTunnelService extends VpnService {
         FileInputStream input = tunnelInput;
         FileOutputStream output = tunnelOutput;
         workers.execute(() -> readOutgoingPackets(session, input, dnsServer));
-        workers.execute(() -> writeIncomingPackets(session, output));
+        workers.execute(() -> writeIncomingPackets(session, output, !"standard".equals(performanceMode)));
     }
 
     // applyAppFilter routes traffic per the user's "Приложения" settings tab:
@@ -353,12 +355,13 @@ public final class OpenFluxTunnelService extends VpnService {
         }
     }
 
-    private void writeIncomingPackets(int session, FileOutputStream output) {
+    private void writeIncomingPackets(int session, FileOutputStream output, boolean blocking) {
         try {
             while (isCurrent(session)) {
-                byte[] packet = Mobile.read();
+                byte[] packet = blocking ? Mobile.readWait(0) : Mobile.read();
+                if (blocking && !isCurrent(session)) break;
                 if (packet == null || packet.length == 0) {
-                    Thread.sleep(2);
+                    if (!blocking) Thread.sleep(2);
                     continue;
                 }
                 inject(session, output, packet);

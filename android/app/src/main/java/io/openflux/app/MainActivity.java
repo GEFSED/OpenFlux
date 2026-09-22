@@ -173,6 +173,7 @@ public final class MainActivity extends Activity {
     private String encryptionSecret;
     private String transportType = "yandex";
     private String codec = "batched";
+    private String performanceMode = "standard";
     private String maxToken = "";
     private String maxUid = "";
     private ProfileStore profileStore;
@@ -183,6 +184,7 @@ public final class MainActivity extends Activity {
     private String editorIcon = "ic_public";
     private String editorTransportType = "yandex";
     private String editorCodec = "batched";
+    private String editorPerformanceMode = "standard";
     private String editorMaxToken = "";
     private String editorMaxUid = "";
     private EditText profileNameInput;
@@ -765,6 +767,7 @@ public final class MainActivity extends Activity {
             encryptionSecret = p.encryptionSecret;
             transportType = p.transportType;
             codec = p.codec;
+            performanceMode = PerformanceMode.normalize(p.performanceMode);
             maxToken = p.maxToken;
             maxUid = p.maxUid;
         } else {
@@ -772,6 +775,7 @@ public final class MainActivity extends Activity {
             encryptionSecret = "";
             transportType = "yandex";
             codec = "batched";
+            performanceMode = "standard";
             maxToken = "";
             maxUid = "";
         }
@@ -814,6 +818,7 @@ public final class MainActivity extends Activity {
         editorIcon = existing != null ? existing.icon : "ic_public";
         editorTransportType = existing != null ? existing.transportType : "yandex";
         editorCodec = existing != null ? existing.codec : "batched";
+        editorPerformanceMode = existing != null ? PerformanceMode.normalize(existing.performanceMode) : "standard";
         editorMaxToken = existing != null ? existing.maxToken : "";
         editorMaxUid = existing != null ? existing.maxUid : "";
         profileEditorOpen = true;
@@ -860,6 +865,7 @@ public final class MainActivity extends Activity {
         target.documentUrl = docUrl;
         target.encryptionSecret = secret;
         target.codec = editorCodec;
+        target.performanceMode = PerformanceMode.normalize(editorPerformanceMode);
         target.maxToken = token;
         target.maxUid = uid;
         profileStore.save(profiles);
@@ -1879,6 +1885,11 @@ public final class MainActivity extends Activity {
         codecLabelParams.bottomMargin = dp(8);
         section.addView(codecLabel, codecLabelParams);
         section.addView(buildCodecSelector(), matchWrap());
+        TextView performanceLabel = label("ПРОИЗВОДИТЕЛЬНОСТЬ · VPN ЧЕРЕЗ YANDEX VOLGA");
+        LinearLayout.LayoutParams performanceParams = matchWrap();
+        performanceParams.topMargin = dp(18);
+        section.addView(performanceLabel, performanceParams);
+        section.addView(buildPerformanceSelector(), matchWrap());
 
         LinearLayout.LayoutParams urlParams = new LinearLayout.LayoutParams(-1, dp(56));
         urlParams.topMargin = dp(18);
@@ -2052,6 +2063,23 @@ public final class MainActivity extends Activity {
         box.addView(uidField, uidParams);
 
         return box;
+    }
+
+    private View buildPerformanceSelector() {
+        RadioGroup group = new RadioGroup(this);
+        group.setOrientation(LinearLayout.VERTICAL);
+        for (String mode : PerformanceMode.values()) {
+            RadioButton button = modeRadio(PerformanceMode.label(mode));
+            button.setTag(mode);
+            group.addView(button);
+            button.setChecked(mode.equals(editorPerformanceMode));
+        }
+        group.setOnCheckedChangeListener((g, checkedId) -> {
+            tap(g);
+            View selected = g.findViewById(checkedId);
+            if (selected != null) editorPerformanceMode = (String) selected.getTag();
+        });
+        return group;
     }
 
     private View buildCodecSelector() {
@@ -2647,6 +2675,7 @@ public final class MainActivity extends Activity {
         intent.putExtra(OpenFluxTunnelService.EXTRA_ENCRYPTION_SECRET, encryptionSecret);
         intent.putExtra(OpenFluxTunnelService.EXTRA_TRANSPORT_TYPE, transportType);
         intent.putExtra(OpenFluxTunnelService.EXTRA_CODEC, codec);
+        intent.putExtra(OpenFluxTunnelService.EXTRA_PERFORMANCE_MODE, performanceMode);
         intent.putExtra(OpenFluxTunnelService.EXTRA_MAX_TOKEN, maxToken);
         intent.putExtra(OpenFluxTunnelService.EXTRA_MAX_UID, maxUid);
         intent.putExtra(OpenFluxTunnelService.EXTRA_DNS_SERVER, dnsServer);

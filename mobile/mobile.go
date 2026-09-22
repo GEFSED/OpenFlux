@@ -4,7 +4,6 @@
 package mobile
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,7 +13,6 @@ import (
 	"openflux/transport/mailru"
 	"openflux/transport/oneme"
 	"openflux/transport/yandex"
-	"openflux/utils"
 )
 
 var client = packetClient{}
@@ -42,7 +40,7 @@ func appendLog(message string) {
 // maxUid). codec is "batched" (default, zstd+coalescing, matches the CLI's
 // --codec=batched) or "legacy" (per-packet LZ4; both peers must agree). It
 // returns an empty string on success and a user-readable error on failure.
-func Start(transportType, documentURL, encryptionSecret, codec, maxToken, maxUid string) string {
+func startStandard(transportType, documentURL, encryptionSecret, codec, maxToken, maxUid string) string {
 	if transportType == "" {
 		transportType = "yandex"
 	}
@@ -63,9 +61,8 @@ func Start(transportType, documentURL, encryptionSecret, codec, maxToken, maxUid
 	client.logs = nil
 	client.mu.Unlock()
 
-	utils.EnableDebug()
-	utils.SetLogSink(appendLog)
-	appendLog(fmt.Sprintf("[ANDROID] Запуск транспорта %s", transportType))
+	configureLogging()
+	appendLog("[MODE] mode=standard")
 
 	config := transport.DefaultConfig()
 	var inner transport.Transport
@@ -83,34 +80,12 @@ func Start(transportType, documentURL, encryptionSecret, codec, maxToken, maxUid
 		inner = yandex.NewYandexDocsTransport(documentURL, config)
 	}
 
-	// App-layer codec, same as the CLI's --codec flag. Both peers must use
-	// the same one. Applied before encryption so it compresses plaintext
-	// rather than ciphertext.
-	if codec == "legacy" {
-		inner = transport.NewCompressedTransport(inner)
-	} else {
-		inner = transport.NewBatchedTransport(inner)
-	}
-
-	if encryptionSecret != "" {
-		// Same fallback as the CLI: the KDF context is the document URL, or
-		// the transport name when there isn't one (oneme). Both peers must
-		// derive the same context or the encrypted channel just won't work.
-		context := transportType
-		if documentURL != "" {
-			context = documentURL
-		}
-		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, context, false)
-		if err != nil {
-			client.mu.Lock()
-			client.running = false
-			client.mu.Unlock()
-			return err.Error()
-		}
-		inner = encrypted
-		appendLog("[ANDROID] Шифрование транспорта: AES-256-GCM включено")
-	} else {
-		appendLog("[ANDROID] Шифрование транспорта отключено (ключ не задан)")
+	inner, err := wrapStandardTransport(inner, transportType, documentURL, encryptionSecret, codec)
+	if err != nil {
+		client.mu.Lock()
+		client.running = false
+		client.mu.Unlock()
+		return "Ошибка создания транспорта"
 	}
 	trans := inner
 	trans.Receive(func(data []byte) {
@@ -128,11 +103,11 @@ func Start(transportType, documentURL, encryptionSecret, codec, maxToken, maxUid
 	})
 
 	if err := trans.Start(); err != nil {
-		appendLog(fmt.Sprintf("[ERROR] Ошибка запуска: %v", err))
+		appendLog("[ERROR] Ошибка запуска транспорта")
 		client.mu.Lock()
 		client.running = false
 		client.mu.Unlock()
-		return err.Error()
+		return "Ошибка транспорта"
 	}
 
 	client.mu.Lock()
@@ -141,7 +116,7 @@ func Start(transportType, documentURL, encryptionSecret, codec, maxToken, maxUid
 	return ""
 }
 
-func Stop() {
+func stopStandard() {
 	client.mu.Lock()
 	trans := client.transport
 	client.running = false
@@ -154,14 +129,14 @@ func Stop() {
 	}
 }
 
-func IsConnected() bool {
+func standardIsConnected() bool {
 	client.mu.Lock()
 	trans := client.transport
 	client.mu.Unlock()
 	return trans != nil && trans.IsConnected()
 }
 
-func Send(packet []byte) string {
+func sendStandard(packet []byte) string {
 	client.mu.Lock()
 	trans := client.transport
 	running := client.running
@@ -170,13 +145,13 @@ func Send(packet []byte) string {
 		return "Транспорт не запущен"
 	}
 	if err := trans.Send(packet); err != nil {
-		return err.Error()
+		return "Ошибка транспорта"
 	}
 	return ""
 }
 
 // Read returns one received packet, or nil when the queue is empty.
-func Read() []byte {
+func readStandard() []byte {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if len(client.packets) == 0 {
@@ -189,9 +164,35 @@ func Read() []byte {
 
 // ReadLogs returns and clears the pending log lines.
 func ReadLogs() string {
+	appendModeDiagnostics()
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	logs := strings.Join(client.logs, "\n")
 	client.logs = nil
 	return logs
+}
+
+func wrapStandardTransport(inner transport.Transport, transportType, documentURL, encryptionSecret, codec string) (transport.Transport, error) {
+	// Preserve ordinary base 8566f727 construction, including its wrapper order.
+	if codec == "legacy" {
+		inner = transport.NewCompressedTransport(inner)
+	} else {
+		inner = transport.NewBatchedTransport(inner)
+	}
+
+	if encryptionSecret != "" {
+		// Same fallback as the CLI: the KDF context is the document URL, or
+		// the transport name when there isn't one (oneme). Both peers must
+		// derive the same context or the encrypted channel just won't work.
+		context := transportType
+		if documentURL != "" {
+			context = documentURL
+		}
+		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, context, false)
+		if err != nil {
+			return nil, err
+		}
+		inner = encrypted
+	}
+	return inner, nil
 }

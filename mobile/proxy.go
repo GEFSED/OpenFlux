@@ -7,7 +7,6 @@
 package mobile
 
 import (
-	"fmt"
 	"strconv"
 	"sync"
 
@@ -57,9 +56,8 @@ func StartProxy(transportType, documentURL, encryptionSecret, codec, maxToken, m
 	}
 	proxy.mu.Unlock()
 
-	utils.EnableDebug()
-	utils.SetLogSink(appendLog)
-	appendLog(fmt.Sprintf("[ANDROID] Запуск прокси-транспорта %s", transportType))
+	configureLogging()
+	appendLog("[MODE] mode=standard scope=socks5")
 
 	config := transport.DefaultConfig()
 	var inner transport.Transport
@@ -96,7 +94,7 @@ func StartProxy(transportType, documentURL, encryptionSecret, codec, maxToken, m
 		}
 		encrypted, err := transport.NewEncryptedTransport(inner, encryptionSecret, context, false)
 		if err != nil {
-			return err.Error()
+			return "Ошибка прокси-транспорта"
 		}
 		inner = encrypted
 		appendLog("[ANDROID] Шифрование прокси-транспорта: AES-256-GCM включено")
@@ -105,8 +103,8 @@ func StartProxy(transportType, documentURL, encryptionSecret, codec, maxToken, m
 	}
 	trans := inner
 	if err := trans.Start(); err != nil {
-		appendLog(fmt.Sprintf("[ERROR] Ошибка запуска прокси: %v", err))
-		return err.Error()
+		appendLog("[ERROR] Ошибка прокси-транспорта")
+		return "Ошибка прокси-транспорта"
 	}
 
 	tun := tunnel.NewTCPTunnel(trans, false)
@@ -116,8 +114,8 @@ func StartProxy(transportType, documentURL, encryptionSecret, codec, maxToken, m
 	}
 	if err := server.Bind(); err != nil {
 		_ = trans.Stop()
-		appendLog(fmt.Sprintf("[ERROR] Не удалось занять %s: %v", listenAddr, err))
-		return fmt.Sprintf("Порт %s уже занят", listenAddr)
+		appendLog("[ERROR] Ошибка прокси-транспорта")
+		return "Не удалось открыть порт прокси"
 	}
 
 	proxy.mu.Lock()
@@ -133,11 +131,11 @@ func StartProxy(transportType, documentURL, encryptionSecret, codec, maxToken, m
 		stillRunning := proxy.running
 		proxy.mu.Unlock()
 		if stillRunning && err != nil {
-			appendLog(fmt.Sprintf("[ERROR] Прокси остановлен: %v", err))
+			appendLog("[ERROR] Ошибка прокси-транспорта")
 		}
 	})
 
-	appendLog(fmt.Sprintf("[SUCCESS] SOCKS5-прокси слушает %s", listenAddr))
+	appendLog("[SUCCESS] SOCKS5-прокси запущен")
 	return ""
 }
 

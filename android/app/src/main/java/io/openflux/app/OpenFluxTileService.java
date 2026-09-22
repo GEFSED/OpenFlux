@@ -101,6 +101,12 @@ public final class OpenFluxTileService extends TileService {
             intent.putExtra(OpenFluxTunnelService.EXTRA_DOCUMENT_URL, selected.documentUrl);
             intent.putExtra(OpenFluxTunnelService.EXTRA_ENCRYPTION_SECRET, selected.encryptionSecret);
             intent.putExtra(OpenFluxTunnelService.EXTRA_TRANSPORT_TYPE, selected.transportType);
+            intent.putExtra(OpenFluxTunnelService.EXTRA_PERFORMANCE_MODE, selected.performanceMode);
+            // Keep the old Standard tile path unchanged. Explicit Volga modes
+            // must carry the selected codec just like the main editor.
+            if (!"standard".equals(PerformanceMode.effective(selected.transportType, selected.performanceMode))) {
+                intent.putExtra(OpenFluxTunnelService.EXTRA_CODEC, selected.codec);
+            }
             intent.putExtra(OpenFluxTunnelService.EXTRA_DNS_SERVER, prefs.getString("dns_server", "1.1.1.1"));
             intent.putExtra(OpenFluxTunnelService.EXTRA_MTU, prefs.getInt("mtu", 1400));
             startForegroundService(intent);

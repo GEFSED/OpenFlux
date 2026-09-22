@@ -12,6 +12,9 @@ case "$BUILD_TYPE" in
     debug)
         GRADLE_TASK="assembleDebug"
         ;;
+    candidate)
+        GRADLE_TASK="assembleCandidate"
+        ;;
     release)
         GRADLE_TASK="assembleRelease"
         : "${ANDROID_KEYSTORE_FILE:?Set ANDROID_KEYSTORE_FILE for a release build}"
@@ -20,7 +23,7 @@ case "$BUILD_TYPE" in
         : "${ANDROID_KEY_PASSWORD:?Set ANDROID_KEY_PASSWORD for a release build}"
         ;;
     *)
-        echo "Unsupported BUILD_TYPE: $BUILD_TYPE (use debug or release)"
+        echo "Unsupported BUILD_TYPE: $BUILD_TYPE (use debug, candidate or release)"
         exit 1
         ;;
 esac
@@ -50,6 +53,13 @@ if [ ! -d "$NDK_ROOT" ]; then
     exit 1
 fi
 
+GOMOBILE_TARGET=android
+ABIS="universal arm64-v8a armeabi-v7a x86_64 x86"
+if [ "$BUILD_TYPE" = candidate ] && [ "${CANDIDATE_ARM64_ONLY:-0}" = 1 ]; then
+    GOMOBILE_TARGET=android/arm64
+    ABIS="arm64-v8a"
+fi
+
 mkdir -p "$SCRIPT_DIR/android/app/libs" "$SCRIPT_DIR/dist"
 rm -f "$SCRIPT_DIR/dist"/OpenFlux-android-*-$BUILD_TYPE.apk
 
@@ -66,7 +76,7 @@ export PATH="$(dirname -- "$GOMOBILE_BIN"):$PATH"
     # release of anet has adapted to it yet. -checklinkname=0 downgrades
     # that to the old permissive behavior instead of a hard link failure.
     "$GOMOBILE_BIN" bind \
-        -target=android \
+        -target="$GOMOBILE_TARGET" \
         -androidapi=26 \
         -javapkg=io.openflux.bridge \
         -ldflags="-checklinkname=0" \
@@ -80,7 +90,7 @@ export PATH="$(dirname -- "$GOMOBILE_BIN"):$PATH"
 )
 
 OUTPUT_DIR="$SCRIPT_DIR/android/app/build/outputs/apk/$BUILD_TYPE"
-for ABI in universal arm64-v8a armeabi-v7a x86_64 x86; do
+for ABI in $ABIS; do
     SOURCE_APK="$OUTPUT_DIR/app-$ABI-$BUILD_TYPE.apk"
     if [ ! -f "$SOURCE_APK" ]; then
         echo "Expected APK not found: $SOURCE_APK"

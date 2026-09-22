@@ -14,6 +14,7 @@ final class Profile {
     String documentUrl = "";
     String encryptionSecret = "";
     String codec = "batched";
+    String performanceMode = "standard";
     String maxToken = "";
     String maxUid = "";
 
@@ -26,6 +27,7 @@ final class Profile {
         o.put("documentUrl", documentUrl);
         o.put("encryptionSecret", encryptionSecret);
         o.put("codec", codec);
+        o.put("performanceMode", PerformanceMode.normalize(performanceMode));
         o.put("maxToken", maxToken);
         o.put("maxUid", maxUid);
         return o;
@@ -40,6 +42,7 @@ final class Profile {
         p.documentUrl = o.optString("documentUrl", "");
         p.encryptionSecret = o.optString("encryptionSecret", "");
         p.codec = o.optString("codec", "batched");
+        p.performanceMode = PerformanceMode.normalize(o.optString("performanceMode", "standard"));
         p.maxToken = o.optString("maxToken", "");
         p.maxUid = o.optString("maxUid", "");
         return p;
