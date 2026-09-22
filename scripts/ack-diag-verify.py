@@ -23,6 +23,21 @@ allowed = set(patches) | {
 changed = set(subprocess.check_output(['git', 'diff', '--name-only', BASE, 'HEAD']).decode().splitlines())
 assert changed == allowed, sorted(changed ^ allowed)
 assert not subprocess.check_output(['git', 'status', '--porcelain']).strip()
+# This revision changes observer implementation/tests/documentation only.
+# Even the pre-existing observation hook call sites and log filter are frozen.
+PREVIOUS = 'f31a49f7953eb910998ca2bdded22952faaed80d'
+mutable = {
+    'internal/ackdiag/correlator.go', 'internal/ackdiag/correlator_test.go',
+    'transport/ack_diag_test.go', 'docs/EXIT_ACK_LATENCY_DIAG.md',
+    'scripts/ack-diag-verify.py', '.github/workflows/ci.yml',
+}
+followup = set(subprocess.check_output(['git', 'diff', '--name-only', PREVIOUS, 'HEAD']).decode().splitlines())
+assert followup <= mutable, sorted(followup - mutable)
+for path in patches:
+    assert Path(path).read_bytes() == subprocess.check_output(['git', 'show', PREVIOUS + ':' + path]), path
+for path in ('internal/ackdiag/runtime.go', 'utils/ack_diag_log.go'):
+    assert Path(path).read_bytes() == subprocess.check_output(['git', 'show', PREVIOUS + ':' + path]), path
+print('Networking, hook sites, runtime logger byte-identical to previous diagnostic: PASS')
 head = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip()
 manifest = {'production_base': BASE, 'diagnostic_commit': head,
             'diagnostics_only_source_verification': 'PASS',

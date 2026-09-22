@@ -1,136 +1,206 @@
 package ackdiag
 
 import (
-	"encoding/binary"
-	"encoding/json"
-	"strings"
-	"sync"
-	"testing"
-	"time"
+    "encoding/binary"
+    "encoding/json"
+    "math/rand"
+    "runtime"
+    "strings"
+    "sync"
+    "testing"
+    "time"
+    "unsafe"
 )
 
-// Synthetic headers only. No real endpoints, credentials, network or TCP payload.
-func ip(seq,ack uint32,size int,flags byte,reverse bool) []byte {
-	p:=make([]byte,40+size);p[0]=0x45;p[9]=6;p[8]=64
-	binary.BigEndian.PutUint16(p[2:4],uint16(len(p)))
-	p[15]=1;p[19]=2;p[21]=3;p[23]=4
-	if reverse{p[15],p[19]=p[19],p[15];p[21],p[23]=p[23],p[21]}
-	binary.BigEndian.PutUint32(p[24:28],seq);binary.BigEndian.PutUint32(p[28:32],ack)
-	p[32]=0x50;p[33]=flags;return p
+// Event tests use opaque synthetic IDs, not packet addresses/ports/payloads.
+type simulation struct{e *Engine;at time.Time;key flowKey;anchor uint32}
+func flowID(n uint32)flowKey{var k flowKey;binary.BigEndian.PutUint32(k[:4],n);return k}
+func sim(anchor uint32)*simulation{
+    s:=&simulation{at:time.Unix(1000,0),key:flowID(1),anchor:anchor}
+    s.e=New(func()time.Time{return s.at});s.syn(anchor);return s
 }
-type clockTest struct { e *Engine; at time.Time }
-func testEngine() *clockTest {
-	c:=&clockTest{at:time.Unix(1,0)};c.e=New(func()time.Time{return c.at});c.e.Outgoing(ip(1000,0,0,2,false));return c
+func(s *simulation)syn(n uint32){s.anchor=n;s.e.outgoing(packet{key:s.key,seq:n,syn:true},s.at)}
+func(s *simulation)advance(d time.Duration){s.at=s.at.Add(d)}
+func(s *simulation)sendAt(seq uint32,n int,at time.Time)*attempt{
+    a:=s.e.outgoing(packet{key:s.key,seq:seq,size:n},at)
+    if a!=nil{a.enqueue=at.Add(time.Millisecond);a.start=at.Add(2*time.Millisecond);a.end=at.Add(3*time.Millisecond);a.success=true}
+    return a
 }
-func(c *clockTest) advance(d time.Duration){c.at=c.at.Add(d)}
-func(c *clockTest) send(seq uint32,n int,complete bool) *HTTPObservation {
-	p:=ip(seq,0,n,16,false);c.e.Outgoing(p);c.advance(time.Millisecond);c.e.Enqueue(p)
-	c.advance(time.Millisecond);o:=c.e.HTTPStart([][]byte{p});if complete{c.advance(10*time.Millisecond);c.e.HTTPDone(o,true,204,false)};return o
+func(s *simulation)send(seq uint32,n int)*attempt{s.advance(5*time.Millisecond);return s.sendAt(seq,n,s.at)}
+func(s *simulation)ackAt(n uint32,at time.Time){s.e.acknowledge(packet{key:s.key,ack:n,ackFlag:true},at)}
+func(s *simulation)ack(n uint32){s.advance(100*time.Millisecond);s.ackAt(n,s.at)}
+func assertState(t *testing.T,e *Engine,unique,acked,out uint64,valid bool)map[string]uint64{
+    t.Helper();m:=e.Snapshot()
+    if m["unique_downlink_tcp_bytes"]!=unique||m["acked_unique_downlink_tcp_bytes"]!=acked||m["outstanding_unique_bytes_current"]!=out||m["counter_consistency"]!=1||unique!=acked+out+m["invalidated_unique_bytes"]{t.Fatalf("conservation: unique=%d acked=%d outstanding=%d invalid=%d consistency=%d",m["unique_downlink_tcp_bytes"],m["acked_unique_downlink_tcp_bytes"],m["outstanding_unique_bytes_current"],m["invalidated_unique_bytes"],m["counter_consistency"])}
+    if valid&&(m["correlation_valid"]!=1||m["correlator_evictions"]!=0||m["sequence_constraint_violations"]!=0||m["invalidated_unique_bytes"]!=0){t.Fatalf("invalid synthetic observation: %v",m)}
+    return m
 }
-func(c *clockTest) ack(seq uint32) {
-	p:=ip(0,seq,0,16,true);c.e.Inbound(p,c.at.Add(-time.Millisecond));decoded:=c.e.Incoming(p);c.advance(time.Microsecond);c.e.BeforeInject(decoded)
+func TestDeterministicTCPEvents(t *testing.T){
+    cases:=[]struct{name string;run func(*testing.T,*simulation)}{
+        {"one_segment_one_ack",func(t *testing.T,s *simulation){s.send(1001,100);s.ack(1101);assertState(t,s.e,100,100,0,true)}},
+        {"cumulative_multiple",func(t *testing.T,s *simulation){s.send(1001,100);s.send(1101,100);s.send(1201,100);s.ack(1301);assertState(t,s.e,300,300,0,true)}},
+        {"duplicate_ack",func(t *testing.T,s *simulation){s.send(1001,100);s.ack(1101);s.ack(1101);s.ack(1051);m:=assertState(t,s.e,100,100,0,true);if m["duplicate_ack_events"]!=1||m["old_ack_events"]!=1{t.Fatal("ACK classification")}}},
+        {"exact_retransmission",func(t *testing.T,s *simulation){s.send(1001,100);s.send(1001,100);s.ack(1101);m:=assertState(t,s.e,100,100,0,true);if m["retransmitted_bytes"]!=100||m["multi_attempt_acked_bytes"]!=100{t.Fatal("attempt lost")}}},
+        {"partial_overlap",func(t *testing.T,s *simulation){s.send(1001,100);s.send(1051,100);s.ack(1151);m:=assertState(t,s.e,150,150,0,true);if m["retransmitted_unique_bytes"]!=50||m["multi_attempt_acked_bytes"]!=50{t.Fatal("overlap over-attributed")}}},
+        {"retx_spans_earlier_segments",func(t *testing.T,s *simulation){s.send(1001,100);s.send(1101,100);s.send(1051,200);s.ack(1251);m:=assertState(t,s.e,250,250,0,true);if m["retransmitted_bytes"]!=150||m["multi_attempt_acked_bytes"]!=150{t.Fatal("union")}}},
+        {"ack_original_and_retransmission",func(t *testing.T,s *simulation){s.send(1001,100);s.send(1001,100);s.send(1101,100);s.ack(1201);m:=assertState(t,s.e,200,200,0,true);if m["http_first_success_end_to_ack_bytes"]!=200||m["http_last_success_end_to_ack_bytes"]!=200{t.Fatal("HTTP samples excluded")}}},
+        {"ack_after_retransmission",func(t *testing.T,s *simulation){a:=s.send(1001,100);s.advance(time.Second);b:=s.send(1001,100);s.ack(1101);m:=assertState(t,s.e,100,100,0,true);if m["tunnel_first_out_to_ack_sum_ns"]!=uint64(s.at.Sub(a.out))||m["tunnel_last_out_to_ack_sum_ns"]!=uint64(s.at.Sub(b.out)){t.Fatal("first/last attempt attribution")}}},
+        {"ack_before_http_complete",func(t *testing.T,s *simulation){a:=s.send(1001,100);a.end=time.Time{};s.ack(1101);a.end=s.at.Add(time.Second);m:=assertState(t,s.e,100,100,0,true);if m["ack_before_first_http_complete_bytes"]!=100||m["ack_before_last_http_complete_bytes"]!=100||m["http_first_success_end_to_ack_count"]!=0{t.Fatal("negative latency")}}},
+        {"delayed_ack_gt30s",func(t *testing.T,s *simulation){s.send(1001,100);s.advance(45*time.Second);assertState(t,s.e,100,0,100,true);s.ack(1101);assertState(t,s.e,100,100,0,true)}},
+        {"fin_sequence_byte",func(t *testing.T,s *simulation){s.send(1001,100);s.e.outgoing(packet{key:s.key,seq:1101,fin:true},s.at);s.ack(1102);s.e.acknowledge(packet{key:s.key,fin:true,ackFlag:true,ack:1102},s.at);m:=assertState(t,s.e,100,100,0,true);if m["flow_close_events"]!=1{t.Fatal("FIN close")}}},
+        {"syn_with_data",func(t *testing.T,s *simulation){a:=s.e.outgoing(packet{key:s.key,seq:1000,syn:true,size:100},s.at);a.start=s.at;a.end=s.at;a.success=true;s.ack(1101);assertState(t,s.e,100,100,0,true)}},
+        {"out_of_order_segments",func(t *testing.T,s *simulation){s.send(1101,100);s.send(1001,100);s.ack(1201);assertState(t,s.e,200,200,0,true)}},
+        {"partial_ack",func(t *testing.T,s *simulation){s.send(1001,100);s.ack(1041);assertState(t,s.e,100,40,60,true);s.ack(1101);assertState(t,s.e,100,100,0,true)}},
+        {"stale_plus_new_data",func(t *testing.T,s *simulation){s.send(1001,100);s.advance(60*time.Second);s.send(1101,100);s.ack(1201);assertState(t,s.e,200,200,0,true)}},
+        {"post_ack_retransmission",func(t *testing.T,s *simulation){s.send(1001,100);s.ack(1101);m:=assertState(t,s.e,100,100,0,true);before:=m["tunnel_last_out_to_ack_sum_ns"];s.send(1001,100);s.ack(1101);m=assertState(t,s.e,100,100,0,true);if m["multi_attempt_acked_bytes"]!=0||m["tunnel_last_out_to_ack_sum_ns"]!=before{t.Fatal("post-delivery attempt attributed to earlier ACK")}}},
+    }
+    for _,tc:=range cases{t.Run(tc.name,func(t *testing.T){tc.run(t,sim(1000))})}
 }
-func check(t *testing.T,e *Engine,unique,acked,out uint64) map[string]uint64 {
-	t.Helper();m:=e.Snapshot()
-	if m["unique_downlink_tcp_bytes"]!=unique||m["acked_unique_downlink_tcp_bytes"]!=acked||m["outstanding_unique_bytes_current"]!=out||m["counter_consistency"]!=1{t.Fatal("byte conservation")}
-	return m
+func TestWrapAndOldDataAcrossNumericWrap(t *testing.T){
+    s:=sim(0xfffffff0);s.send(0xfffffff1,40);s.send(0x19,50);s.send(0xfffffff8,40);s.ack(0x4b)
+    m:=assertState(t,s.e,90,90,0,true);if m["retransmitted_bytes"]!=40{t.Fatal("wrap overlap")}
+    s.e.outgoing(packet{key:s.key,seq:0x4b,fin:true},s.at);s.ack(0x4c);assertState(t,s.e,90,90,0,true)
+}
+func TestReorderedObserverEvents(t *testing.T){
+    s:=sim(1000);out:=s.at.Add(time.Millisecond);ack:=out.Add(time.Second)
+    s.ackAt(1201,ack) // Observer callback seen before earlier output callback.
+    s.sendAt(1101,100,out.Add(10*time.Millisecond));s.sendAt(1001,100,out)
+    s.at=ack;assertState(t,s.e,200,200,0,true)
+    // A later-observed but earlier-timestamp partial ACK must win for its prefix.
+    s.ackAt(1051,out.Add(500*time.Millisecond));m:=assertState(t,s.e,200,200,0,true)
+    if m["tunnel_first_out_to_ack_bytes"]!=200{t.Fatal("reordered ACK counted twice")}
+}
+func TestFirstLastHTTPSuccessAndPendingCompletion(t *testing.T){
+    s:=sim(1000);a:=s.send(1001,100);a.success=false
+    b:=s.send(1001,100);c:=s.send(1001,100);c.end=time.Time{}
+    s.ack(1101);m:=assertState(t,s.e,100,100,0,true)
+    if m["http_first_success_end_to_ack_sum_ns"]!=uint64(s.at.Sub(b.end))||m["http_last_success_end_to_ack_sum_ns"]!=uint64(s.at.Sub(b.end))||m["ack_before_first_http_complete"]!=0||m["ack_before_last_http_complete"]!=1{t.Fatal("attempt completion bounds")}
+    c.end=s.at.Add(time.Second);c.success=true;m=assertState(t,s.e,100,100,0,true)
+    if m["http_last_success_end_to_ack_sum_ns"]!=uint64(s.at.Sub(b.end)){t.Fatal("negative end sample")}
+}
+func TestFlowCloseReuseAndOldACK(t *testing.T){
+    s:=sim(1000);s.send(1001,100);s.ack(1101)
+    s.e.outgoing(packet{key:s.key,rst:true},s.at)
+    s.advance(time.Second);s.syn(9000);s.send(9001,100)
+    s.ack(1101);assertState(t,s.e,200,100,100,true)
+    s.ack(9101);assertState(t,s.e,200,200,0,true)
+    if s.e.generations!=2{t.Fatal("generation history lost")}
+}
+func TestAmbiguousReuseAndResetOutstandingFailClosed(t *testing.T){
+    s:=sim(1000);s.send(1001,100);s.e.outgoing(packet{key:s.key,rst:true},s.at)
+    m:=assertState(t,s.e,100,0,0,false);if m["invalidated_unique_bytes"]!=100||m["correlation_valid"]!=0{t.Fatal("RST silently delivered/lost bytes")}
+    s.advance(time.Second);s.syn(1000);if s.e.Snapshot()["ambiguous_flow_generation"]!=1{t.Fatal("same-ISN reuse guessed")}
+    s=sim(1000);s.send(1001,100);s.ack(1101);s.syn(1050);s.send(1051,100)
+    if s.e.Snapshot()["ambiguous_flow_generation"]!=1{t.Fatal("overlapping epochs guessed")}
+}
+func TestOldViolationRuleReproducedWithoutGuessingRealPackets(t *testing.T){
+    // The old checker ran this rule before its size==0 return. Five synthetic
+    // empty control packets reproduce five violations; this is NOT a claim
+    // about the five unrecorded packets in the real run.
+    anchor:=uint32(0x60000000);high:=int64(1);old:=0;s:=sim(anchor)
+    for _,seq:=range []uint32{0,1,100,200,300}{
+        lo:=high+int64(int32(seq-(anchor+uint32(high))))
+        if lo-high>=1<<30||high-lo>=1<<30{old++}
+        s.e.outgoing(packet{key:s.key,seq:seq,ackFlag:true},s.at)
+    }
+    s.e.outgoing(packet{key:s.key,seq:0,rst:true},s.at)
+    m:=assertState(t,s.e,0,0,0,true)
+    if old!=5||m["ignored_control_sequences"]!=6{t.Fatal("old predicate reproduction")}
+}
+func TestSerialUnsupportedAndDeferredACKExpiry(t *testing.T){
+    s:=sim(1000);s.send(1000+(1<<31),1);if s.e.Snapshot()["unsupported_serial_range"]!=1{t.Fatal("half space guessed")}
+    s=sim(1000);s.send(999,1);if s.e.Snapshot()["unsupported_serial_range"]!=1{t.Fatal("pre-SYN data guessed")}
+    s=sim(1000);s.ack(1201);if s.e.Snapshot()["correlation_valid"]!=0{t.Fatal("unresolved ACK valid")};s.advance(RecordTTL);m:=s.e.Snapshot()
+    if m["expired_observer_ack_events"]!=1||m["correlator_evictions"]!=1{t.Fatal("missing observation not invalidated")}
+}
+func TestTTLAndAllHardCaps(t *testing.T){
+    s:=sim(1000);s.send(1001,100);s.advance(RecordTTL);m:=assertState(t,s.e,100,0,0,false)
+    if m["correlator_evictions"]!=1||m["invalidated_unique_bytes"]!=100||m["correlation_valid"]!=0{t.Fatal("TTL")}
+    for _,which:=range []string{"range","attempt","reference","ack","flow"}{t.Run(which,func(t *testing.T){
+        s:=sim(1000)
+        switch which{case "range":s.e.capRecords=0;case "attempt":s.e.capAttempts=0;case "reference":s.e.capReferences=0;case "ack":s.e.capACKs=0;case "flow":s.e.capFlows=1}
+        if which=="flow"{s.key=flowID(2);s.syn(0)}else if which=="ack"{s.ack(1001)}else{s.send(1001,100)}
+        m:=s.e.Snapshot();if m["diagnostic_capacity_drops"]!=1||m["correlation_valid"]!=0||m["counter_consistency"]!=1{t.Fatal("hard cap")}
+    })}
+    s=sim(1000);s.e.capTags=1;s.e.Inbound([]byte{1},s.at);s.e.Inbound([]byte{2},s.at);if len(s.e.tags)!=1||s.e.Snapshot()["diagnostic_capacity_drops"]!=1{t.Fatal("tag cap")}
+    s=sim(1000);s.e.Inbound(make([]byte,MaxTagBytes+1),s.at);if len(s.e.tags)!=0||s.e.tagBytes!=0{t.Fatal("retained buffer cap")}
 }
 
-func TestCumulativeACKMultipleSegments(t *testing.T) {
-	c:=testEngine();c.send(1001,100,true);c.send(1101,100,true);c.send(1201,100,true)
-	c.advance(100*time.Millisecond);c.ack(1301)
-	m:=check(t,c.e,300,300,0)
-	if m["downlink_tcp_segments_acked"]!=3||m["tunnel_out_to_ack_count"]!=3||m["http_start_to_ack_count"]!=3||m["http_end_to_ack_count"]!=3{t.Fatal("cumulative coverage")}
-	if m["ws_to_ack_decode_count"]!=1||m["ws_to_ack_decode_sum_ns"]!=uint64(time.Millisecond)||m["ack_decode_to_inject_sum_ns"]!=uint64(time.Microsecond){t.Fatal("WS/inject timing")}
+// Only integration tests below use synthetic packet headers, to verify parser
+// and identity propagation at the existing unchanged production hooks.
+func ip(seq,ack uint32,size int,flags byte,reverse bool)[]byte{
+    p:=make([]byte,40+size);p[0]=0x45;p[9]=6;p[15]=1;p[19]=2;p[21]=3;p[23]=4
+    if reverse{p[15],p[19]=p[19],p[15];p[21],p[23]=p[23],p[21]}
+    binary.BigEndian.PutUint16(p[2:4],uint16(len(p)));binary.BigEndian.PutUint32(p[24:28],seq);binary.BigEndian.PutUint32(p[28:32],ack);p[32]=0x50;p[33]=flags;return p
 }
-func TestRetransmissionOverlapAndPreviouslyACKedBytes(t *testing.T) {
-	c:=testEngine();c.send(1001,100,true);c.send(1051,100,true)
-	m:=check(t,c.e,150,0,150);if m["retransmitted_bytes"]!=50||m["retransmitted_segments"]!=1{t.Fatal("overlap counted as new bytes")}
-	c.advance(time.Millisecond);c.ack(1151)
-	m=check(t,c.e,150,150,0)
-	if m["http_latency_ambiguous_retransmit_bytes"]!=100||m["http_end_to_ack_count"]!=1{t.Fatal("ambiguous attempt incorrectly attributed")}
-	c.send(1001,150,true);m=check(t,c.e,150,150,0)
-	if m["retransmitted_bytes"]!=200{t.Fatal("ACKed history lost")}
+func TestRealHookIdentityHTTPAndReturnTiming(t *testing.T){
+    at:=time.Unix(1,0);e:=New(func()time.Time{return at});e.Outgoing(ip(1000,0,0,2,false))
+    p:=ip(1001,0,100,16,false);e.Outgoing(p);cp:=append([]byte(nil),p...);e.Move(p,cp);e.Enqueue(cp)
+    if e.Snapshot()["http_not_started_bytes"]!=100{t.Fatal("not started")}
+    at=at.Add(time.Millisecond);o:=e.HTTPStart([][]byte{cp});if e.Snapshot()["http_inflight_bytes"]!=100{t.Fatal("inflight")}
+    at=at.Add(time.Millisecond);e.HTTPDone(o,true,204,false);if e.Snapshot()["http_success_not_acked_bytes"]!=100{t.Fatal("success")}
+    at=at.Add(100*time.Millisecond);a:=ip(0,1101,0,16,true);e.Inbound(a,at.Add(-time.Millisecond));stamp:=e.Incoming(a);at=at.Add(time.Microsecond);e.BeforeInject(stamp)
+    m:=assertState(t,e,100,100,0,true);if m["ws_to_ack_decode_sum_ns"]!=uint64(time.Millisecond)||m["ack_decode_to_inject_sum_ns"]!=uint64(time.Microsecond)||e.tagBytes!=0{t.Fatal("timing or tag leak")}
 }
-func TestDuplicateAndOldACK(t *testing.T) {
-	c:=testEngine();c.send(1001,100,true);c.ack(1101);c.ack(1101);c.ack(1051)
-	m:=check(t,c.e,100,100,0)
-	if m["duplicate_ack_events"]!=1||m["old_ack_events"]!=1||m["tunnel_out_to_ack_count"]!=1{t.Fatal("duplicate ACK redelivered bytes")}
+func TestEveryRetransmissionGetsHTTPObservation(t *testing.T){
+    at:=time.Unix(1,0);e:=New(func()time.Time{return at});e.Outgoing(ip(1000,0,0,2,false))
+    for i:=0;i<3;i++{p:=ip(1001,0,100,16,false);e.Outgoing(p);o:=e.HTTPStart([][]byte{p});if len(o.owners)!=1{t.Fatal("pure retransmission lost HTTP owner")};e.HTTPDone(o,i!=0,204,false);at=at.Add(time.Millisecond)}
+    a:=ip(0,1101,0,16,true);e.Inbound(a,at);e.Incoming(a);m:=assertState(t,e,100,100,0,true)
+    if m["retransmission_attempts"]!=2||m["http_requests"]!=3||m["multi_attempt_acked_bytes"]!=100{t.Fatal("retransmit ownership")}
 }
-func TestPartiallyCoveredSegment(t *testing.T) {
-	c:=testEngine();c.send(1001,100,true);c.ack(1041)
-	m:=check(t,c.e,100,40,60);if m["downlink_tcp_segments_acked"]!=0||m["outstanding_segments_current"]!=1{t.Fatal("partial ACK retired segment")}
-	c.advance(time.Millisecond);c.ack(1101);m=check(t,c.e,100,100,0)
-	if m["downlink_tcp_segments_acked"]!=1||m["tunnel_out_to_ack_count"]!=2{t.Fatal("partial progress samples")}
+func TestHTTPFailureNoReplayAndACKBeforeDoReturns(t *testing.T){
+    at:=time.Unix(1,0);e:=New(func()time.Time{return at});e.Outgoing(ip(1000,0,0,2,false));p:=ip(1001,0,100,16,false);e.Outgoing(p);o:=e.HTTPStart([][]byte{p})
+    a:=ip(0,1101,0,16,true);at=at.Add(time.Millisecond);e.Inbound(a,at);e.Incoming(a);at=at.Add(time.Second);e.HTTPDone(o,false,429,false)
+    m:=assertState(t,e,100,100,0,true);if m["http_requests"]!=1||m["http_failures"]!=1||m["ack_before_first_http_complete"]!=1{t.Fatal("HTTP completion or retry")}
 }
-func TestACKBeforeHTTPCompletion(t *testing.T) {
-	c:=testEngine();o:=c.send(1001,100,false);c.advance(10*time.Millisecond);c.ack(1101)
-	c.advance(90*time.Millisecond);c.e.HTTPDone(o,true,204,false)
-	m:=check(t,c.e,100,100,0)
-	if m["ack_before_http_complete"]!=1||m["ack_before_http_complete_bytes"]!=100||m["http_end_to_ack_count"]!=0||m["http_start_to_ack_count"]!=1{t.Fatal("ACK-before-complete or negative latency")}
-}
-func TestTTLAndBoundedMaps(t *testing.T) {
-	c:=testEngine();c.send(1001,100,true);c.advance(RecordTTL);m:=check(t,c.e,100,0,0)
-	if m["correlator_evictions"]!=1||m["evicted_unique_bytes"]!=100{t.Fatal("TTL must explicitly invalidate measurement")}
-	c=testEngine();c.e.capRecords=1;c.send(1001,100,true);c.send(1101,100,true)
-	m=c.e.Snapshot();if m["records_current"]>1||m["diagnostic_capacity_drops"]!=1{t.Fatal("record cap")}
-	c.e.capFlows=1;p:=ip(2,0,0,2,false);p[15]=9;c.e.Outgoing(p)
-	if len(c.e.flows)!=1{t.Fatal("flow cap")}
-	c.e.capTags=1;c.e.Inbound([]byte{1},c.at);c.e.Inbound([]byte{2},c.at)
-	if len(c.e.tags)!=1{t.Fatal("tag cap")}
-}
-func TestWraparoundAndSYNFINSequenceSpace(t *testing.T) {
-	c:=testEngine();c.e=New(func()time.Time{return c.at})
-	c.e.Outgoing(ip(0xfffffff0,0,0,2,false))
-	c.send(0xfffffff1,40,true);c.ack(0x19);check(t,c.e,40,40,0)
-	c.send(0x19,50,true);c.e.Outgoing(ip(0x4b,0,0,17,false));c.ack(0x4c)
-	m:=check(t,c.e,90,90,0)
-	if m["ack_beyond_observed"]!=0||m["sequence_constraint_violations"]!=0{t.Fatal("wraparound or FIN consumed data bytes")}
-}
-func TestUnknownFutureACKDoesNotDeliver(t *testing.T) {
-	c:=testEngine();c.send(1001,100,true);c.ack(1102)
-	m:=check(t,c.e,100,0,100);if m["ack_beyond_observed"]!=1{t.Fatal("unobserved ACK silently accepted")}
-}
-func TestBufferIdentityPropagationAndHTTPStates(t *testing.T) {
-	c:=testEngine();p:=ip(1001,0,100,16,false);c.e.Outgoing(p)
-	a:=append([]byte{9},p...);b:=append([]byte{8},a...);cp:=append([]byte(nil),b...)
-	c.e.Move(p,a);c.e.Move(a,b);c.e.Move(b,cp);c.e.Enqueue(cp)
-	m:=check(t,c.e,100,0,100);if m["http_not_started_bytes"]!=100||len(c.e.tags)!=1{t.Fatal("identity move")}
-	o:=c.e.HTTPStart([][]byte{cp});m=c.e.Snapshot();if m["http_inflight_bytes"]!=100{t.Fatal("HTTP inflight state")}
-	c.advance(time.Millisecond);c.e.HTTPDone(o,true,200,false);m=c.e.Snapshot()
-	if m["http_success_not_acked_bytes"]!=100||m["tags_current"]!=0{t.Fatal("HTTP success state")}
-	c.ack(1101);check(t,c.e,100,100,0)
-}
-func TestHTTPFailureDoesNotReplayOrAcknowledge(t *testing.T) {
-	c:=testEngine();o:=c.send(1001,100,false);c.e.HTTPDone(o,false,429,false)
-	m:=check(t,c.e,100,0,100)
-	if m["http_requests"]!=1||m["http_failures"]!=1||m["http_failed_not_acked_bytes"]!=100{t.Fatal("HTTP rejection semantics")}
-}
-func TestConcurrentSnapshots(t *testing.T) {
-	e:=New(time.Now);var wg sync.WaitGroup
-	for n:=0;n<16;n++{wg.Add(1);go func(id int){defer wg.Done();syn:=ip(0,0,0,2,false);syn[15]=byte(id+1);e.Outgoing(syn);for i:=0;i<100;i++{
-		p:=ip(uint32(i*100+1),0,100,16,false);p[15]=byte(id+1)
-		e.Outgoing(p);e.Enqueue(p);o:=e.HTTPStart([][]byte{p});e.HTTPDone(o,true,204,false)
-		a:=ip(0,uint32(i*100+101),0,16,true);a[19]=byte(id+1);e.Inbound(a,time.Now());e.BeforeInject(e.Incoming(a))
-	}}(n)}
-	for i:=0;i<100;i++{e.Snapshot()};wg.Wait();m:=e.Snapshot()
-	if m["correlation_valid"]!=1||m["acked_unique_downlink_tcp_bytes"]!=160000||m["outstanding_unique_bytes_current"]!=0{t.Fatal("concurrent accounting")}
+func TestConcurrentHooksSnapshots(t *testing.T){
+    e:=New(time.Now);var wg sync.WaitGroup
+    for id:=1;id<=16;id++{wg.Add(1);go func(id int){defer wg.Done();p:=ip(0,0,0,2,false);p[15]=byte(id);e.Outgoing(p)
+        for n:=0;n<40;n++{p=ip(uint32(n*100+1),0,100,16,false);p[15]=byte(id);e.Outgoing(p);e.Enqueue(p);o:=e.HTTPStart([][]byte{p});e.HTTPDone(o,true,204,false)
+            a:=ip(0,uint32(n*100+101),0,16,true);a[19]=byte(id);e.Inbound(a,time.Now());e.BeforeInject(e.Incoming(a))}
+    }(id)}
+    for i:=0;i<40;i++{e.Snapshot()};wg.Wait();assertState(t,e,64000,64000,0,true)
 }
 
-func TestIdleACKedHistoryPreservedAndUnanchoredFlagged(t *testing.T) {
-	c:=testEngine();c.send(1001,100,true);c.ack(1101);c.advance(2*RecordTTL);c.e.Snapshot()
-	c.send(1001,100,true);m:=check(t,c.e,100,100,0)
-	if m["retransmitted_bytes"]!=100||m["correlation_valid"]!=1{t.Fatal("idle history lost")}
-	e:=New(time.Now);e.Outgoing(ip(200,0,10,16,false))
-	if e.Snapshot()["correlation_valid"]!=0{t.Fatal("unanchored flow silently treated as complete observation")}
+func TestSeededThousandsOfFlows(t *testing.T){
+    for _,seed:=range []int64{7,20260923}{t.Run("fixed_seed",func(t *testing.T){
+        rng:=rand.New(rand.NewSource(seed));s:=sim(1000);s.e=New(func()time.Time{return s.at});var unique uint64
+        for id:=uint32(2);id<=2049;id++{
+            s.key=flowID(id);anchor:=rng.Uint32();s.syn(anchor)
+            seq:=anchor+1;var ends []uint32
+            for n:=0;n<4;n++{size:=100+rng.Intn(1400);s.send(seq,size);if n%2==0{s.send(seq+uint32(size/3),size-size/3)};seq+=uint32(size);ends=append(ends,seq);unique+=uint64(size)}
+            // Delayed ACKs well above the old TTL, without changing virtual time
+            // for other flows; event timestamps use one monotonic server clock.
+            outAt:=s.at;s.ackAt(ends[1],outAt.Add(33*time.Second));s.ackAt(seq,outAt.Add(34*time.Second));s.ackAt(seq,outAt.Add(35*time.Second))
+            s.e.outgoing(packet{key:s.key,seq:seq,fin:true},outAt.Add(35*time.Second));s.e.acknowledge(packet{key:s.key,ack:seq+1,ackFlag:true,fin:true},outAt.Add(36*time.Second))
+            // A disjoint new sequence epoch on the same synthetic tuple.
+            anchor2:=anchor+(1<<20);s.at=outAt.Add(37*time.Second);s.syn(anchor2);s.send(anchor2+1,50);unique+=50;s.ack(anchor2+51)
+            // Keep the number of generations within the documented cap.
+        }
+        s.at=s.at.Add(40*time.Second)
+        m:=assertState(t,s.e,unique,unique,0,true)
+        t.Logf("seed=%d flows=2048 reused=2048 unique=%d valid=%d evictions=%d sequence_violations=%d conservation=%d",seed,unique,m["correlation_valid"],m["correlator_evictions"],m["sequence_constraint_violations"],m["counter_consistency"])
+    })}
 }
-func TestHistogramAndSecretSafeSchema(t *testing.T) {
-	var h Histogram
-	limits:=[]time.Duration{50*time.Millisecond,100*time.Millisecond,250*time.Millisecond,500*time.Millisecond,time.Second,2*time.Second,5*time.Second,10*time.Second}
-	for _,d:=range limits{h.observe(d-1);h.observe(d)};h.observe(-time.Nanosecond)
-	if h.count!=16||h.buckets[0]!=1||h.buckets[8]!=1{t.Fatal("bucket edges or negative latency")}
-	c:=testEngine();c.send(1001,100,true);m:=c.e.Snapshot();data,_:=json.Marshal(m)
-	for _,forbidden:=range []string{"flow_key","src","dst","port\"","payload\"","seq\"","ack\"","cookie","token","url","header"}{
-		if strings.Contains(string(data),forbidden){t.Fatal("unsafe snapshot field")}
-	}
+func TestReplayScale(t *testing.T){
+    s:=sim(0xffff0000);seq:=uint32(0xffff0001);starts:=make([]uint32,1246);sizes:=make([]int,1246);rng:=rand.New(rand.NewSource(1838));var unique uint64
+    for i:=range starts{sizes[i]=800+rng.Intn(200);starts[i]=seq;s.send(seq,sizes[i]);seq+=uint32(sizes[i]);unique+=uint64(sizes[i])}
+    for i:=0;i<592;i++{j:=(i*17)%1246;s.send(starts[j],sizes[j])}
+    s.advance(40*time.Second)
+    for i:=0;i<2994;i++{j:=i*1246/2994;end:=starts[j]+uint32(sizes[j]);s.ackAt(end,s.at.Add(time.Duration(i)*time.Millisecond))}
+    s.at=s.at.Add(4*time.Second);m:=assertState(t,s.e,unique,unique,0,true)
+    if m["downlink_tcp_segments_created"]!=1838||m["retransmission_attempts"]!=592||m["ack_observations"]!=2994||m["oldest_unacked_age_max_ns"]<=uint64(32*time.Second){t.Fatal("replay scale drift")}
+    t.Logf("segments=1838 retransmissions=592 ACKs=2994 unique=%d valid=%d evictions=%d sequence_violations=%d conservation=%d",unique,m["correlation_valid"],m["correlator_evictions"],m["sequence_constraint_violations"],m["counter_consistency"])
+}
+func TestMemoryLayoutAndBoundedFixture(t *testing.T){
+    t.Logf("linux sizes: flow=%d range=%d attempt=%d ack_event=%d tag=%d reference=%d",unsafe.Sizeof(flow{}),unsafe.Sizeof(record{}),unsafe.Sizeof(attempt{}),unsafe.Sizeof(ackEvent{}),unsafe.Sizeof(tag{}),unsafe.Sizeof((*attempt)(nil)))
+    runtime.GC();var before,after runtime.MemStats;runtime.ReadMemStats(&before)
+    s:=sim(0);for i:=0;i<10000;i++{s.send(uint32(1+i*100),100)};runtime.GC();runtime.ReadMemStats(&after);runtime.KeepAlive(s)
+    if after.HeapAlloc>before.HeapAlloc{t.Logf("10000 one-attempt ranges retained heap delta=%d",after.HeapAlloc-before.HeapAlloc)}
+}
+func TestHistogramAndPrivateSchema(t *testing.T){
+    var h Histogram;for _,d:=range []time.Duration{0,50*time.Millisecond,100*time.Millisecond,250*time.Millisecond,500*time.Millisecond,time.Second,2*time.Second,5*time.Second,10*time.Second}{h.observe(d)};h.observe(-time.Nanosecond)
+    if h.count!=9{t.Fatal("histogram")};for _,n:=range h.buckets{if n!=1{t.Fatal("histogram edges")}}
+    s:=sim(1000);s.send(1001,100);s.send(1001,100);s.ack(1101);m:=s.e.Snapshot();data,_:=json.Marshal(m)
+    for _,forbidden:=range []string{"flow_key","src","dst","port\"","payload\"","seq\"","ack\"","cookie","token","url","header","ambiguous_retransmit_bytes"}{if strings.Contains(string(data),forbidden){t.Fatal("private or obsolete schema field")}}
 }

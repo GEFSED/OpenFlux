@@ -42,5 +42,5 @@ func TestAckIdentityThroughRealLegacyAESWrappers(t *testing.T) {
 	exitStack.Receive(func(p []byte){if !bytes.Equal(p,ackPacket){t.Fatal("return ACK changed")};ackdiag.BeforeInject(ackdiag.Incoming(p))})
 	ackdiag.Inbound(clientWire.sent,time.Now());exitWire.deliver(clientWire.sent);ackdiag.Forget(clientWire.sent)
 	m:=ackdiag.Default.Snapshot()
-	if m["unique_downlink_tcp_bytes"]!=300||m["acked_unique_downlink_tcp_bytes"]!=300||m["http_end_to_ack_count"]!=1||m["correlation_valid"]!=1{t.Fatal("identity lost across real encryption/compression")}
+	if m["unique_downlink_tcp_bytes"]!=300||m["acked_unique_downlink_tcp_bytes"]!=300||m["http_first_success_end_to_ack_count"]!=1||m["correlation_valid"]!=1{t.Fatal("identity lost across real encryption/compression")}
 }

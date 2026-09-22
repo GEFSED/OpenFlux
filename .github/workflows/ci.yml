@@ -53,6 +53,10 @@ jobs:
               env.write('CGO_ENABLED=' + values['CGO_ENABLED'] + '\n')
               env.write('GOAMD64=' + values.get('GOAMD64', 'v1') + '\n')
           PY
+      - name: Deterministic correlator, stress, replay and memory evidence
+        run: |
+          set -o pipefail
+          go test -v ./internal/ackdiag | tee "$RUNNER_TEMP/ack-artifacts/correlator-tests.txt"
       - name: Root tests
         run: go test ./...
       - name: Root race tests

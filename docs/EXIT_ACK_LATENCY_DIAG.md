@@ -1,128 +1,177 @@
-# Server-only TCP ACK correlation
+# ACK correlator v2: local/CI proof, no deployment
 
-Exact production base: `081d214300c1067f17f6c0d02f84a8491f1a7b98`.
-No Android changes, transport tuning, retry, new wire headers or protocol changes.
+Production base: 081d214300c1067f17f6c0d02f84a8491f1a7b98.
+Previous observer: f31a49f7953eb910998ca2bdded22952faaed80d.
+This follow-up changes only the observer, tests, source verifier and documentation.
+No VPS access, Android changes, phone test, tuning, PR or Release is part of it.
 
-## Hooks audited against that source
+## Exact audit of the previous implementation
 
-* `tunnel/endpoint.go`, `TunnelLinkEndpoint.WritePackets`: IPv4/TCP data just before
-  `onOutgoingPacket` sends it through the production wrapper chain.
-* `CompressedTransport.Send` and `EncryptedTransport.Send`: transfer an in-memory
-  observation identity from the old buffer to its newly constructed buffer. No
-  payload mutation, hashing, logging, changed compression or changed encryption.
-* `relayClient.Send`: transfer identity to the existing queue copy; timestamp just
-  before its original nonblocking enqueue select. A failed enqueue retains its
-  original error/drop semantics; it is not counted as an HTTP attempt.
-* `relayClient.sendBatch`: timestamp immediately before `httpClient.Do`, then after
-  the original response drain or Do error. Only HTTP 200/204 count as success.
-  Body-read errors remain ignored by production and are counted separately.
-* `wsListener.handleMessage`: timestamp when the complete WS message is available;
-  pass that stamp through original bundle decoding and receive wrappers in memory.
-* `TunnelLinkEndpoint.InjectInbound`: inspect returning cumulative ACK before
-  gVisor input; timestamp once TCP header parsing completes. The second timestamp
-  is immediately before `DeliverNetworkPacket`, after observation/bookkeeping and
-  creation of the same PacketBuffer. This measures diagnostic overhead too.
+All locations below refer to internal/ackdiag/correlator.go at f31a49f:
 
-DOWNLINK_TCP_HOOK = TunnelLinkEndpoint.WritePackets
-HTTP_START_HOOK = relayClient.sendBatch immediately before Do
-HTTP_COMPLETE_HOOK = relayClient.sendBatch after Do/error or body drain
-RETURN_ACK_HOOK = TunnelLinkEndpoint.InjectInbound, before DeliverNetworkPacket
+| Item | Old location / semantics |
+| --- | --- |
+| FLOW_KEY | line 21, flowKey [12]byte: IPv4 source/destination + TCP ports; TCP implicit |
+| SEQ_RANGE_TYPE | line 22, interval {lo, hi int64}, half-open |
+| SEQ_COMPARISON | lines 48-50, unwrap uses signed modular int32 difference around high |
+| RANGE_INSERT | Outgoing lines 142-160; novel fragments appended to open |
+| RANGE_MERGE | merge lines 122-126; sorted union of seen history |
+| RETRANSMIT_DETECTION | lines 143-150; size minus novel, marks existing owner's ambiguous flag |
+| ACK_ADVANCEMENT | Incoming lines 214-218; unwrap against high, future ACK rejected |
+| ACK_RANGE_REMOVAL | lines 219-232; clips/removes covered open ranges |
+| TTL_EVICTION | expire lines 251-257 and evictRecord lines 243-249; 30 seconds from first out |
+| SEQUENCE_CONSTRAINT_CHECK | line 140, hi-high >= 2^30 OR high-lo >= 2^30 |
 
-All stamps use the same Go monotonic clock. Sequence/ACK values, IPv4 addresses and
-ports exist only in private flow state. No such fields appear in JSON. IPv4 TCP
-header lengths/total lengths/fragments are checked for safe observation; unsupported
-packets continue through production unchanged. Non-TCP packets are not correlated.
+The old serial arithmetic already handled an ordinary numeric wrap. It was NOT
+plain unsigned integer ordering. The five real violations each mean only that
+Outgoing's quarter-space predicate fired. It runs before the size==0 return, so
+pure ACK/RST sequence fields can trigger it. Incoming ACK checks cannot increment
+this counter. No reason/flags/generation metadata were retained; the actual five
+packet triggers cannot be recovered from the aggregate. We do NOT claim that
+wraparound, overlaps, malformed packets, or RST caused those particular events.
 
-## TCP accounting
+A frozen-predicate test reproduces five violations with synthetic empty control
+packets and a distant SYN. v2 does not treat those SEQ fields as new data. This
+proves a model defect, not retrospective identification of unrecorded real packets.
+The old parser did not expose RST and retained only one epoch per tuple.
 
-Flow identity is the IPv4 5-tuple (protocol fixed to TCP), with reversed tuple for
-return ACKs. SYN anchors the sequence epoch, consumes one sequence-space byte, and
-is not application data. FIN similarly advances the observed high-water mark but
-not data counters. A new SYN with a different initial sequence resets the epoch;
-any outstanding old records are explicitly evicted, invalidating that measurement.
+TTL is a separate proven defect: actual age 31.988752140s exceeded 30s; 99 evictions
+removed 113827 bytes. The first sequence violation preceded the first eviction.
+Retransmission ownership is a third defect: pure retransmissions returned before
+allocating an attempt/tag, and partial overlap marked the original whole owner
+ambiguous. This excluded 383993 ACKed bytes from HTTP attribution in that run.
 
-Signed 32-bit serial differences unwrap around the current 64-bit high-water mark.
-Forward/backward jumps >=2^30 bytes are rejected by the observer and counted.
-This is narrower than the ambiguous TCP half-space; normal bounded windows fit.
-The observer does not alter a packet, ACK acceptance or gVisor's TCP state.
+## Unique byte ledger and attempts
 
-Merged seen ranges include previously ACKed bytes. Novel disjoint ranges contribute
-unique bytes; overlap contributes retransmitted bytes. A cumulative ACK retires
-all covered unique ranges, including partial coverage. Duplicate/old ACKs do not
-retire bytes again. ACKs beyond observed sequence space are flagged, not accepted.
-An observed flow without SYN is flagged as unanchored, so the result cannot silently
-claim a complete history. ACK progress byte count means newly ACKed unique data,
-not SYN/FIN or raw ACK-number advancement.
+Each SYN-anchored generation has sorted disjoint atomic ranges. A new transmission
+splits at its boundaries, inserts only uncovered gaps, and attaches one attempt to
+EVERY intersection, including pure retransmissions and already-delivered history.
+An attempt holds out/enqueue/HTTP-start/end/status, independently of unique bytes.
+Partial ACKs split a range; cumulative ACKs cover all observed ranges below them.
+The earliest applicable ACK timestamp records delivery once. Duplicate/old ACKs
+cannot deliver bytes twice. Reordered callback observations can supply earlier
+ACK/out timestamps; a future ACK is deferred until its observed sequence boundary
+exists. A still-deferred ACK makes a snapshot invalid, and expiration latches failure.
+No packet payload or real tuple/sequence value appears in snapshots.
 
-`downlink_tcp_segments_created` includes retransmitted data transmissions.
-`outstanding_segments_current` counts original transmissions with novel bytes still
-outstanding; split novel intervals retain the same owner. `segments_acked` counts
-those owners once all their novel bytes have been cumulatively ACKed.
+Retained ACKed ranges prevent retransmissions after delivery from being counted
+as new application data. Post-delivery transmissions are counted as attempts but
+are excluded from attribution to the earlier ACK. No attempt is called causal.
 
-## Latency attribution and retransmission ambiguity
+Schema 2 reports six separate count/sum/max/fixed-bucket histograms:
 
-Tunnel-out-to-ACK measures elapsed time from the **first observed transmission**
-of each novel range. It includes recovery time when retransmissions occurred.
-One latency sample represents one newly ACKed range portion, not one byte: a partial
-ACK can produce multiple progress samples for one original segment. Counts/sum/max
-and fixed buckets are reported; means are sample-weighted, not byte-weighted.
+- tunnel_first_out_to_ack, tunnel_last_out_to_ack
+- http_first_start_to_ack, http_last_start_to_ack
+- http_first_success_end_to_ack, http_last_success_end_to_ack
 
-There is no safe way to determine which overlapping transmission caused a cumulative
-ACK. Once an outstanding range is retransmitted, its original owner is marked
-ambiguous. HTTP-start/HTTP-end-to-ACK samples for that owner are excluded and its
-ACKed bytes counted in `http_latency_ambiguous_retransmit_bytes`. This is conservative
-if only part of a segment overlaps. It avoids falsely attributing ACK latency to
-the wrong successful relay request (Karn-style ambiguity handling).
+First/last mean chronological minima/maxima among attempts emitted by ACK time.
+HTTP-end samples require successful completion no later than ACK. Pending or
+later completion is counted separately as ack_before_first_http_complete and
+ack_before_last_http_complete (also byte counts). A completed failed attempt is
+not a successful end sample. No negative latency enters any histogram.
 
-For unambiguous data, ACK time earlier than HTTP completion increments
-`ack_before_http_complete` and its byte counter. Negative end-to-ACK durations never
-enter the histogram. An ACK following a failed HTTP attempt is counted separately;
-HTTP failure is not assumed to prove loss. HTTP-start-to-ACK remains observable.
+Samples are atomic delivered range portions, NOT unique causal sends or packets.
+Each histogram also reports covered bytes. Splitting can change sample count;
+compare byte coverage and documented range weighting, not fabricated percentiles.
+Snapshots recompute from the bounded retained ledger, so later HTTP completion
+cannot lose ACK-before-completion evidence. Six metrics replace the old ambiguous
+single HTTP latency metrics; downstream journal readers must accept schema 2.
 
-End-state byte gauges classify **the first observed transmission** of remaining
-unique bytes: not started, inflight, success-not-ACKed, or failed-not-ACKed. They
-are mutually exclusive and sum to outstanding bytes. Retransmission ambiguity is
-reported separately; these gauges do not assert a retransmission's latest HTTP state.
-ACKed bytes are unique, and not counted as newly delivered again on retransmission.
+retransmitted_bytes counts repeated bytes on every repeated attempt.
+retransmitted_unique_bytes counts the union covered by more than one attempt.
+retransmission_attempts counts sends with any overlap.
+multi_attempt_acked_bytes counts delivered unique bytes with multiple attempts
+emitted at/before delivery. These are intentionally different quantities.
 
-## Bounds, overhead and validity
+End-state unique byte gauges use any successful attempt first, otherwise any
+inflight attempt, otherwise failed started attempts, otherwise not-started. They
+are exclusive, sum to outstanding, and do not purport to identify a causal send.
 
-Limits: 16384 outstanding interval records, 1024 flows, 32768 transient buffer tags,
-256 merged history ranges per flow. Outstanding records/transient tags expire at
-30 s. Fully ACKed sequence history is retained for 10 idle minutes (within the flow
-cap), avoiding false uniqueness when a live idle connection resumes after 30 s.
-There is no per-packet disk output, goroutine, sleep, capacity wait or network I/O.
-Short observer-only mutex sections protect metadata; they are never held across
-HTTP, transport locks, callbacks or InjectInbound. Exhaustion drops observation,
-never packets. Snapshot scans are bounded by these fixed limits. HTTP observation
-references are additionally bounded by the unchanged worker/batch counts.
+## Sequence arithmetic and lifecycle
 
-The existing stats goroutine emits `[ACK-DIAG]` numeric snapshots every 2 s. No new
-permanent goroutine is added. Ordinary diagnostic deployment uses the original argv,
-without `--debug`; `utils/debug.go` and SafeGo are byte-identical to production.
-Standard free-form startup/fatal log text is replaced with `[ACK-LOG] suppressed=1`
-to prevent auth URL leakage. Error returns, exit semantics and recovery stay intact.
+The exact dependency gvisor.dev/gvisor/pkg/tcpip/seqnum supplies Value.LessThan
+and Size. Each observed SYN anchors a diagnostic epoch strictly shorter than
+2^31 sequence positions. Numeric wrap at 2^32 is supported, including intervals
+spanning it and retransmissions on either side. Exactly half a space, pre-SYN data
+and >=2^31-byte epochs are explicitly unsupported and invalidate observation.
+This is a documented scope for a short test, not arbitrary infinite TCP streams.
+At 10 Mbps half a space takes about 29 minutes; this task's one-run scale is ~1MB.
 
-Any eviction, capacity drop, unsupported sequence jump, unanchored flow, ACK beyond
-observed data, ACK without HTTP start or missing WS timestamp sets correlation_valid=0.
-Even when conservation still balances after an eviction, causal conclusions are
-invalid. Conservation: unique = ACKed + outstanding + evicted unique bytes.
-Sampled age is also updated when ACKing/evicting so long waits are not missed.
+SYN and FIN consume one sequence position but zero application bytes. Pure ACK
+and RST SEQ fields are not advanced as DATA. RST abandons outstanding observations
+as invalidated (not ACKed). A FIN closes a generation only after our FIN is ACKed
+and peer FIN observed. A new SYN with a different ISN creates a separate retained
+generation. Outstanding old bytes at reset are invalidated. Delayed ACKs matching
+only an old generation are routed there; they cannot acknowledge the new one.
 
-Histograms: [0,50ms), [50,100), [100,250), [250,500), [500ms,1s), [1s,2s),
-[2s,5s), [5s,10s), [10s,infinity). No fabricated exact percentiles.
-HTTP payload bytes include encrypted inner packets and existing carrier keepalive;
-they exclude uint16/base64/JSON. They are not application download bytes.
+Without a connection ID, indistinguishable generations cannot always be resolved.
+Same-ISN reuse after data/close, overlapping retained sequence arcs, ambiguous
+multi-generation RST, data without an observed SYN, and unsupported serial spans
+explicitly invalidate rather than silently guess. Ordinary SYN retransmission
+before data is supported. Disappearing connections retain outstanding records
+until TTL; disappearance never counts as successful delivery.
 
-## Validation and operations
+## Conservation and bounds
 
-Linux only: source identity/diff check; root/mobile tests/race/vet/build. Deterministic
-tests cover cumulative, multiple/partial/duplicate ACKs, overlap and ACKed history,
-wraparound/SYN/FIN, eviction/caps, HTTP-before/after ACK, state conservation, buffer
-identity, concurrency and numeric-only output. All production source changes are
-enumerated as exact additive observation hooks by scripts/ack-diag-verify.py.
+After every TCP event, changed-flow checks assert sorted/disjoint nonempty ranges,
+complete attempt coverage, valid ACK provenance and per-flow created-byte totals.
+New attempt intersections must sum to exactly its observed data length. Global
+snapshots recount allocated state and assert:
 
-Install `openflux-ack-diag` separately; only user2 gets a runtime /run override.
-Capture settled snapshots around one unchanged Android candidate/Legacy/Optimized
-test. Then always restore original binary/argv, check hash and other service PID/start
-timestamps, remove diagnostic binary and temporary SSH access. No PR or Release.
+unique_created = acked_unique + outstanding_unique + invalidated_unique
+
+ACKed cannot exceed created. End-state gauges must sum to outstanding. A valid
+snapshot requires invalidated=0 and zero eviction/cap/unsupported/invariant errors.
+An unresolved reordered observation cannot be reported valid. No loss is normalized
+away. On capacity failure the diagnostic marks the run invalid; it never blocks,
+drops, retries or rewrites a production packet to preserve its own ledger.
+
+Bounds (including ACKed history until diagnostic process exit):
+
+- TTL 120 seconds for outstanding data, deferred ACKs and transient tags.
+- 32768 atomic ranges, 65536 attempts, 262144 attempt/range references.
+- 4096 retained generations and 65536 ACK history events.
+- 4096 buffer identity tags and 16 MiB summed tagged slice capacity.
+
+120s is 3.75x the observed ~32s wait, covers the planned short settled run and is
+not a guarantee against all outages. Any TTL/cap eviction INVALIDATES the run.
+Delivered history is retained until process exit, not silently recycled. This
+trades an explicit short-test cap for reliable post-ACK retransmission accounting.
+
+Memory on Linux amd64 is printed by TestMemoryLayoutAndBoundedFixture using
+unsafe.Sizeof and a retained-heap fixture. Provisional structure estimates:
+flow ~160B, range ~80B, attempt ~120B, ACK event ~40B, tag ~64B, reference 8B.
+Heap allocator rounding, slice spare capacity, map buckets and transient copies
+are additional. A conservative planning budget is 1KiB per range with one attempt,
+one ACK and one flow per range: 1k ~1MiB; 10k ~10MiB; 100k ~100MiB (NOT admitted by
+32768 cap). Typical multiple ranges per flow are cheaper; overlap adds references
+and attempts, separately capped. At all caps, reserve ~80MiB for observer metadata,
+spare/transient slices and up to 16MiB tagged slice capacity. This is server-only,
+not suitable as an iOS/Android memory preset. Shared packet buffers already owned
+by the transport are not copied. Slice capacity is charged, but an unusual subslice
+can retain a larger underlying allocation; actual heap evidence is also recorded.
+
+Observer mutex sections perform bounded per-flow slice scans. No network, sleeping,
+per-packet log, disk writes, extra goroutine or lock spanning production callbacks.
+Existing packet/hook/logger source is byte-identical to f31a49f, verified in CI.
+Finite CPU/memory overhead of diagnostics is unavoidable and is not a throughput
+optimization. First/last histograms are recomputed in the existing snapshot tick.
+
+## Tests and interpretation
+
+Deterministic event tests cover cumulative/duplicate/partial ACKs, exact/partial/
+multi-segment retransmissions, ACK before HTTP completion, >30s delays, SYN/FIN,
+wrap, reordered observations, tuple reuse/old ACK, TTL and each cap. Real-hook tests
+cover parser, buffer Move, HTTP attempts and WS-to-inject timings; the frozen
+Legacy/AES peer test remains independent and unchanged except schema metric name.
+
+Seeded stress: 2048 synthetic flows, each closed/reused, random sizes, wrap-capable
+ISNs, overlap, delayed cumulative ACKs. Replay-scale: 1838 sends, 592 retransmissions,
+2994 ACK observations, ~1.1MB unique, >32s age. No real endpoints or external network.
+Linux CI runs verbose observer tests/memory evidence, root/mobile tests/race/vet/build,
+source immutability/diff checks and a separate Linux amd64 artifact. No Windows build.
+
+A synthetic PASS establishes supported-model consistency, not a real network
+bottleneck or a retrospectively recovered cause of the five real violations.
+No deployment is authorized by this task. Any future deployment/readiness and
+single phone measurement requires separate authorization and schema-2 validation.
