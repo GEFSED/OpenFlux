@@ -1,6 +1,7 @@
 package yandex
 
 import (
+	"universal-bypass-tool/internal/ackdiag"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -496,11 +497,14 @@ func (r *relayClient) Send(data []byte) error {
 
 	cp := make([]byte, len(data))
 	copy(cp, data)
+	ackdiag.Move(data, cp)
+	ackdiag.Enqueue(cp)
 
 	select {
 	case r.batchQueue <- cp:
 		return nil
 	default:
+		ackdiag.Forget(cp)
 		r.stats.QueueDrops.Add(1)
 		return fmt.Errorf("queue full")
 	}
@@ -654,12 +658,15 @@ func (r *relayClient) sendBatch(batch [][]byte) error {
 		req.Header.Set("Cookie", strings.Join(cookieParts, "; "))
 	}
 
+	observation := ackdiag.HTTPStart(batch)
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
+		ackdiag.HTTPDone(observation, false, 0, false)
 		return err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	_, bodyErr := io.Copy(io.Discard, resp.Body)
+	ackdiag.HTTPDone(observation, resp.StatusCode == 200 || resp.StatusCode == 204, resp.StatusCode, bodyErr != nil)
 
 	if resp.StatusCode != 204 && resp.StatusCode != 200 {
 		return fmt.Errorf("status %d", resp.StatusCode)
@@ -692,6 +699,7 @@ type wsListener struct {
 	stats  *VolgaStats
 	relay  *relayClient
 	onData func([]byte)
+	diagMessageTime time.Time
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -737,6 +745,7 @@ func (w *wsListener) run() {
 			return
 		}
 
+		ackdiag.Event("ws_reconnects")
 		w.stats.WSReconnects.Add(1)
 		utils.Debugf("[VOLGA] WS reconnect in %v", delay)
 		select {
@@ -781,9 +790,12 @@ func (w *wsListener) connect() error {
 
 	conn, _, err := dialer.Dial(wsURL, header)
 	if err != nil {
+		ackdiag.Event("ws_connect_failures")
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.Close()
+	ackdiag.SetWSConnected(true)
+	defer ackdiag.SetWSConnected(false)
 
 	utils.Debugf("[VOLGA] WS connected: user=%s", w.auth.UserIDStr)
 
@@ -805,6 +817,8 @@ func (w *wsListener) connect() error {
 }
 
 func (w *wsListener) handleMessage(raw []byte) {
+	w.diagMessageTime = time.Now()
+	ackdiag.Event("ws_messages")
 	var envelope struct {
 		Operation string `json:"operation"`
 		Message   string `json:"message"`
@@ -899,7 +913,9 @@ func (w *wsListener) handleBundleItem(raw json.RawMessage) {
 		w.stats.BytesReceived.Add(uint64(len(decoded)))
 		for _, pkt := range packets {
 			if w.onData != nil {
+				ackdiag.Inbound(pkt, w.diagMessageTime)
 				w.onData(pkt)
+				ackdiag.Forget(pkt)
 			}
 		}
 	}
@@ -1048,7 +1064,7 @@ func (t *YandexVolgaTransport) keepAliveLoop() {
 }
 
 func (t *YandexVolgaTransport) statsLoop() {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	var lastSent, lastBytes, lastHTTP, lastFailed, lastRecv, lastRecvBytes, lastBatches, lastBatched uint64
@@ -1058,6 +1074,7 @@ func (t *YandexVolgaTransport) statsLoop() {
 		case <-t.keepAliveStop:
 			return
 		case <-ticker.C:
+			ackdiag.Emit()
 			sent := t.stats.PacketsSent.Load()
 			bytes := t.stats.BytesSent.Load()
 			httpReqs := t.stats.HTTPReqsSent.Load()
@@ -1068,11 +1085,11 @@ func (t *YandexVolgaTransport) statsLoop() {
 			batched := t.stats.PacketsBatched.Load()
 
 			utils.Debugf("[VOLGA-STATS] send %d pkt/s (%d KB/s) | http %d req/s fail %d | batch %d (avg %.1f pkt) | recv %d pkt/s (%d KB/s) | busy %d/%d",
-				(sent-lastSent)/5, (bytes-lastBytes)/5/1024,
-				(httpReqs-lastHTTP)/5, failed-lastFailed,
-				(batches-lastBatches)/5,
+				(sent-lastSent)/2, (bytes-lastBytes)/2/1024,
+				(httpReqs-lastHTTP)/2, failed-lastFailed,
+				(batches-lastBatches)/2,
 				float64(batched-lastBatched)/float64(maxU64(batches-lastBatches, 1)),
-				(recv-lastRecv)/5, (recvBytes-lastRecvBytes)/5/1024,
+				(recv-lastRecv)/2, (recvBytes-lastRecvBytes)/2/1024,
 				t.stats.WorkerBusy.Load(), t.config.WorkerCount)
 
 			lastSent, lastBytes = sent, bytes

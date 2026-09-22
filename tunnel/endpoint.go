@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"universal-bypass-tool/internal/ackdiag"
 	"sync/atomic"
 
 	"gvisor.dev/gvisor/pkg/buffer"
@@ -25,11 +26,13 @@ func NewTunnelLinkEndpoint() *TunnelLinkEndpoint {
 }
 
 func (e *TunnelLinkEndpoint) InjectInbound(data []byte) {
+	ackDecoded := ackdiag.Incoming(data)
 	e.packetIn.Add(1)
 	utils.Debugf("<- %d bytes - %s\n", len(data), network.ParsePacketInfo(data))
 	pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{
 		Payload: buffer.MakeWithData(append([]byte{}, data...)),
 	})
+	ackdiag.BeforeInject(ackDecoded)
 	e.dispatcher.DeliverNetworkPacket(ipv4.ProtocolNumber, pkt)
 }
 
@@ -40,7 +43,9 @@ func (e *TunnelLinkEndpoint) WritePackets(pkts stack.PacketBufferList) (int, tcp
 		e.packetOut.Add(1)
 		utils.Debugf("-> %d bytes - %s\n", len(data), network.ParsePacketInfo(data))
 		if e.onOutgoingPacket != nil {
+			ackdiag.Outgoing(data)
 			e.onOutgoingPacket(data)
+			ackdiag.Forget(data)
 		}
 		n++
 	}

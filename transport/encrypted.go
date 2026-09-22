@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"universal-bypass-tool/internal/ackdiag"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -113,6 +114,7 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 }
 
 func (e *EncryptedTransport) Send(data []byte) error {
+	defer ackdiag.Forget(data)
 	header := []byte{encryptedMagic[0], encryptedMagic[1], encryptedMagic[2], encryptedVersion, e.sendDirection}
 	nonce := make([]byte, e.sendAEAD.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
@@ -122,11 +124,13 @@ func (e *EncryptedTransport) Send(data []byte) error {
 	packet = append(packet, header...)
 	packet = append(packet, nonce...)
 	packet = e.sendAEAD.Seal(packet, nonce, data, header)
+	ackdiag.Move(data, packet)
 	return e.Transport.Send(packet)
 }
 
 func (e *EncryptedTransport) Receive(callback func([]byte)) {
 	e.Transport.Receive(func(packet []byte) {
+		defer ackdiag.Forget(packet)
 		if len(packet) < encryptedHeader+e.receiveAEAD.NonceSize()+e.receiveAEAD.Overhead() {
 			return
 		}
@@ -142,6 +146,7 @@ func (e *EncryptedTransport) Receive(callback func([]byte)) {
 		if err != nil || !e.rememberNonce(nonce) {
 			return
 		}
+		ackdiag.Move(packet, plaintext)
 		callback(plaintext)
 	})
 }

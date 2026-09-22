@@ -1,6 +1,7 @@
 package main
 
 import (
+	"universal-bypass-tool/internal/ackdiag"
 	"flag"
 	"fmt"
 	"log"
@@ -27,6 +28,8 @@ var (
 )
 
 func main() {
+	utils.ConfigureAckDiagnosticLogging()
+	ackdiag.Enable()
 	//os.Setenv("GODEBUG", "netdns=go")
 	fmt.Print("written by p1neappleXpress\n")
 

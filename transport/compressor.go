@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"universal-bypass-tool/internal/ackdiag"
 	"bytes"
 	"io"
 
@@ -21,17 +22,21 @@ func NewCompressedTransport(inner Transport) Transport {
 }
 
 func (c *CompressedTransport) Send(data []byte) error {
+	defer ackdiag.Forget(data)
 	compressed := compress(data)
+	ackdiag.Move(data, compressed)
 	return c.Transport.Send(compressed)
 }
 
 func (c *CompressedTransport) Receive(callback func([]byte)) {
 	c.Transport.Receive(func(data []byte) {
+		defer ackdiag.Forget(data)
 		decompressed, err := decompress(data)
 		if err != nil {
 			callback(data) // fallback
 			return
 		}
+		ackdiag.Move(data, decompressed)
 		callback(decompressed)
 	})
 }

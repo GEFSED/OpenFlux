@@ -1,0 +1,140 @@
+{
+  "main.go": [
+    {
+      "from": "import (\n",
+      "to": "import (\n\t\"universal-bypass-tool/internal/ackdiag\"\n"
+    },
+    {
+      "from": "func main() {\n",
+      "to": "func main() {\n\tutils.ConfigureAckDiagnosticLogging()\n\tackdiag.Enable()\n"
+    }
+  ],
+  "transport/encrypted.go": [
+    {
+      "from": "import (\n",
+      "to": "import (\n\t\"universal-bypass-tool/internal/ackdiag\"\n"
+    },
+    {
+      "from": "func (e *EncryptedTransport) Send(data []byte) error {\n",
+      "to": "func (e *EncryptedTransport) Send(data []byte) error {\n\tdefer ackdiag.Forget(data)\n"
+    },
+    {
+      "from": "\treturn e.Transport.Send(packet)",
+      "to": "\tackdiag.Move(data, packet)\n\treturn e.Transport.Send(packet)"
+    },
+    {
+      "from": "e.Transport.Receive(func(packet []byte) {\n",
+      "to": "e.Transport.Receive(func(packet []byte) {\n\t\tdefer ackdiag.Forget(packet)\n"
+    },
+    {
+      "from": "\t\tcallback(plaintext)",
+      "to": "\t\tackdiag.Move(packet, plaintext)\n\t\tcallback(plaintext)"
+    }
+  ],
+  "transport/compressor.go": [
+    {
+      "from": "import (\n",
+      "to": "import (\n\t\"universal-bypass-tool/internal/ackdiag\"\n"
+    },
+    {
+      "from": "func (c *CompressedTransport) Send(data []byte) error {\n",
+      "to": "func (c *CompressedTransport) Send(data []byte) error {\n\tdefer ackdiag.Forget(data)\n"
+    },
+    {
+      "from": "\treturn c.Transport.Send(compressed)",
+      "to": "\tackdiag.Move(data, compressed)\n\treturn c.Transport.Send(compressed)"
+    },
+    {
+      "from": "c.Transport.Receive(func(data []byte) {\n",
+      "to": "c.Transport.Receive(func(data []byte) {\n\t\tdefer ackdiag.Forget(data)\n"
+    },
+    {
+      "from": "\t\tcallback(decompressed)",
+      "to": "\t\tackdiag.Move(data, decompressed)\n\t\tcallback(decompressed)"
+    }
+  ],
+  "tunnel/endpoint.go": [
+    {
+      "from": "import (\n",
+      "to": "import (\n\t\"universal-bypass-tool/internal/ackdiag\"\n"
+    },
+    {
+      "from": "func (e *TunnelLinkEndpoint) InjectInbound(data []byte) {\n",
+      "to": "func (e *TunnelLinkEndpoint) InjectInbound(data []byte) {\n\tackDecoded := ackdiag.Incoming(data)\n"
+    },
+    {
+      "from": "\te.dispatcher.DeliverNetworkPacket(ipv4.ProtocolNumber, pkt)",
+      "to": "\tackdiag.BeforeInject(ackDecoded)\n\te.dispatcher.DeliverNetworkPacket(ipv4.ProtocolNumber, pkt)"
+    },
+    {
+      "from": "\t\t\te.onOutgoingPacket(data)",
+      "to": "\t\t\tackdiag.Outgoing(data)\n\t\t\te.onOutgoingPacket(data)\n\t\t\tackdiag.Forget(data)"
+    }
+  ],
+  "transport/yandex/vyandex.go": [
+    {
+      "from": "import (\n",
+      "to": "import (\n\t\"universal-bypass-tool/internal/ackdiag\"\n"
+    },
+    {
+      "from": "\tcopy(cp, data)\n\n\tselect {",
+      "to": "\tcopy(cp, data)\n\tackdiag.Move(data, cp)\n\tackdiag.Enqueue(cp)\n\n\tselect {"
+    },
+    {
+      "from": "\t\tr.stats.QueueDrops.Add(1)",
+      "to": "\t\tackdiag.Forget(cp)\n\t\tr.stats.QueueDrops.Add(1)"
+    },
+    {
+      "from": "\tresp, err := r.httpClient.Do(req)\n\tif err != nil {\n\t\treturn err\n\t}\n\tdefer resp.Body.Close()\n\tio.Copy(io.Discard, resp.Body)",
+      "to": "\tobservation := ackdiag.HTTPStart(batch)\n\tresp, err := r.httpClient.Do(req)\n\tif err != nil {\n\t\tackdiag.HTTPDone(observation, false, 0, false)\n\t\treturn err\n\t}\n\tdefer resp.Body.Close()\n\t_, bodyErr := io.Copy(io.Discard, resp.Body)\n\tackdiag.HTTPDone(observation, resp.StatusCode == 200 || resp.StatusCode == 204, resp.StatusCode, bodyErr != nil)"
+    },
+    {
+      "from": "\tonData func([]byte)\n\n\tctx",
+      "to": "\tonData func([]byte)\n\tdiagMessageTime time.Time\n\n\tctx"
+    },
+    {
+      "from": "\t\tw.stats.WSReconnects.Add(1)",
+      "to": "\t\tackdiag.Event(\"ws_reconnects\")\n\t\tw.stats.WSReconnects.Add(1)"
+    },
+    {
+      "from": "\t\treturn fmt.Errorf(\"dial: %w\", err)",
+      "to": "\t\tackdiag.Event(\"ws_connect_failures\")\n\t\treturn fmt.Errorf(\"dial: %w\", err)"
+    },
+    {
+      "from": "\tdefer conn.Close()\n\n\tutils.Debugf",
+      "to": "\tdefer conn.Close()\n\tackdiag.SetWSConnected(true)\n\tdefer ackdiag.SetWSConnected(false)\n\n\tutils.Debugf"
+    },
+    {
+      "from": "func (w *wsListener) handleMessage(raw []byte) {\n",
+      "to": "func (w *wsListener) handleMessage(raw []byte) {\n\tw.diagMessageTime = time.Now()\n\tackdiag.Event(\"ws_messages\")\n"
+    },
+    {
+      "from": "\t\t\t\tw.onData(pkt)",
+      "to": "\t\t\t\tackdiag.Inbound(pkt, w.diagMessageTime)\n\t\t\t\tw.onData(pkt)\n\t\t\t\tackdiag.Forget(pkt)"
+    },
+    {
+      "from": "ticker := time.NewTicker(5 * time.Second)",
+      "to": "ticker := time.NewTicker(2 * time.Second)"
+    },
+    {
+      "from": "\t\t\tsent := t.stats.PacketsSent.Load()",
+      "to": "\t\t\tackdiag.Emit()\n\t\t\tsent := t.stats.PacketsSent.Load()"
+    },
+    {
+      "from": "(sent-lastSent)/5, (bytes-lastBytes)/5/1024",
+      "to": "(sent-lastSent)/2, (bytes-lastBytes)/2/1024"
+    },
+    {
+      "from": "(httpReqs-lastHTTP)/5, failed-lastFailed",
+      "to": "(httpReqs-lastHTTP)/2, failed-lastFailed"
+    },
+    {
+      "from": "(batches-lastBatches)/5,",
+      "to": "(batches-lastBatches)/2,"
+    },
+    {
+      "from": "(recv-lastRecv)/5, (recvBytes-lastRecvBytes)/5/1024",
+      "to": "(recv-lastRecv)/2, (recvBytes-lastRecvBytes)/2/1024"
+    }
+  ]
+}
