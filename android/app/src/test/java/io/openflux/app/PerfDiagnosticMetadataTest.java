@@ -2,6 +2,7 @@ package io.openflux.app;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Set;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -42,7 +43,7 @@ public class PerfDiagnosticMetadataTest {
         for (String key : new String[]{"measurement_scope", "carrier_status", "acceptance", "profile_stage"}) {
             data.remove(key);
         }
-        assertTrue("metadata changed a diagnostic field", original.similar(data));
+        assertTrue("metadata changed a diagnostic field", JsonTestAssertions.semanticEquals(original, data));
     }
 
     @Test public void copyIsNeutralAndDoesNotAssertInternetAccess() throws Exception {
@@ -65,7 +66,10 @@ public class PerfDiagnosticMetadataTest {
         PerfDiagnosticMetadata.apply(data);
         Set<String> expected = new HashSet<>(Arrays.asList("profile", "measurement_scope",
                 "carrier_status", "acceptance", "profile_stage"));
-        assertEquals(expected, data.keySet());
+        Set<String> actual = new HashSet<>();
+        Iterator<String> keys = data.keys();
+        while (keys.hasNext()) actual.add(keys.next());
+        assertEquals(expected, actual);
         String encoded = data.toString().toLowerCase(java.util.Locale.ROOT);
         for (String forbidden : new String[]{"http://", "https://", "cookie", "token", "document",
                 "retry-after", "encryption", "secret", "header"}) {

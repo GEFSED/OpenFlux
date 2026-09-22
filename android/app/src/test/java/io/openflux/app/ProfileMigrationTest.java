@@ -33,7 +33,7 @@ public class ProfileMigrationTest {
         assertEquals(original.length(), migrated.length());
         JSONObject restored = new JSONObject(migrated.toString());
         restored.put("performanceProfile", "throughput_w32_429guard");
-        assertTrue("migration changed another saved field", original.similar(restored));
+        assertTrue("migration changed another saved field", JsonTestAssertions.semanticEquals(original, restored));
         assertFalse("migration must be idempotent", ProfileMigration.migrate(reloaded, true));
     }
 
@@ -42,7 +42,7 @@ public class ProfileMigrationTest {
         for (String name : Profile.performanceProfileValues()) stored.put(fixture(name));
         JSONArray original = new JSONArray(stored.toString());
         assertFalse(ProfileMigration.migrate(stored, false));
-        assertTrue(original.similar(stored));
+        assertTrue(JsonTestAssertions.semanticEquals(original, stored));
     }
 
     @Test public void otherHistoricalAndNormalNamesStayUnchanged() throws Exception {
@@ -54,7 +54,7 @@ public class ProfileMigrationTest {
         stored.put(new JSONObject().put("performanceProfile", "future_unknown_value"));
         JSONArray original = new JSONArray(stored.toString());
         assertFalse(ProfileMigration.migrate(stored, true));
-        assertTrue(original.similar(stored));
+        assertTrue(JsonTestAssertions.semanticEquals(original, stored));
     }
 
     @Test public void mixedListRetainsOrderAndEveryNonTargetProfile() throws Exception {
@@ -63,8 +63,8 @@ public class ProfileMigrationTest {
         JSONArray original = new JSONArray(stored.toString());
         assertTrue(ProfileMigration.migrate(stored, true));
         assertEquals(3, stored.length());
-        assertTrue(original.getJSONObject(0).similar(stored.getJSONObject(0)));
-        assertTrue(original.getJSONObject(2).similar(stored.getJSONObject(2)));
+        assertTrue(JsonTestAssertions.semanticEquals(original.getJSONObject(0), stored.getJSONObject(0)));
+        assertTrue(JsonTestAssertions.semanticEquals(original.getJSONObject(2), stored.getJSONObject(2)));
         assertEquals("optimized", stored.getJSONObject(1).getString("performanceProfile"));
     }
 }

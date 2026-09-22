@@ -6,7 +6,54 @@ on:
 permissions:
   contents: read
 jobs:
+  java_compat:
+    name: Narrow Java compilation and unit tests
+    runs-on: ubuntu-latest
+    env:
+      PERFLAB_ARM64_ONLY: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify test-only fix scope
+        run: |
+          git diff --check 3156417f05eda81ed17cc6c374a7781a4aadb4d2 HEAD
+          git diff --name-status 3156417f05eda81ed17cc6c374a7781a4aadb4d2 HEAD
+          python3 - <<'PY'
+          import subprocess
+          paths = subprocess.check_output(['git', 'diff', '--name-only', '3156417f05eda81ed17cc6c374a7781a4aadb4d2', 'HEAD'], text=True).splitlines()
+          assert paths, 'expected a test compatibility fix'
+          assert all(p.startswith('android/app/src/test/java/io/openflux/app/') or p == '.github/workflows/android-perflab.yml' for p in paths), 'changes outside tests/workflow'
+          PY
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+      - run: yes | sdkmanager --licenses > /dev/null || true
+      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+      - run: go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
+      - run: go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
+      - name: Prepare arm64 AAR required by Java compile classpath
+        run: |
+          mkdir -p android/app/libs
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.0.12077973"
+          cd mobile
+          gomobile bind -target=android/arm64 -androidapi=26 -javapkg=io.openflux.bridge -ldflags="-checklinkname=0" -o ../android/app/libs/openflux.aar .
+      - name: Compile narrow Java unit-test path
+        run: cd android && gradle --no-daemon :app:compilePerflabUnitTestJavaWithJavac
+      - name: Run narrow Java unit-test path
+        run: cd android && gradle --no-daemon :app:testPerflabUnitTest
   go:
+    needs: java_compat
     name: Go and mobile tests, race, vet, build
     runs-on: ubuntu-latest
     steps:
