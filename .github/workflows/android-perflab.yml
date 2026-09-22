@@ -21,26 +21,12 @@ jobs:
             go.sum
             mobile/go.sum
       - name: Check committed diff
-        run: git diff --check e3a9c87606c138382f356c1252493d60e66b6e02 HEAD
-      - name: Verify existing runtime paths are unchanged except counters
+        run: git diff --check f9adecf6e5c87cadef0401d6f8aa2c6ce5d240f8 HEAD
+      - name: Verify existing packet and relay runtime paths are unchanged
         shell: bash
         run: |
-          git diff --exit-code e3a9c87606c138382f356c1252493d60e66b6e02 HEAD -- mobile/mobile.go mobile/baseline_v100.go transport/batched.go transport/batched_baseline_v100.go transport/compressor.go transport/encrypted.go android/app/src/main/java/io/openflux/app/OpenFluxTunnelService.java
-          python3 - <<'PY'
-          import pathlib, subprocess
-          base = 'e3a9c87606c138382f356c1252493d60e66b6e02'
-          for path in ('transport/yandex/vyandex.go', 'transport/yandex/vyandex_baseline_v100.go'):
-              before = subprocess.check_output(['git', 'show', base + ':' + path])
-              after = pathlib.Path(path).read_bytes()
-              for line in (
-                  b'\thttpFailures   volgaHTTPFailureCounters\n',
-                  b'\t\tr.stats.httpFailures.recordNetwork(err)\n',
-                  b'\t\tr.stats.httpFailures.recordStatus(resp.StatusCode)\n',
-              ):
-                  after = after.replace(line, b'')
-              assert after == before, path + ': runtime change beyond counters'
-          print('EXISTING_RUNTIME_PATHS_UNCHANGED=PASS')
-          PY
+          git diff --exit-code f9adecf6e5c87cadef0401d6f8aa2c6ce5d240f8 HEAD -- mobile/mobile.go mobile/baseline_v100.go transport/batched.go transport/batched_baseline_v100.go transport/compressor.go transport/encrypted.go transport/yandex/vyandex.go transport/yandex/vyandex_baseline_v100.go transport/yandex/http_failure_diagnostics.go android/app/src/main/java/io/openflux/app/OpenFluxTunnelService.java
+          echo "EXISTING_RUNTIME_PATHS_UNCHANGED=PASS"
       - name: Check both modules
         run: |
           go version
@@ -61,21 +47,21 @@ jobs:
           trap restore_fixed EXIT
           git show 36aee5302dc702a251c8362adfec25388708a06d:mobile/baseline_v100.go > mobile/baseline_v100.go
           git show 36aee5302dc702a251c8362adfec25388708a06d:mobile/mobile.go > mobile/mobile.go
-          if (cd mobile && go test -count=1 -run '^TestProductionV060LegacyCompatibility$/^(baseline|balanced|low_latency|throughput)$/^AES$' .) > "$RUNNER_TEMP/old-order.log" 2>&1; then
+          if (cd mobile && go test -count=1 -run '^TestProductionV060LegacyCompatibility$/^(baseline|balanced|low_latency|throughput|throughput_current|throughput_mem|throughput_96|throughput_w64|throughput_w48|throughput_w32)$/^AES$' .) > "$RUNNER_TEMP/old-order.log" 2>&1; then
             echo "ERROR: regression test accepted the old wrapper order"
             exit 1
           fi
           cat "$RUNNER_TEMP/old-order.log"
-          test "$(grep -c 'client wire frame must begin with OFX/version before the production exit' "$RUNNER_TEMP/old-order.log")" -eq 4
+          test "$(grep -c 'client wire frame must begin with OFX/version before the production exit' "$RUNNER_TEMP/old-order.log")" -eq 10
           restore_fixed
           trap - EXIT
           git diff --exit-code -- mobile/baseline_v100.go mobile/mobile.go
-          echo "OLD_ORDER_REGRESSION_PROOF=PASS (all four Legacy+AES profiles)"
+          echo "OLD_ORDER_REGRESSION_PROOF=PASS (all ten Legacy+AES profiles)"
   android:
     needs: go
     env:
       PERFLAB_ARM64_ONLY: "1"
-    name: Throughput one-factor arm64 APK and Java tests
+    name: Worker-count experiment arm64 APK and Java tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,14 +89,14 @@ jobs:
           for apk in dist/*-perflab.apk; do
             "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > "$apk.badging.txt"
             grep -q "package: name='io.openflux.app.perflab'" "$apk.badging.txt"
-            grep -q "versionCode='14' versionName='1.0.0-perflab.5'" "$apk.badging.txt"
+            grep -q "versionCode='15' versionName='1.0.0-perflab.6'" "$apk.badging.txt"
             grep -q "application-label:'OpenFlux Perf Lab'" "$apk.badging.txt"
             grep -Fxq "native-code: 'arm64-v8a'" "$apk.badging.txt"
           done
           cd dist
           sha256sum *-perflab.apk > SHA256SUMS
           cat SHA256SUMS
-          printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, Throughput one-factor A/B; Legacy + throughput_current / throughput_mem / throughput_96. Cold start each run.\n' "$GITHUB_SHA" > BUILD.txt
+          printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, fixed worker-count A/B; Legacy + throughput_w64 / throughput_w48 / throughput_w32. Cold start each run.\n' "$GITHUB_SHA" > BUILD.txt
       - uses: actions/upload-artifact@v4
         with:
           name: OpenFlux-Android-PerfLab-${{ github.sha }}

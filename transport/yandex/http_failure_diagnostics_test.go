@@ -88,6 +88,9 @@ func TestRelayHTTPFailureClassification(t *testing.T) {
 					t.Fatalf("unexpected sanitized counters: %+v", got)
 				}
 				wantSent := uint64(1) - tc.want.Total
+				if got.HTTPSuccesses != wantSent || got.HTTPFailureRate != float64(tc.want.Total) {
+					t.Fatal("derived HTTP success/rate diagnostics disagree with counters")
+				}
 				if stats.PacketsSent.Load() != wantSent || got.Batches != wantSent {
 					t.Fatal("success/failure behavior changed")
 				}
@@ -102,5 +105,48 @@ func TestRelayHTTPFailureClassification(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestHTTPDerivedSnapshotFields(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		succeeded, failed uint64
+		rate              float64
+	}{
+		{"empty", 0, 0, 0},
+		{"success_only", 10, 0, 0},
+		{"failure_only", 0, 10, 1},
+		{"mixed", 75, 25, 0.25},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &VolgaStats{}
+			s.HTTPReqsSent.Store(tc.succeeded)
+			s.HTTPReqsFailed.Store(tc.failed)
+			got := volgaPerformance(DefaultVolgaConfig(), s, 0, false)
+			if got.HTTPSuccesses != tc.succeeded || got.HTTPFailures != tc.failed || got.Total != tc.failed || got.HTTPRequests != tc.succeeded+tc.failed || got.HTTPFailureRate != tc.rate {
+				t.Fatalf("unexpected derived diagnostics: %+v", got)
+			}
+			data, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err) // Also rejects NaN/Inf for the zero-request case.
+			}
+			var fields map[string]float64
+			var snapshot map[string]json.RawMessage
+			if err := json.Unmarshal(data, &snapshot); err != nil {
+				t.Fatal(err)
+			}
+			fields = make(map[string]float64)
+			for _, name := range []string{"http_successes", "http_failure_rate", "http_requests", "http_failures_total"} {
+				var value float64
+				if err := json.Unmarshal(snapshot[name], &value); err != nil {
+					t.Fatalf("missing or nonnumeric field %s: %v", name, err)
+				}
+				fields[name] = value
+			}
+			if fields["http_successes"] != float64(tc.succeeded) || fields["http_failure_rate"] != tc.rate || fields["http_requests"] != float64(tc.succeeded+tc.failed) || fields["http_failures_total"] != float64(tc.failed) {
+				t.Fatal("JSON fields differ from the numeric snapshot")
+			}
+		})
 	}
 }

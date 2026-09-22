@@ -24,13 +24,15 @@ final class Profile {
     // Used by the Perf Lab selector and shared profile persistence/parser.
     static String[] performanceProfileValues() {
         return new String[]{"baseline", "balanced", "low_latency", "throughput",
-                "throughput_current", "throughput_mem", "throughput_96"};
+                "throughput_current", "throughput_mem", "throughput_96",
+                "throughput_w64", "throughput_w48", "throughput_w32"};
     }
 
     static String[] performanceProfileLabels() {
         return new String[]{"Baseline", "Balanced", "Low latency", "Throughput",
                 "Throughput current (64 / 4096)", "Throughput memory (64 / 2048)",
-                "Throughput 96 workers (96 / 4096)"};
+                "Throughput 96 workers (96 / 4096)", "Throughput 64 workers (64 / 4096)",
+                "Throughput 48 workers (48 / 4096)", "Throughput 32 workers (32 / 4096)"};
     }
     String maxToken = "";
     String maxUid = "";

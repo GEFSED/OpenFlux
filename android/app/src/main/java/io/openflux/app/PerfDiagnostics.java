@@ -78,7 +78,7 @@ final class PerfDiagnostics {
                     data.put("application_id", BuildConfig.APPLICATION_ID);
                     data.put("measurement_scope", "packet VPN; SOCKS5 profiles not applied; rates sample every 2s while visible");
                     data.put("carrier_status", ReturnPathStatus.describe(data));
-                    data.put("acceptance", "Throughput one-factor A/B: Legacy; throughput_current, throughput_mem, throughput_96. Cold start each run; no winner until real results.");
+                    data.put("acceptance", "Fixed worker-count A/B: Legacy; throughput_w64, throughput_w48, throughput_w32. Cold start each run; one Elisa Tallinn test, copy JSON, stop. No winner from one noisy run.");
                     String report = data.toString(2);
                     ui.post(() -> { if (!closed.get() && !activity.isDestroyed()) { latest[0] = report; text.setText(report); } });
                 } catch (Exception ignored) {

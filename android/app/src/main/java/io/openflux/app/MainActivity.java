@@ -1900,7 +1900,7 @@ public final class MainActivity extends Activity {
         section.addView(codecLabel, codecLabelParams);
         section.addView(buildCodecSelector(), matchWrap());
         if (BuildConfig.PERF_LAB) {
-            section.addView(label("THROUGHPUT: ONE-FACTOR EXPERIMENT"), matchWrap());
+            section.addView(label("THROUGHPUT: 64 / 48 / 32 WORKERS"), matchWrap());
             android.widget.Spinner selector = new android.widget.Spinner(this);
             String[] values = Profile.performanceProfileValues();
             selector.setAdapter(new android.widget.ArrayAdapter<>(this,

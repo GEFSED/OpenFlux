@@ -14,6 +14,8 @@ type VolgaPerformance struct {
 	QueueDrops       uint64  `json:"queue_drops"`
 	HTTPRequests     uint64  `json:"http_requests"`
 	HTTPFailures     uint64  `json:"http_failures"`
+	HTTPSuccesses    uint64  `json:"http_successes"`
+	HTTPFailureRate  float64 `json:"http_failure_rate"`
 	Batches          uint64  `json:"batches"`
 	PacketsBatched   uint64  `json:"packets_batched"`
 	Average          float64 `json:"avg_packets_per_batch"`
@@ -48,5 +50,12 @@ func volgaPerformance(cfg VolgaConfig, s *VolgaStats, queued int, started bool) 
 		avg = float64(p) / float64(n)
 	}
 	failed := s.HTTPReqsFailed.Load()
-	return VolgaPerformance{VolgaReceiveDiagnostics: s.volgaReceiveCounters.snapshot(), VolgaHTTPFailureDiagnostics: s.httpFailures.snapshot(failed), TransportStarted: started, WorkerCount: cfg.WorkerCount, WorkersBusy: s.WorkerBusy.Load(), PeakWorkersBusy: s.PeakWorkerBusy.Load(), QueueLen: queued, QueueCap: cfg.QueueSize, QueueDrops: s.QueueDrops.Load(), HTTPRequests: s.HTTPReqsSent.Load() + failed, HTTPFailures: failed, Batches: n, PacketsBatched: p, Average: avg, Reconnects: s.WSReconnects.Load()}
+	succeeded := s.HTTPReqsSent.Load()
+	requests := succeeded + failed
+	// Fraction in [0, 1], not percent. Reuse the same loads for all totals.
+	failureRate := float64(0)
+	if requests > 0 {
+		failureRate = float64(failed) / float64(requests)
+	}
+	return VolgaPerformance{VolgaReceiveDiagnostics: s.volgaReceiveCounters.snapshot(), VolgaHTTPFailureDiagnostics: s.httpFailures.snapshot(failed), TransportStarted: started, WorkerCount: cfg.WorkerCount, WorkersBusy: s.WorkerBusy.Load(), PeakWorkersBusy: s.PeakWorkerBusy.Load(), QueueLen: queued, QueueCap: cfg.QueueSize, QueueDrops: s.QueueDrops.Load(), HTTPRequests: requests, HTTPFailures: failed, HTTPSuccesses: succeeded, HTTPFailureRate: failureRate, Batches: n, PacketsBatched: p, Average: avg, Reconnects: s.WSReconnects.Load()}
 }
