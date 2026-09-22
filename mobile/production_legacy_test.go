@@ -88,12 +88,16 @@ func TestProductionV060LegacyCompatibility(t *testing.T) {
 					t.Fatal(err)
 				}
 				t.Cleanup(func() { _ = peer.Stop() })
-                session := newPacketSession(profile, "vyandex", 8)
-                installSession(session)
-                t.Cleanup(Stop)
-                tr, err := wrapModeTransport(session, a, productionTestContext, secret, "legacy")
-                if err != nil { t.Fatal(err) }
-                if err := finishStart(session, tr); err != "" { t.Fatal(err) }
+				session := newPacketSession(profile, "vyandex", 8)
+				installSession(session)
+				t.Cleanup(Stop)
+				tr, err := wrapModeTransport(session, a, productionTestContext, secret, "legacy")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := finishStart(session, tr); err != "" {
+					t.Fatal(err)
+				}
 				// Exercise raw Legacy marker and actual LZ4 compression.
 				for _, size := range []int{158, 1400} {
 					expected = syntheticProductionPacket(size)
@@ -114,9 +118,9 @@ func TestProductionV060LegacyCompatibility(t *testing.T) {
 				if len(clientWire) != 2 || len(exitWire) != 2 {
 					t.Fatal("expected two frames in each direction")
 				}
-                if session.callbackPackets != 2 || session.enqueued != 2 {
-                    t.Fatal("profile callback/enqueue counts")
-                }
+				if session.callbackPackets != 2 || session.enqueued != 2 {
+					t.Fatal("profile callback/enqueue counts")
+				}
 			})
 		}
 	}

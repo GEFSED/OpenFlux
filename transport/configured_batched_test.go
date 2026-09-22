@@ -30,7 +30,9 @@ func TestBatchedConfigCompatibility(t *testing.T) {
 }
 func TestBatchSendStop100Cycles(t *testing.T) {
 	b, err := NewBatchedTransportWithConfig(&fakeTransport{}, DefaultBatchedConfig())
- if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 100; i++ {
 		if err := b.Start(); err != nil {
 			t.Fatal(err)

@@ -55,9 +55,9 @@ func TestRelayHTTPFailureClassification(t *testing.T) {
 				})
 				var start, stop func()
 				var send func([]byte) error
-                r := newConfiguredRelayClient(auth, cfg, stats)
-                r.httpClient.Transport = rt
-                start, stop, send = r.Start, r.Stop, r.Send
+				r := newConfiguredRelayClient(auth, cfg, stats)
+				r.httpClient.Transport = rt
+				start, stop, send = r.Start, r.Stop, r.Send
 				start()
 				stopped := false
 				t.Cleanup(func() {

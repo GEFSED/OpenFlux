@@ -1,130 +1,160 @@
 package mobile
 
 import (
- "fmt"
- "sync"
- "time"
- "openflux/transport"
- "openflux/transport/yandex"
- "openflux/utils"
+	"fmt"
+	"openflux/transport"
+	"openflux/transport/yandex"
+	"openflux/utils"
+	"sync"
+	"time"
 )
 
 var modeClient struct {
- mu sync.Mutex
- startMu sync.Mutex
- session *packetSession
- lastDiagnostic time.Time
+	mu             sync.Mutex
+	startMu        sync.Mutex
+	session        *packetSession
+	lastDiagnostic time.Time
 }
 var loggingOnce sync.Once
 
 func configureLogging() {
- loggingOnce.Do(func() {
-  // Provider debug logs can contain auth/URLs. Only controlled app summaries
-  // are exposed by the Android bridge, including Standard and SOCKS5.
-  utils.SetDebug(false)
- })
+	loggingOnce.Do(func() {
+		// Provider debug logs can contain auth/URLs. Only controlled app summaries
+		// are exposed by the Android bridge, including Standard and SOCKS5.
+		utils.SetDebug(false)
+	})
 }
 
 func currentSession() *packetSession {
- modeClient.mu.Lock()
- defer modeClient.mu.Unlock()
- return modeClient.session
+	modeClient.mu.Lock()
+	defer modeClient.mu.Unlock()
+	return modeClient.session
 }
 func installSession(s *packetSession) {
- modeClient.mu.Lock()
- modeClient.session = s
- modeClient.lastDiagnostic = time.Time{}
- modeClient.mu.Unlock()
+	modeClient.mu.Lock()
+	modeClient.session = s
+	modeClient.lastDiagnostic = time.Time{}
+	modeClient.mu.Unlock()
 }
 
 // Start preserves the ordinary app's default path.
 func Start(kind, url, secret, codec, maxToken, maxUid string) string {
- return StartWithMode(kind, url, secret, codec, maxToken, maxUid, "standard")
+	return StartWithMode(kind, url, secret, codec, maxToken, maxUid, "standard")
 }
 
 // StartWithMode applies explicit modes only to the Volga packet VPN.
 // Other carriers and the separate SOCKS5 API retain ordinary scheduling.
 func StartWithMode(kind, url, secret, codec, maxToken, maxUid, mode string) string {
- modeClient.startMu.Lock()
- defer modeClient.startMu.Unlock()
- if old := currentSession(); old != nil {
-  old.mu.Lock()
-  running := !old.stopped
-  old.mu.Unlock()
-  if running { return "" }
- }
- client.mu.Lock()
- running := client.running
- client.mu.Unlock()
- if running { return "" }
- mode = effectiveMode(kind, mode)
- if mode == "standard" {
-  installSession(nil)
-  return startStandard(kind, url, secret, codec, maxToken, maxUid)
- }
- if url == "" { return "Ссылка на документ не указана" }
- if secret != "" && len(secret) < 16 { return "Ключ шифрования должен содержать не менее 16 символов" }
- configureLogging()
- s := newPacketSession(mode, kind, transport.DefaultConfig().MaxQueueSize)
- installSession(s)
- tr, err := buildModeTransport(s, url, secret, codec)
- if err != nil { s.stop(); return "Не удалось создать транспорт" }
- return finishStart(s, tr)
+	modeClient.startMu.Lock()
+	defer modeClient.startMu.Unlock()
+	if old := currentSession(); old != nil {
+		old.mu.Lock()
+		running := !old.stopped
+		old.mu.Unlock()
+		if running {
+			return ""
+		}
+	}
+	client.mu.Lock()
+	running := client.running
+	client.mu.Unlock()
+	if running {
+		return ""
+	}
+	mode = effectiveMode(kind, mode)
+	if mode == "standard" {
+		installSession(nil)
+		return startStandard(kind, url, secret, codec, maxToken, maxUid)
+	}
+	if url == "" {
+		return "Ссылка на документ не указана"
+	}
+	if secret != "" && len(secret) < 16 {
+		return "Ключ шифрования должен содержать не менее 16 символов"
+	}
+	configureLogging()
+	s := newPacketSession(mode, kind, transport.DefaultConfig().MaxQueueSize)
+	installSession(s)
+	tr, err := buildModeTransport(s, url, secret, codec)
+	if err != nil {
+		s.stop()
+		return "Не удалось создать транспорт"
+	}
+	return finishStart(s, tr)
 }
 
 func buildModeTransport(s *packetSession, url, secret, codec string) (transport.Transport, error) {
- var err error
- s.volga, err = yandex.NewYandexVolgaTransportWithConfig(url, transport.DefaultConfig(), modeConfig(s.profile).volga)
- if err != nil { return nil, err }
- return wrapModeTransport(s, s.volga, url, secret, codec)
+	var err error
+	s.volga, err = yandex.NewYandexVolgaTransportWithConfig(url, transport.DefaultConfig(), modeConfig(s.profile).volga)
+	if err != nil {
+		return nil, err
+	}
+	return wrapModeTransport(s, s.volga, url, secret, codec)
 }
 
 // The real Android startup and independent peer tests share this exact path.
 func wrapModeTransport(s *packetSession, inner transport.Transport, context, secret, codec string) (transport.Transport, error) {
- s.codec = codec
- if codec != "legacy" {
-  var err error
-  s.outer, err = transport.NewBatchedTransportWithConfig(inner, modeConfig(s.profile).outer)
-  if err != nil { return nil, err }
-  inner = s.outer
- }
- if secret != "" {
-  var err error
-  s.encrypted, err = transport.NewEncryptedTransport(inner, secret, context, false)
-  if err != nil { return nil, err }
-  inner = s.encrypted
- }
- if codec == "legacy" {
-  // Exact production 081d214 construction: raw -> AES -> Legacy.
-  // Send: IP -> Legacy -> AES -> Volga; receive is the inverse.
-  inner = transport.NewCompressedTransport(inner)
- }
- return inner, nil
+	s.codec = codec
+	if codec != "legacy" {
+		var err error
+		s.outer, err = transport.NewBatchedTransportWithConfig(inner, modeConfig(s.profile).outer)
+		if err != nil {
+			return nil, err
+		}
+		inner = s.outer
+	}
+	if secret != "" {
+		var err error
+		s.encrypted, err = transport.NewEncryptedTransport(inner, secret, context, false)
+		if err != nil {
+			return nil, err
+		}
+		inner = s.encrypted
+	}
+	if codec == "legacy" {
+		// Exact production 081d214 construction: raw -> AES -> Legacy.
+		// Send: IP -> Legacy -> AES -> Volga; receive is the inverse.
+		inner = transport.NewCompressedTransport(inner)
+	}
+	return inner, nil
 }
 
 func Stop() {
- if s := currentSession(); s != nil { s.stop() } else { stopStandard() }
+	if s := currentSession(); s != nil {
+		s.stop()
+	} else {
+		stopStandard()
+	}
 }
 
 func appendModeDiagnostics() {
- s := currentSession()
- if s == nil { return }
- modeClient.mu.Lock()
- if time.Since(modeClient.lastDiagnostic) < 30*time.Second {
-  modeClient.mu.Unlock(); return
- }
- modeClient.lastDiagnostic = time.Now()
- modeClient.mu.Unlock()
- s.mu.Lock()
- if !s.ready || s.stopped { s.mu.Unlock(); return }
- v, drops := s.volga, s.drops
- s.mu.Unlock()
- if v == nil { return }
- d := v.Performance()
- appendLog(fmt.Sprintf("[MODE] mode=%s workers=%d queue_drops=%d receive_drops=%d http_requests=%d http_429=%d guard=%t guard_waits=%d reconnects=%d",
-  normalizeMode(s.profile), d.WorkerCount, d.QueueDrops, drops, d.HTTPRequests,
-  d.RateLimited, d.Enabled, d.WaitEvents, d.Reconnects))
+	s := currentSession()
+	if s == nil {
+		return
+	}
+	modeClient.mu.Lock()
+	if time.Since(modeClient.lastDiagnostic) < 30*time.Second {
+		modeClient.mu.Unlock()
+		return
+	}
+	modeClient.lastDiagnostic = time.Now()
+	modeClient.mu.Unlock()
+	s.mu.Lock()
+	if !s.ready || s.stopped {
+		s.mu.Unlock()
+		return
+	}
+	v, drops := s.volga, s.drops
+	s.mu.Unlock()
+	if v == nil {
+		return
+	}
+	d := v.Performance()
+	appendLog(fmt.Sprintf("[MODE] mode=%s workers=%d queue_drops=%d receive_drops=%d http_requests=%d http_429=%d guard=%t guard_waits=%d reconnects=%d",
+		normalizeMode(s.profile), d.WorkerCount, d.QueueDrops, drops, d.HTTPRequests,
+		d.RateLimited, d.Enabled, d.WaitEvents, d.Reconnects))
 }
+
 type packetSession struct {
 	mu                                            sync.Mutex
 	transport                                     transport.Transport
@@ -144,6 +174,7 @@ type packetSession struct {
 func newPacketSession(profile, kind string, depth int) *packetSession {
 	return &packetSession{profile: profile, transportType: kind, packets: make([][]byte, depth), notify: make(chan struct{}, 1), done: make(chan struct{})}
 }
+
 // Both production startup and lifecycle tests use this transaction. Stop while
 // Start is pending wakes readers immediately; the starting caller owns cleanup.
 func finishStart(s *packetSession, trans transport.Transport) string {

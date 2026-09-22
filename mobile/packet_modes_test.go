@@ -1,11 +1,13 @@
 package mobile
+
 import (
- "runtime"
- "sync"
- "testing"
- "time"
- "openflux/transport"
+	"openflux/transport"
+	"runtime"
+	"sync"
+	"testing"
+	"time"
 )
+
 type packetPeer struct {
 	mu    sync.Mutex
 	cb    func([]byte)
