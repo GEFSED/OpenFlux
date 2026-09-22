@@ -24,9 +24,13 @@ final class ProfileStore {
         if (raw.isEmpty()) return result;
         try {
             JSONArray array = new JSONArray(raw);
+            boolean migrated = ProfileMigration.migrate(array, BuildConfig.PERF_LAB);
             for (int i = 0; i < array.length(); i++) {
                 result.add(Profile.fromJson(array.getJSONObject(i)));
             }
+            // Persist the original objects, preserving even fields unknown to this app.
+            // Only write after the entire array has been read successfully.
+            if (migrated) settings.putString(KEY_PROFILES, array.toString());
         } catch (Exception ignored) {
         }
         return result;

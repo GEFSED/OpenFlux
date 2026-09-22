@@ -1057,13 +1057,13 @@ public final class MainActivity extends Activity {
         page.addView(activeParams, activeParamsParams);
         staggerIn(activeParams, 130);
         if (BuildConfig.PERF_LAB) {
-            TextView perf = text("Performance profile: " + performanceProfile
-                    + "\nКандидаты: blocking receive; настройки Volga применяются только к vyandex."
+            TextView perf = text("Performance profile: " + Profile.performanceProfileDisplayLabel(performanceProfile)
+                    + "\nНастройки производительности применяются к packet VPN (vyandex)."
                     + "\nSOCKS5 сохраняет baseline. После смены профиля переподключите VPN.", 12, secondary, false);
             page.addView(perf, matchWrap());
             Button diagnostics = new Button(this);
             diagnostics.setAllCaps(false);
-            diagnostics.setText("Диагностика возвратного пути");
+            diagnostics.setText("Диагностика Perf Lab");
             diagnostics.setOnClickListener(v -> performanceDialog = PerfDiagnostics.show(this));
             page.addView(diagnostics, matchWrap());
         }
@@ -1900,15 +1900,24 @@ public final class MainActivity extends Activity {
         section.addView(codecLabel, codecLabelParams);
         section.addView(buildCodecSelector(), matchWrap());
         if (BuildConfig.PERF_LAB) {
-            section.addView(label("32 WORKERS: FIXED / 429 GUARD"), matchWrap());
-            android.widget.Spinner selector = new android.widget.Spinner(this);
-            String[] values = Profile.performanceProfileValues();
-            selector.setAdapter(new android.widget.ArrayAdapter<>(this,
-                    android.R.layout.simple_spinner_dropdown_item, Profile.performanceProfileLabels()));
-            selector.setSelection(java.util.Arrays.asList(values).indexOf(Profile.normalizePerformanceProfile(editorPerformanceProfile)));
-            selector.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
-                public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) { editorPerformanceProfile = values[position]; }
-                public void onNothingSelected(android.widget.AdapterView<?> parent) { }
+            section.addView(label("PERFORMANCE PROFILE"), matchWrap());
+            // A hidden historical value has no selected normal item. Opening or
+            // saving the editor cannot replace it via an automatic Spinner callback.
+            Button selector = new Button(this);
+            selector.setAllCaps(false);
+            selector.setText(Profile.performanceProfileDisplayLabel(editorPerformanceProfile));
+            selector.setOnClickListener(v -> {
+                String[] values = Profile.visiblePerformanceProfileValues();
+                new android.app.AlertDialog.Builder(this)
+                        .setTitle("Performance profile")
+                        .setSingleChoiceItems(Profile.visiblePerformanceProfileLabels(),
+                                Profile.visiblePerformanceProfileIndex(editorPerformanceProfile),
+                                (dialog, position) -> {
+                                    editorPerformanceProfile = values[position];
+                                    selector.setText(Profile.performanceProfileDisplayLabel(editorPerformanceProfile));
+                                    dialog.dismiss();
+                                })
+                        .setNegativeButton("Отмена", null).show();
             });
             section.addView(selector, matchWrap());
         }

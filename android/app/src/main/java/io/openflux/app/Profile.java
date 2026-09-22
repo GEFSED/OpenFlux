@@ -21,19 +21,32 @@ final class Profile {
         return "baseline";
     }
 
-    // Used by the Perf Lab selector and shared profile persistence/parser.
+    // Accepted persisted/parser values include every historical experiment.
+    // Do not use this list to populate the normal selector.
     static String[] performanceProfileValues() {
         return new String[]{"baseline", "balanced", "low_latency", "throughput",
                 "throughput_current", "throughput_mem", "throughput_96",
-                "throughput_w64", "throughput_w48", "throughput_w32", "throughput_w32_429guard"};
+                "throughput_w64", "throughput_w48", "throughput_w32", "throughput_w32_429guard",
+                "optimized"};
     }
 
-    static String[] performanceProfileLabels() {
-        return new String[]{"Baseline", "Balanced", "Low latency", "Throughput",
-                "Throughput current (64 / 4096)", "Throughput memory (64 / 2048)",
-                "Throughput 96 workers (96 / 4096)", "Throughput 64 workers (64 / 4096)",
-                "Throughput 48 workers (48 / 4096)", "Throughput 32 workers (32 / 4096)",
-                "Throughput 32 + 429 guard"};
+    static String[] visiblePerformanceProfileValues() {
+        return new String[]{"baseline", "balanced", "low_latency", "throughput", "optimized"};
+    }
+
+    static String[] visiblePerformanceProfileLabels() {
+        return new String[]{"Baseline", "Balanced", "Low latency", "Throughput", "Optimized"};
+    }
+
+    static int visiblePerformanceProfileIndex(String value) {
+        return java.util.Arrays.asList(visiblePerformanceProfileValues())
+                .indexOf(normalizePerformanceProfile(value));
+    }
+
+    static String performanceProfileDisplayLabel(String value) {
+        int index = visiblePerformanceProfileIndex(value);
+        if (index >= 0) return visiblePerformanceProfileLabels()[index];
+        return "Historical experiment: " + normalizePerformanceProfile(value);
     }
     String maxToken = "";
     String maxUid = "";

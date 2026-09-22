@@ -45,7 +45,7 @@ android {
         perflab {
             initWith debug
             applicationIdSuffix ".perflab"
-            versionNameSuffix "-perflab.7"
+            versionNameSuffix "-perflab.8"
             manifestPlaceholders = [appLabel: "OpenFlux Perf Lab"]
             buildConfigField "boolean", "PERF_LAB", "true"
             matchingFallbacks = ["debug"]
@@ -79,9 +79,9 @@ dependencies {
     implementation "com.google.zxing:core:3.5.3"
 }
 
-// Keep ordinary v1.0.0 versioning unchanged. Perf Lab 429-gate experiment #7.
+// Keep ordinary v1.0.0 versioning unchanged. Perf Lab Optimized candidate #8.
 android.applicationVariants.all { variant ->
     if (variant.buildType.name == "perflab") {
-        variant.outputs.each { output -> output.versionCodeOverride = 16 }
+        variant.outputs.each { output -> output.versionCodeOverride = 17 }
     }
 }

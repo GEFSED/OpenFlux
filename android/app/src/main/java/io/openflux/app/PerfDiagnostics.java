@@ -29,7 +29,7 @@ final class PerfDiagnostics {
         ScrollView scroll = new ScrollView(activity);
         scroll.addView(text);
         AlertDialog dialog = new AlertDialog.Builder(activity)
-                .setTitle("Диагностика возвратного пути")
+                .setTitle("Диагностика Perf Lab")
                 .setView(scroll).setPositiveButton("Закрыть", null)
                 .setNeutralButton("Копировать диагностику", null).create();
         Handler ui = new Handler(Looper.getMainLooper());
@@ -76,9 +76,7 @@ final class PerfDiagnostics {
                     data.put("apk_version", BuildConfig.VERSION_NAME);
                     data.put("apk_commit", BuildConfig.PERF_COMMIT);
                     data.put("application_id", BuildConfig.APPLICATION_ID);
-                    data.put("measurement_scope", "packet VPN; SOCKS5 profiles not applied; rates sample every 2s while visible");
-                    data.put("carrier_status", ReturnPathStatus.describe(data));
-                    data.put("acceptance", "429 gate A/B: Legacy; throughput_w32 then throughput_w32_429guard. Cold start each; one Elisa Tallinn test, copy JSON, stop. Fixed 32 workers; no batch retries. No synthetic winner.");
+                    PerfDiagnosticMetadata.apply(data);
                     String report = data.toString(2);
                     ui.post(() -> { if (!closed.get() && !activity.isDestroyed()) { latest[0] = report; text.setText(report); } });
                 } catch (Exception ignored) {

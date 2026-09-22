@@ -36,7 +36,7 @@ func (p *packetPeer) Send(data []byte) error {
 func installSession(s *packetSession) { client.mu.Lock(); client.session = s; client.mu.Unlock() }
 
 func TestProfilesWireCompatibility(t *testing.T) {
-	for _, profile := range []string{"baseline", "balanced", "low_latency", "throughput", "throughput_current", "throughput_mem", "throughput_96", "throughput_w64", "throughput_w48", "throughput_w32", "throughput_w32_429guard"} {
+	for _, profile := range []string{"baseline", "balanced", "low_latency", "throughput", "throughput_current", "throughput_mem", "throughput_96", "throughput_w64", "throughput_w48", "throughput_w32", "throughput_w32_429guard", "optimized"} {
 		for _, codec := range []string{"batched", "legacy"} {
 			for _, secret := range []string{"", "synthetic-test-key-only"} {
 				t.Run(profile+"/"+codec+"/encrypted="+map[bool]string{true: "yes", false: "no"}[secret != ""], func(t *testing.T) {

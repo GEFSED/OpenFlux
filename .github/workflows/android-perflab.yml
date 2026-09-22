@@ -21,30 +21,26 @@ jobs:
             go.sum
             mobile/go.sum
       - name: Check committed diff
-        run: git diff --check b59dd844dd5b8262c92f0310d01d3e17cf49fdd5 HEAD
-      - name: Verify packet stack and disabled relay path are unchanged
+        run: git diff --check f4bcfeb3751626cfa4c6ca158ef4cb26692636da HEAD
+      - name: Verify transport, guard and historical configs are unchanged
         shell: bash
         run: |
-          git diff --exit-code b59dd844dd5b8262c92f0310d01d3e17cf49fdd5 HEAD -- mobile/mobile.go mobile/baseline_v100.go transport/batched.go transport/batched_baseline_v100.go transport/compressor.go transport/encrypted.go transport/yandex/vyandex_baseline_v100.go transport/yandex/http_failure_diagnostics.go android/app/src/main/java/io/openflux/app/OpenFluxTunnelService.java
+          git diff --exit-code f4bcfeb3751626cfa4c6ca158ef4cb26692636da HEAD -- transport mobile/mobile.go mobile/baseline_v100.go testsupport android/app/src/main/java/io/openflux/app/OpenFluxTunnelService.java android/app/src/main/java/io/openflux/app/ReturnPathStatus.java android/app/src/main/java/io/openflux/app/SecureSettings.java
           python3 - <<'PY'
           import pathlib, subprocess
-          path = 'transport/yandex/vyandex.go'
-          before = subprocess.check_output(['git', 'show', 'b59dd844dd5b8262c92f0310d01d3e17cf49fdd5:' + path])
+          path = 'mobile/perf_profiles.go'
+          before = subprocess.check_output(['git', 'show', 'f4bcfeb3751626cfa4c6ca158ef4cb26692636da:' + path])
           after = pathlib.Path(path).read_bytes()
           additions = (
-              b'\n\tRateLimit429GuardEnabled bool\n',
-              b'\n\trateLimit *relay429Gate\n',
-              b'\t\trateLimit:  newRelay429Gate(cfg.RateLimit429GuardEnabled),\n',
-              b'\tvar permit uint64\n\tif r.rateLimit != nil {\n\t\tpermit, err = r.rateLimit.wait(r.ctx)\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t}\n',
-              b'\tif r.rateLimit != nil && resp.StatusCode == http.StatusTooManyRequests {\n\t\tr.rateLimit.rejected(resp.Header.Values("Retry-After"))\n\t}\n',
-              b'\tif r.rateLimit != nil {\n\t\tr.rateLimit.succeeded(permit)\n\t}\n',
+              (b'case "optimized", "balanced",', b'case "balanced",'),
+              (b'\t// A canonical UI name for the measured .7 candidate, with no retuning.\n\t// Keep normalization separate so diagnostics retain the selected name.\n\tif name == "optimized" {\n\t\treturn profileConfig("throughput_w32_429guard")\n\t}\n', b''),
           )
-          for added in additions:
-              assert after.count(added) == 1, 'unexpected opt-in hook shape'
-              after = after.replace(added, b'')
-          assert after == before, 'relay changed beyond the guarded hooks'
+          for added, replacement in additions:
+              assert after.count(added) == 1, 'unexpected alias shape'
+              after = after.replace(added, replacement)
+          assert after == before, 'historical config implementation changed'
           PY
-          echo "EXISTING_RUNTIME_PATHS_UNCHANGED=PASS"
+          echo "TRANSPORT_GUARD_AND_HISTORICAL_CONFIGS_UNCHANGED=PASS"
       - name: Check both modules
         run: |
           go version
@@ -65,21 +61,21 @@ jobs:
           trap restore_fixed EXIT
           git show 36aee5302dc702a251c8362adfec25388708a06d:mobile/baseline_v100.go > mobile/baseline_v100.go
           git show 36aee5302dc702a251c8362adfec25388708a06d:mobile/mobile.go > mobile/mobile.go
-          if (cd mobile && go test -count=1 -run '^TestProductionV060LegacyCompatibility$/^(baseline|balanced|low_latency|throughput|throughput_current|throughput_mem|throughput_96|throughput_w64|throughput_w48|throughput_w32|throughput_w32_429guard)$/^AES$' .) > "$RUNNER_TEMP/old-order.log" 2>&1; then
+          if (cd mobile && go test -count=1 -run '^TestProductionV060LegacyCompatibility$/^(baseline|balanced|low_latency|throughput|throughput_current|throughput_mem|throughput_96|throughput_w64|throughput_w48|throughput_w32|throughput_w32_429guard|optimized)$/^AES$' .) > "$RUNNER_TEMP/old-order.log" 2>&1; then
             echo "ERROR: regression test accepted the old wrapper order"
             exit 1
           fi
           cat "$RUNNER_TEMP/old-order.log"
-          test "$(grep -c 'client wire frame must begin with OFX/version before the production exit' "$RUNNER_TEMP/old-order.log")" -eq 11
+          test "$(grep -c 'client wire frame must begin with OFX/version before the production exit' "$RUNNER_TEMP/old-order.log")" -eq 12
           restore_fixed
           trap - EXIT
           git diff --exit-code -- mobile/baseline_v100.go mobile/mobile.go
-          echo "OLD_ORDER_REGRESSION_PROOF=PASS (all eleven Legacy+AES profiles)"
+          echo "OLD_ORDER_REGRESSION_PROOF=PASS (all twelve Legacy+AES profiles)"
   android:
     needs: go
     env:
       PERFLAB_ARM64_ONLY: "1"
-    name: 429-guard experiment arm64 APK and Java tests
+    name: Optimized candidate arm64 APK and Java tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -107,14 +103,14 @@ jobs:
           for apk in dist/*-perflab.apk; do
             "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > "$apk.badging.txt"
             grep -q "package: name='io.openflux.app.perflab'" "$apk.badging.txt"
-            grep -q "versionCode='16' versionName='1.0.0-perflab.7'" "$apk.badging.txt"
+            grep -q "versionCode='17' versionName='1.0.0-perflab.8'" "$apk.badging.txt"
             grep -q "application-label:'OpenFlux Perf Lab'" "$apk.badging.txt"
             grep -Fxq "native-code: 'arm64-v8a'" "$apk.badging.txt"
           done
           cd dist
           sha256sum *-perflab.apk > SHA256SUMS
           cat SHA256SUMS
-          printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, 429-gate A/B; Legacy + throughput_w32 / throughput_w32_429guard. Cold start each; no relay batch retries.\n' "$GITHUB_SHA" > BUILD.txt
+          printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, Optimized candidate; exact alias of guarded w32. Legacy + user2; normal browsing smoke, no Speedtest required.\n' "$GITHUB_SHA" > BUILD.txt
       - uses: actions/upload-artifact@v4
         with:
           name: OpenFlux-Android-PerfLab-${{ github.sha }}

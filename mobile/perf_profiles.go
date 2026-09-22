@@ -13,7 +13,7 @@ type perfConfig struct {
 
 func normalizeProfile(name string) string {
 	switch name {
-	case "balanced", "low_latency", "throughput", "throughput_current", "throughput_mem", "throughput_96", "throughput_w64", "throughput_w48", "throughput_w32", "throughput_w32_429guard":
+	case "optimized", "balanced", "low_latency", "throughput", "throughput_current", "throughput_mem", "throughput_96", "throughput_w64", "throughput_w48", "throughput_w32", "throughput_w32_429guard":
 		return name
 	}
 	return "baseline"
@@ -22,6 +22,11 @@ func normalizeProfile(name string) string {
 // Candidates selected from the local one-factor staged search; not a carrier
 // ranking. CLI constructors/defaults and non-Volga batching are unchanged.
 func profileConfig(name string) perfConfig {
+	// A canonical UI name for the measured .7 candidate, with no retuning.
+	// Keep normalization separate so diagnostics retain the selected name.
+	if name == "optimized" {
+		return profileConfig("throughput_w32_429guard")
+	}
 	p := perfConfig{yandex.DefaultVolgaConfig(), transport.DefaultBatchedConfig()}
 	switch normalizeProfile(name) {
 	case "low_latency":
