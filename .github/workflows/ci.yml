@@ -1,61 +1,127 @@
-name: CI
+name: Exit RACK-TLP diagnostic A-B
 
 on:
   push:
-  pull_request:
+    branches: [codex/exit-rack-tlp-ab]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  go:
-    name: Go tests & Linux binaries
+  linux:
+    name: Linux exact-source validation and A-B binaries
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-          cache: true
-      - run: go test ./...
-      - run: go vet ./...
-      - name: Build Linux server/client binaries
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Whitespace and provenance
         run: |
-          mkdir -p dist
-          GOOS=linux GOARCH=amd64 go build -o dist/OpenFlux-linux-amd64 .
-          GOOS=linux GOARCH=arm64 go build -o dist/OpenFlux-linux-arm64 .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: OpenFlux-linux-${{ github.sha }}
-          path: dist/OpenFlux-linux-*
-          if-no-files-found: error
-          retention-days: 30
-
-  android:
-    name: Android debug APKs
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+          git diff --check 081d214300c1067f17f6c0d02f84a8491f1a7b98 HEAD
+          git diff --check
+          git merge-base --is-ancestor 081d214300c1067f17f6c0d02f84a8491f1a7b98 HEAD
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - uses: android-actions/setup-android@v3
-      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.14.3"
-      - run: go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
-      - run: go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
-      - run: GRADLE_BIN="$(command -v gradle)" ./build_android_app.sh
+      - name: Read exact production release build information
+        run: |
+          mkdir -p "$RUNNER_TEMP/rack-artifacts"
+          curl --fail --location --silent --show-error https://github.com/damnurmum/OpenFlux-Android/releases/download/v0.6.0/OpenFlux-linux-amd64 -o "$RUNNER_TEMP/production-openflux"
+          printf '%s  %s\n' 08fcf4020cd3c7274c7abd78fe386b40d2fcf8515082d3475ced324ad109217c "$RUNNER_TEMP/production-openflux" | sha256sum --check
+          go version
+          go version -m "$RUNNER_TEMP/production-openflux" | tee "$RUNNER_TEMP/rack-artifacts/production-build-info.txt"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          text = (Path(os.environ["RUNNER_TEMP"]) / "rack-artifacts/production-build-info.txt").read_text()
+          values = {}
+          for line in text.splitlines():
+              parts = line.strip().split("\t", 1)
+              if len(parts) == 2 and parts[0] == "build" and "=" in parts[1]:
+                  key, value = parts[1].split("=", 1)
+                  values[key] = value
+          assert values["vcs.revision"] == "081d214300c1067f17f6c0d02f84a8491f1a7b98"
+          assert values["vcs.modified"] == "false"
+          assert values["GOOS"] == "linux" and values["GOARCH"] == "amd64"
+          assert values["CGO_ENABLED"] in ("0", "1")
+          assert text.splitlines()[0].endswith("go1.26.4")
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write("CGO_ENABLED=" + values["CGO_ENABLED"] + "\n")
+              env.write("GOAMD64=" + values.get("GOAMD64", "v1") + "\n")
+          PY
+      - name: Create and prove single-factor source variants
+        run: python3 scripts/rack-ab-verify.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/rack-off-source" "$RUNNER_TEMP/rack-artifacts"
+      - name: CONTROL root tests
+        env:
+          RACK_EXPECT_RECOVERY: "1"
+        run: go test ./...
+      - name: CONTROL root race tests
+        env:
+          CGO_ENABLED: "1"
+          RACK_EXPECT_RECOVERY: "1"
+        run: go test -race ./...
+      - name: CONTROL root vet and build
+        run: |
+          go vet ./...
+          go build ./...
+      - name: CONTROL mobile module
+        env:
+          RACK_EXPECT_RECOVERY: "1"
+        working-directory: mobile
+        run: |
+          go test ./...
+          CGO_ENABLED=1 go test -race ./...
+          go vet ./...
+          go build ./...
+      - name: RACK-OFF root tests
+        env:
+          RACK_EXPECT_RECOVERY: "0"
+        run: |
+          cd "$RUNNER_TEMP/rack-off-source"
+          go test ./...
+      - name: RACK-OFF root race tests
+        env:
+          CGO_ENABLED: "1"
+          RACK_EXPECT_RECOVERY: "0"
+        run: |
+          cd "$RUNNER_TEMP/rack-off-source"
+          go test -race ./...
+      - name: RACK-OFF root vet and build
+        run: |
+          cd "$RUNNER_TEMP/rack-off-source"
+          go vet ./...
+          go build ./...
+      - name: RACK-OFF mobile module
+        env:
+          RACK_EXPECT_RECOVERY: "0"
+        run: |
+          cd "$RUNNER_TEMP/rack-off-source/mobile"
+          go test ./...
+          CGO_ENABLED=1 go test -race ./...
+          go vet ./...
+          go build ./...
+      - name: Build separate Linux amd64 artifacts
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o "$RUNNER_TEMP/rack-artifacts/openflux-rack-control" .
+          cd "$RUNNER_TEMP/rack-off-source"
+          GOOS=linux GOARCH=amd64 go build -o "$RUNNER_TEMP/rack-artifacts/openflux-rack-off" .
+          go version -m "$RUNNER_TEMP/rack-artifacts/openflux-rack-control" > "$RUNNER_TEMP/rack-artifacts/control-build-info.txt"
+          go version -m "$RUNNER_TEMP/rack-artifacts/openflux-rack-off" > "$RUNNER_TEMP/rack-artifacts/rack-off-build-info.txt"
+          git diff --check
+          cd "$RUNNER_TEMP/rack-artifacts"
+          sha256sum openflux-rack-control openflux-rack-off | tee SHA256SUMS
+      - name: Final source integrity
+        run: |
+          test -z "$(git status --porcelain)"
+          git diff --check 081d214300c1067f17f6c0d02f84a8491f1a7b98 HEAD
+          cp docs/EXIT_RACK_TLP_AB.md "$RUNNER_TEMP/rack-artifacts/"
       - uses: actions/upload-artifact@v4
         with:
-          name: OpenFlux-android-debug-${{ github.sha }}
-          path: dist/OpenFlux-android-*-debug.apk
+          name: openflux-rack-ab-linux-amd64-${{ github.sha }}
+          path: ${{ runner.temp }}/rack-artifacts/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 14

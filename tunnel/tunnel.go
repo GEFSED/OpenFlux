@@ -3,6 +3,7 @@ package tunnel
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"sync/atomic"
@@ -317,19 +318,17 @@ func (t *TCPTunnel) ListenTCP(port uint16) (net.Listener, error) {
 }
 
 func (t *TCPTunnel) printStats() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		stats := t.gvisorStack.Stats()
-		utils.Debugf("[STATS] uptime=%v mode=%s packets=%d connected=%d established=%d retrans=%d",
-			time.Since(t.startTime).Round(time.Second),
-			t.exitMode.String(),
-			t.packetCount.Load(),
-			stats.TCP.CurrentConnected.Value(),
-			stats.TCP.CurrentEstablished.Value(),
-			stats.TCP.Retransmits.Value(),
-		)
+	for {
+		line, err := t.tcpDiagnosticLine()
+		if err != nil {
+			log.Print("[TCP-DIAG] snapshot_error=1")
+			return
+		}
+		log.Print(line)
+		<-ticker.C
 	}
 }
 
