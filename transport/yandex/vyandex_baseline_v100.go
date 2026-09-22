@@ -280,12 +280,14 @@ func (r *baselineRelayClient) sendBatch(batch [][]byte) error {
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
+		r.stats.httpFailures.recordNetwork(err)
 		return err
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != 204 && resp.StatusCode != 200 {
+		r.stats.httpFailures.recordStatus(resp.StatusCode)
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 

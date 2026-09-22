@@ -4,6 +4,7 @@ package yandex
 // endpoint paths, document identifiers and packet contents.
 type VolgaPerformance struct {
 	VolgaReceiveDiagnostics
+	VolgaHTTPFailureDiagnostics
 	TransportStarted bool    `json:"transport_started"`
 	WorkerCount      int     `json:"worker_count"`
 	WorkersBusy      int64   `json:"workers_busy"`
@@ -46,5 +47,6 @@ func volgaPerformance(cfg VolgaConfig, s *VolgaStats, queued int, started bool) 
 	if n > 0 {
 		avg = float64(p) / float64(n)
 	}
-	return VolgaPerformance{VolgaReceiveDiagnostics: s.volgaReceiveCounters.snapshot(), TransportStarted: started, WorkerCount: cfg.WorkerCount, WorkersBusy: s.WorkerBusy.Load(), PeakWorkersBusy: s.PeakWorkerBusy.Load(), QueueLen: queued, QueueCap: cfg.QueueSize, QueueDrops: s.QueueDrops.Load(), HTTPRequests: s.HTTPReqsSent.Load() + s.HTTPReqsFailed.Load(), HTTPFailures: s.HTTPReqsFailed.Load(), Batches: n, PacketsBatched: p, Average: avg, Reconnects: s.WSReconnects.Load()}
+	failed := s.HTTPReqsFailed.Load()
+	return VolgaPerformance{VolgaReceiveDiagnostics: s.volgaReceiveCounters.snapshot(), VolgaHTTPFailureDiagnostics: s.httpFailures.snapshot(failed), TransportStarted: started, WorkerCount: cfg.WorkerCount, WorkersBusy: s.WorkerBusy.Load(), PeakWorkersBusy: s.PeakWorkerBusy.Load(), QueueLen: queued, QueueCap: cfg.QueueSize, QueueDrops: s.QueueDrops.Load(), HTTPRequests: s.HTTPReqsSent.Load() + failed, HTTPFailures: failed, Batches: n, PacketsBatched: p, Average: avg, Reconnects: s.WSReconnects.Load()}
 }

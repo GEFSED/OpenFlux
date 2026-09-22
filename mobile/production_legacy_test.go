@@ -36,7 +36,7 @@ func syntheticProductionPacket(size int) []byte {
 // The peer has independent frozen production AES/Legacy code, not our helper.
 func TestProductionV060LegacyCompatibility(t *testing.T) {
 	EnablePerformanceLab()
-	for _, profile := range []string{"baseline", "balanced", "low_latency", "throughput"} {
+	for _, profile := range []string{"baseline", "balanced", "low_latency", "throughput", "throughput_current", "throughput_mem", "throughput_96"} {
 		for _, encrypted := range []bool{true, false} {
 			label := "plain"
 			secret := ""

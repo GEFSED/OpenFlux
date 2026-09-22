@@ -10,10 +10,30 @@ public class ProfileTest {
         assertEquals("vyandex", p.transportType);
     }
     @Test public void candidatesRoundTripAndUnknownIsBaseline() throws Exception {
-        for (String name : new String[]{"baseline", "balanced", "low_latency", "throughput"}) {
+        for (String name : Profile.performanceProfileValues()) {
             Profile p = new Profile(); p.performanceProfile = name;
+            assertEquals(name, Profile.normalizePerformanceProfile(name));
             assertEquals(name, Profile.fromJson(p.toJson()).performanceProfile);
         }
         assertEquals("baseline", Profile.fromJson(new JSONObject("{\"performanceProfile\":\"unknown\"}")).performanceProfile);
+        assertEquals("baseline", Profile.normalizePerformanceProfile(null));
+    }
+    @Test public void selectorLabelsAndPersistedValuesRemainDistinct() throws Exception {
+        String[] expected = {"baseline", "balanced", "low_latency", "throughput",
+                "throughput_current", "throughput_mem", "throughput_96"};
+        String[] labels = {"Baseline", "Balanced", "Low latency", "Throughput",
+                "Throughput current (64 / 4096)", "Throughput memory (64 / 2048)",
+                "Throughput 96 workers (96 / 4096)"};
+        assertArrayEquals(expected, Profile.performanceProfileValues());
+        assertArrayEquals(labels, Profile.performanceProfileLabels());
+        for (int position = 0; position < expected.length; position++) {
+            Profile p = new Profile();
+            p.performanceProfile = Profile.performanceProfileValues()[position];
+            Profile saved = Profile.fromJson(new JSONObject(p.toJson().toString()));
+            int restoredPosition = java.util.Arrays.asList(Profile.performanceProfileValues())
+                    .indexOf(Profile.normalizePerformanceProfile(saved.performanceProfile));
+            assertEquals(position, restoredPosition);
+            assertEquals(labels[position], Profile.performanceProfileLabels()[restoredPosition]);
+        }
     }
 }

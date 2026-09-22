@@ -1900,11 +1900,11 @@ public final class MainActivity extends Activity {
         section.addView(codecLabel, codecLabelParams);
         section.addView(buildCodecSelector(), matchWrap());
         if (BuildConfig.PERF_LAB) {
-            section.addView(label("RETURN-PATH RETEST: BASELINE ONLY (A/B PAUSED)"), matchWrap());
+            section.addView(label("THROUGHPUT: ONE-FACTOR EXPERIMENT"), matchWrap());
             android.widget.Spinner selector = new android.widget.Spinner(this);
-            String[] values = {"baseline", "balanced", "low_latency", "throughput"};
+            String[] values = Profile.performanceProfileValues();
             selector.setAdapter(new android.widget.ArrayAdapter<>(this,
-                    android.R.layout.simple_spinner_dropdown_item, new String[]{"Baseline", "Balanced", "Low latency", "Throughput"}));
+                    android.R.layout.simple_spinner_dropdown_item, Profile.performanceProfileLabels()));
             selector.setSelection(java.util.Arrays.asList(values).indexOf(Profile.normalizePerformanceProfile(editorPerformanceProfile)));
             selector.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
                 public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) { editorPerformanceProfile = values[position]; }

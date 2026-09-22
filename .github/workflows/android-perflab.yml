@@ -21,7 +21,26 @@ jobs:
             go.sum
             mobile/go.sum
       - name: Check committed diff
-        run: git diff --check 36aee5302dc702a251c8362adfec25388708a06d HEAD
+        run: git diff --check e3a9c87606c138382f356c1252493d60e66b6e02 HEAD
+      - name: Verify existing runtime paths are unchanged except counters
+        shell: bash
+        run: |
+          git diff --exit-code e3a9c87606c138382f356c1252493d60e66b6e02 HEAD -- mobile/mobile.go mobile/baseline_v100.go transport/batched.go transport/batched_baseline_v100.go transport/compressor.go transport/encrypted.go android/app/src/main/java/io/openflux/app/OpenFluxTunnelService.java
+          python3 - <<'PY'
+          import pathlib, subprocess
+          base = 'e3a9c87606c138382f356c1252493d60e66b6e02'
+          for path in ('transport/yandex/vyandex.go', 'transport/yandex/vyandex_baseline_v100.go'):
+              before = subprocess.check_output(['git', 'show', base + ':' + path])
+              after = pathlib.Path(path).read_bytes()
+              for line in (
+                  b'\thttpFailures   volgaHTTPFailureCounters\n',
+                  b'\t\tr.stats.httpFailures.recordNetwork(err)\n',
+                  b'\t\tr.stats.httpFailures.recordStatus(resp.StatusCode)\n',
+              ):
+                  after = after.replace(line, b'')
+              assert after == before, path + ': runtime change beyond counters'
+          print('EXISTING_RUNTIME_PATHS_UNCHANGED=PASS')
+          PY
       - name: Check both modules
         run: |
           go version
@@ -56,7 +75,7 @@ jobs:
     needs: go
     env:
       PERFLAB_ARM64_ONLY: "1"
-    name: Wrapper-order retest arm64 APK and Java tests
+    name: Throughput one-factor arm64 APK and Java tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,14 +103,14 @@ jobs:
           for apk in dist/*-perflab.apk; do
             "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > "$apk.badging.txt"
             grep -q "package: name='io.openflux.app.perflab'" "$apk.badging.txt"
-            grep -q "versionCode='13' versionName='1.0.0-perflab.4'" "$apk.badging.txt"
+            grep -q "versionCode='14' versionName='1.0.0-perflab.5'" "$apk.badging.txt"
             grep -q "application-label:'OpenFlux Perf Lab'" "$apk.badging.txt"
             grep -Fxq "native-code: 'arm64-v8a'" "$apk.badging.txt"
           done
           cd dist
           sha256sum *-perflab.apk > SHA256SUMS
           cat SHA256SUMS
-          printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, Legacy/AES wrapper-order retest; use Legacy + Baseline. A/B suspended.\n' "$GITHUB_SHA" > BUILD.txt
+          printf 'Commit: %s\nPackage: io.openflux.app.perflab\nDebug signed, Throughput one-factor A/B; Legacy + throughput_current / throughput_mem / throughput_96. Cold start each run.\n' "$GITHUB_SHA" > BUILD.txt
       - uses: actions/upload-artifact@v4
         with:
           name: OpenFlux-Android-PerfLab-${{ github.sha }}

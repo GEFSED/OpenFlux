@@ -13,7 +13,7 @@ type perfConfig struct {
 
 func normalizeProfile(name string) string {
 	switch name {
-	case "balanced", "low_latency", "throughput":
+	case "balanced", "low_latency", "throughput", "throughput_current", "throughput_mem", "throughput_96":
 		return name
 	}
 	return "baseline"
@@ -38,13 +38,20 @@ func profileConfig(name string) perfConfig {
 		p.outer.MaxBatchBytes = 16 << 10
 		p.outer.Linger = time.Millisecond
 		p.outer.QueueDepth = 2048
-	case "throughput":
+	case "throughput", "throughput_current", "throughput_mem", "throughput_96":
 		p.volga.WorkerCount = 64
 		p.volga.QueueSize = 4096
 		p.volga.BatchSize = 32
 		p.volga.BatchTimeout = time.Millisecond
 		p.outer.MaxBatchBytes = 32 << 10
 		p.outer.Linger = 2 * time.Millisecond
+		// One-factor candidates share every other Throughput setting.
+		if name == "throughput_mem" {
+			p.volga.QueueSize = 2048
+		}
+		if name == "throughput_96" {
+			p.volga.WorkerCount = 96
+		}
 	default:
 		return p
 	}

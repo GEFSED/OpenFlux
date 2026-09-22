@@ -17,8 +17,20 @@ final class Profile {
     String performanceProfile = "baseline";
 
     static String normalizePerformanceProfile(String value) {
-        if ("balanced".equals(value) || "low_latency".equals(value) || "throughput".equals(value)) return value;
+        for (String name : performanceProfileValues()) if (name.equals(value)) return name;
         return "baseline";
+    }
+
+    // Used by the Perf Lab selector and shared profile persistence/parser.
+    static String[] performanceProfileValues() {
+        return new String[]{"baseline", "balanced", "low_latency", "throughput",
+                "throughput_current", "throughput_mem", "throughput_96"};
+    }
+
+    static String[] performanceProfileLabels() {
+        return new String[]{"Baseline", "Balanced", "Low latency", "Throughput",
+                "Throughput current (64 / 4096)", "Throughput memory (64 / 2048)",
+                "Throughput 96 workers (96 / 4096)"};
     }
     String maxToken = "";
     String maxUid = "";
