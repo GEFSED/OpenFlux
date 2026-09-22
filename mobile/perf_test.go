@@ -49,9 +49,7 @@ func TestProfilesWireCompatibility(t *testing.T) {
 						t.Fatal(err)
 					}
 					var exit transport.Transport = b
-					if codec == "legacy" {
-						exit = transport.NewCompressedTransport(exit)
-					} else {
+					if codec != "legacy" {
 						exit = transport.NewBatchedTransport(exit)
 					}
 					if secret != "" {
@@ -59,6 +57,9 @@ func TestProfilesWireCompatibility(t *testing.T) {
 						if err != nil {
 							t.Fatal(err)
 						}
+					}
+					if codec == "legacy" {
+						exit = transport.NewCompressedTransport(exit)
 					}
 					got := make(chan []byte, 2)
 					cli.Receive(func(p []byte) { got <- append([]byte(nil), p...) })

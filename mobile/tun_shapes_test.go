@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"openflux/testsupport/basev100peer"
+	"openflux/testsupport/productionv060peer"
 	"openflux/testsupport/tunshapes"
 )
 
@@ -19,7 +19,7 @@ func TestAuthenticated158ByteLegacyShapesReachActualMobileCallback(t *testing.T)
 		t.Fatal(err)
 	}
 	defer Stop()
-	peer, err := basev100peer.Wrap(b, "legacy", "synthetic-tun-shape-secret", "synthetic-context", true)
+	peer, err := productionv060peer.WrapLegacy(b, "synthetic-tun-shape-secret", "synthetic-context", true)
 	if err != nil {
 		t.Fatal(err)
 	}

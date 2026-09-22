@@ -178,8 +178,12 @@ func buildPacketTransport(s *packetSession, url, secret, codec, maxToken, maxUid
 	return wrapPacketTransport(s, inner, url, secret, codec, lab)
 }
 func wrapPacketTransport(s *packetSession, inner transport.Transport, url, secret, codec string, lab bool) (transport.Transport, error) {
+	// Perf Lab Legacy uses the production v0.6.0 order: raw -> AES -> Legacy.
+	// Preserve Batched and the ordinary (non-lab) entry point behavior.
 	if codec == "legacy" {
-		inner = transport.NewCompressedTransport(inner)
+		if !lab {
+			inner = transport.NewCompressedTransport(inner)
+		}
 	} else {
 		if lab && s.transportType == "vyandex" {
 			var err error
@@ -199,7 +203,13 @@ func wrapPacketTransport(s *packetSession, inner transport.Transport, url, secre
 		}
 		var err error
 		s.encrypted, err = transport.NewEncryptedTransport(inner, secret, context, false)
-		return s.encrypted, err
+		if err != nil {
+			return nil, err
+		}
+		inner = s.encrypted
+	}
+	if lab && codec == "legacy" {
+		inner = transport.NewCompressedTransport(inner)
 	}
 	return inner, nil
 }

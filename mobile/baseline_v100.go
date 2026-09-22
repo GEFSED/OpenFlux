@@ -1,5 +1,6 @@
 // Diagnostic control copied from Android v1.0.0 8566f727c8238436728758f139130cef433147b7.
-// Only sanitized logging/errors, read-only counters and a test carrier seam are added.
+// Legacy wrapping matches production v0.6.0 081d214300c1067f17f6c0d02f84a8491f1a7b98.
+// Other changes are sanitized logging/errors, read-only counters and a test carrier seam.
 // Original global callback, slice FIFO, start publication and Stop behavior remain.
 // Package mobile exposes the OpenFlux packet transport to Android through
 // gomobile. Android owns the TUN file descriptor; this package only transports
@@ -102,12 +103,10 @@ func baselineStartWithCarrier(transportType, documentURL, encryptionSecret, code
 		}
 
 	}
-	// Construction order from base: raw -> codec -> encryption wrapper.
-	// Send runs AES first, then codec, then Volga inner batching.
-
-	if codec == "legacy" {
-		inner = transport.NewCompressedTransport(inner)
-	} else {
+	// Legacy matches production 081d214: construct raw -> AES -> Legacy,
+	// so Send is packet -> Legacy -> AES -> raw. Batched keeps its existing
+	// v1.0.0 ordering; this Legacy exit establishes no Batched compatibility.
+	if codec != "legacy" {
 		outer = transport.NewBaselineV100BatchedTransport(inner)
 		inner = outer
 	}
@@ -132,6 +131,9 @@ func baselineStartWithCarrier(transportType, documentURL, encryptionSecret, code
 		appendLog("[ANDROID] Шифрование транспорта: AES-256-GCM включено")
 	} else {
 		appendLog("[ANDROID] Шифрование транспорта отключено (ключ не задан)")
+	}
+	if codec == "legacy" {
+		inner = transport.NewCompressedTransport(inner)
 	}
 	trans := inner
 	trans.Receive(func(data []byte) {

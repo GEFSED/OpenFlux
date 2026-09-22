@@ -4,19 +4,20 @@ import (
 	"bytes"
 	"testing"
 
-	"openflux/testsupport/basev100peer"
+	"openflux/testsupport/productionv060peer"
 	"openflux/testsupport/tunshapes"
 	"openflux/transport"
 )
 
-// Real Volga inner parser -> Legacy -> AES -> callback, using authenticated
-// frames made by the frozen v1.0.0 exit wrapper. AES authenticates bytes, not IP.
+// Real Volga inner parser -> AES -> Legacy -> callback, using authenticated
+// frames made by the frozen production v0.6.0 exit wrapper. AES authenticates bytes, not IP.
 func TestAuthenticated158ByteVolgaLegacyReturnShapes(t *testing.T) {
 	raw := &localCarrier{}
-	client, err := transport.NewEncryptedTransport(transport.NewCompressedTransport(raw), "synthetic-tun-shape-secret", "synthetic-context", false)
+	aes, err := transport.NewEncryptedTransport(raw, "synthetic-tun-shape-secret", "synthetic-context", false)
 	if err != nil {
 		t.Fatal(err)
 	}
+	client := transport.NewCompressedTransport(aes)
 	stats := &VolgaStats{}
 	w := newBaselineWSListener(&volgaAuth{UserID: 7}, DefaultVolgaConfig(), stats, &baselineRelayClient{}, raw.deliver)
 	defer w.Stop()
@@ -24,7 +25,7 @@ func TestAuthenticated158ByteVolgaLegacyReturnShapes(t *testing.T) {
 		w.handleMessage(volgaEnvelope("SESSION", "relay", 9, []any{volgaRecord(frame)}))
 		return nil
 	}}
-	peer, err := basev100peer.Wrap(peerRaw, "legacy", "synthetic-tun-shape-secret", "synthetic-context", true)
+	peer, err := productionv060peer.WrapLegacy(peerRaw, "synthetic-tun-shape-secret", "synthetic-context", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,13 +43,13 @@ func TestAuthenticated158ByteVolgaLegacyReturnShapes(t *testing.T) {
 			}
 		})
 	}
-	if stats.innerPackets.Load() != 4 || client.ReceiveDiagnostics().Success != 4 {
+	if stats.innerPackets.Load() != 4 || aes.ReceiveDiagnostics().Success != 4 {
 		t.Fatal("all four shapes must authenticate, including non-IP")
 	}
 	// Raw Volga keepalive is emitted below AES; it is not a legal authenticated
-	// application control frame. The Legacy decoder removes its zero marker.
+	// application control frame. AES rejects it before Legacy is reached.
 	w.handleMessage(volgaEnvelope("SESSION", "relay", 9, []any{volgaRecord([]byte{0})}))
-	if client.ReceiveDiagnostics().TooShort != 1 || client.ReceiveDiagnostics().Success != 4 {
+	if aes.ReceiveDiagnostics().TooShort != 1 || aes.ReceiveDiagnostics().Success != 4 {
 		t.Fatal("raw keepalive reached authenticated callback")
 	}
 }

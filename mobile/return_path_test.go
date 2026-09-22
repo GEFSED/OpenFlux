@@ -33,9 +33,10 @@ func (p *observedCarrier) Send(data []byte) error {
 	return p.packetPeer.Send(data)
 }
 
-func TestExactBasePeerVersusBaselineAndroidPath(t *testing.T) {
+// Legacy compatibility is tested separately against exact production 081d214.
+func TestV100BatchedPeerVersusBaselineAndroidPath(t *testing.T) {
 	EnablePerformanceLab()
-	for _, codec := range []string{"batched", "legacy"} {
+	for _, codec := range []string{"batched"} {
 		for _, secret := range []string{"", "synthetic-diagnostic-secret"} {
 			t.Run(codec+map[bool]string{true: "/AES", false: "/plain"}[secret != ""], func(t *testing.T) {
 				baselineActive.Store(true)

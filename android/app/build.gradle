@@ -45,7 +45,7 @@ android {
         perflab {
             initWith debug
             applicationIdSuffix ".perflab"
-            versionNameSuffix "-perflab.3"
+            versionNameSuffix "-perflab.4"
             manifestPlaceholders = [appLabel: "OpenFlux Perf Lab"]
             buildConfigField "boolean", "PERF_LAB", "true"
             matchingFallbacks = ["debug"]
@@ -79,9 +79,9 @@ dependencies {
     implementation "com.google.zxing:core:3.5.3"
 }
 
-// Keep ordinary v1.0.0 versioning unchanged. This is Perf Lab diagnostic #3.
+// Keep ordinary v1.0.0 versioning unchanged. This is Perf Lab wrapper-order retest #4.
 android.applicationVariants.all { variant ->
     if (variant.buildType.name == "perflab") {
-        variant.outputs.each { output -> output.versionCodeOverride = 12 }
+        variant.outputs.each { output -> output.versionCodeOverride = 13 }
     }
 }
