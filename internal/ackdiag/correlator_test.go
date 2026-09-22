@@ -204,3 +204,30 @@ func TestHistogramAndPrivateSchema(t *testing.T){
     s:=sim(1000);s.send(1001,100);s.send(1001,100);s.ack(1101);m:=s.e.Snapshot();data,_:=json.Marshal(m)
     for _,forbidden:=range []string{"flow_key","src","dst","port\"","payload\"","seq\"","ack\"","cookie","token","url","header","ambiguous_retransmit_bytes"}{if strings.Contains(string(data),forbidden){t.Fatal("private or obsolete schema field")}}
 }
+
+// Independent tiny per-byte oracle; it does not reuse range insertion/matching.
+func TestSeededByteLedgerOracle(t *testing.T){
+    for seed:=int64(1);seed<=8;seed++{
+        s:=sim(0xfffffff0);rng:=rand.New(rand.NewSource(seed));var seen,delivered [256]bool
+        var first [256]time.Time;high:=0
+        for i:=0;i<160;i++{
+            if i%3!=2{
+                lo:=rng.Intn(230);n:=1+rng.Intn(26);if lo+n>256{n=256-lo}
+                s.send(s.anchor+1+uint32(lo),n);if lo+n>high{high=lo+n}
+                for j:=lo;j<lo+n;j++{if !seen[j]{first[j]=s.at};seen[j]=true}
+            }else{
+                end:=rng.Intn(high+1);s.ack(s.anchor+1+uint32(end))
+                for j:=0;j<end;j++{if seen[j]&&!first[j].After(s.at){delivered[j]=true}}
+            }
+            var unique,acked uint64;for j:=range seen{if seen[j]{unique++};if delivered[j]{acked++}}
+            assertState(t,s.e,unique,acked,unique-acked,true)
+        }
+        s.ack(s.anchor+1+uint32(high));var unique uint64;for _,v:=range seen{if v{unique++}}
+        assertState(t,s.e,unique,unique,0,true)
+    }
+}
+func TestInvariantViolationLatchesInvalid(t *testing.T){
+    s:=sim(1000);s.send(1001,100);s.ack(1101);f:=s.e.flows[s.key][0]
+    f.ranges[0].ackCover=0;s.e.checkFlow(f)
+    if s.e.Snapshot()["correlation_valid"]!=0{t.Fatal("invalid ACK provenance accepted")}
+}

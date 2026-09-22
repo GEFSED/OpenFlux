@@ -222,8 +222,7 @@ func(e *Engine) acknowledge(p packet,at time.Time){
     gs:=e.flows[p.key];if len(gs)==0{return}
     f:=gs[len(gs)-1]
     if p.rst{if len(gs)>1{e.invalid("ambiguous_flow_generation");return};f.closed=true;e.invalidateOpen(f,false);e.metrics["flow_reset_events"]++;e.checkFlow(f);return}
-    if p.fin{f.peerFIN=true}
-    if !p.ackFlag{return};e.metrics["ack_observations"]++
+    if !p.ackFlag{if p.fin{if len(gs)>1{e.invalid("ambiguous_flow_generation");return};f.peerFIN=true;e.updateClosed(f)};return};e.metrics["ack_observations"]++
     // ACKs which fit an old epoch are routed to that epoch only. If two epochs
     // overlap, fail closed instead of letting old traffic acknowledge new data.
     var match *flow;var ack int64
@@ -234,11 +233,15 @@ func(e *Engine) acknowledge(p packet,at time.Time){
     if match!=nil{f=match}else{
         var ok bool;ack,ok=offset(p.ack,f.anchor);if !ok||ack<1{e.invalid("unsupported_serial_range");return}
     }
+    if p.fin{f.peerFIN=true}
     if f.ackSeen&&ack<=f.ackHigh{
         if ack==f.ackHigh{e.metrics["duplicate_ack_events"]++}else{e.metrics["old_ack_events"]++}
         // Earlier event times can precede an already-observed cumulative ACK.
         earlier:=false;for _,a:=range f.acks{if a.end>=ack&&!at.Before(a.at){earlier=true;break}}
-        if earlier{e.updateClosed(f);e.checkFlow(f);return}
+        if earlier{
+            needsDelivery:=false;for _,r:=range f.ranges{if !r.invalid&&r.ackAt.IsZero()&&r.lo<ack&&!firstOut(r).After(at){needsDelivery=true;break}}
+            if !needsDelivery{e.updateClosed(f);e.checkFlow(f);return}
+        }
     }else{f.ackSeen=true;f.ackHigh=ack;e.metrics["ack_advancement_count"]++}
     if !e.room(0,0,0,1){return};f.acks=append(f.acks,ackEvent{end:ack,at:at});e.acks++
     e.applyACKEvent(f,f.acks[len(f.acks)-1]);e.updateClosed(f);e.checkFlow(f)
