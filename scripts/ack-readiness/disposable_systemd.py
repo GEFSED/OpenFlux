@@ -163,8 +163,9 @@ raise SystemExit(1)
         evidence['RESULT']='PASS'
     finally:
         ctl('stop')
-        command('systemctl','stop',anchor_name)
-        if anchor.exists():anchor.unlink()
+        if anchor.exists():
+            command('systemctl','stop',anchor_name)
+            anchor.unlink()
         if conf.exists():conf.unlink()
         if drop.exists():shutil.rmtree(drop)
         ctl('daemon-reload')

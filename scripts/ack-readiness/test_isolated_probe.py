@@ -51,6 +51,8 @@ class Simulation:
             ExecMainPID=self.pid if self.starts else '0',ExecMainStartTimestampMonotonic=str(int(self.started_at*1e6)+1) if self.starts else '0',
             ExecMainCode='2' if self.cleanup_done else '1',ExecMainStatus='15' if self.cleanup_done else '1',
             Result='success' if self.cleanup_done else 'exit-code')
+        if self.mode.startswith('external_') and self.mode!='external_sigterm' and self.elapsed()>.15:
+            s.update(InvocationID='e'*32,MainPID='4321',ExecMainPID='4321',ActiveState='active',SubState='running')
         if dead and self.mode=='external_sigterm':s.update(ExecMainCode='2',ExecMainStatus='15',Result='signal')
         return s
 
@@ -105,6 +107,8 @@ class Simulation:
         rows.insert(0,dict(__CURSOR='systemd-started',__MONOTONIC_TIMESTAMP=str(b['scope']['start_monotonic_us']+1),
             __REALTIME_TIMESTAMP='1000000',_BOOT_ID=CONTEXT['boot_id'],_PID='1',_COMM='systemd',
             _EXE='/usr/lib/systemd/systemd',UNIT=probe.UNIT,INVOCATION_ID=self.inv,MESSAGE_ID=UNIT_STARTED))
+        if self.mode.startswith('external_') and self.mode!='external_sigterm' and self.elapsed()>.15:
+            rows.append(dict(rows[0],__CURSOR='external-start',INVOCATION_ID='e'*32))
         return '\n'.join(map(json.dumps,rows))
 
     def cmd(self,*args,**kwargs):
@@ -153,7 +157,7 @@ class ActualWorkerTests(unittest.TestCase):
     def simulate(self,mode='failure',baseline=541,post=None):
         with tempfile.TemporaryDirectory() as d:
             sim=Simulation(d,mode,baseline,post);r=sim.run()
-            if mode!='cleanup_failure':self.assertFalse(sim.drop.exists())
+            if mode!='cleanup_failure' and not mode.startswith('external_second'):self.assertFalse(sim.drop.exists())
             self.assertTrue(sim.hold.exists())
             self.assertEqual(b'production fixture',sim.prod.read_bytes())
             self.assertLessEqual(sim.starts,1)
@@ -264,3 +268,15 @@ class ActualWorkerTests(unittest.TestCase):
         self.assertEqual(0,r['UNAUTHORIZED_ADDITIONAL_INVOCATIONS'])
         self.assertTrue(r['BOOTSTRAP_RECORDS'])
         self.assertEqual(0,sim.stops)
+
+    def test_actual_worker_external_second_invocation_no_counter_increment(self):
+        for mode in ('external_second_start','external_second_restart','external_second_refresh'):
+            with self.subTest(mode=mode):
+                sim,r,files=self.simulate(mode,post=0)
+                self.assertFalse(r['HARNESS_VALID'])
+                self.assertEqual('ADDITIONAL_INVOCATION_OBSERVED',r['HARNESS_FAILURE_CLASS'])
+                self.assertEqual(1,r['CONTROL_START_CALL_COUNT'])
+                self.assertEqual(2,r['OBSERVED_INVOCATION_COUNT'])
+                self.assertEqual(0,sim.stops) # cleanup never kills the unowned external process
+                self.assertEqual('BLOCKED',r['CONFIGURATION_RESTORATION'])
+                self.assertEqual('original-cursor',files['boundary.json']['scope']['cursor'])
