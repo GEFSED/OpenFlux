@@ -30,6 +30,9 @@ allowed={
     'internal/ackdiag/bootstrap_structure.go','internal/ackdiag/bootstrap_structure_test.go',
     'scripts/ack-readiness/schema6.py','scripts/ack-readiness/test_structure.py',
     'docs/BOOTSTRAP_STRUCTURE_SCHEMA6.md',
+    'scripts/ack-readiness/probe_boundary.py','scripts/ack-readiness/probe_controller.py',
+    'scripts/ack-readiness/isolated_probe.py','scripts/ack-readiness/test_probe_boundary.py',
+    'scripts/ack-readiness/test_isolated_probe.py','docs/ISOLATED_PROBE_HARNESS.md',
 }
 assert not subprocess.check_output(['git','status','--porcelain']).strip(), 'dirty_source'
 assert changed_since(FROZEN)<=allowed, sorted(changed_since(FROZEN)-allowed)
@@ -45,8 +48,23 @@ SCHEMA6_ALLOWED={
  'scripts/ack-readiness/operations.py','scripts/ack-readiness/test_startup.py',
  'scripts/ack-readiness/test_bootstrap.py','scripts/ack-diag-verify.py',
  '.github/workflows/ci.yml','docs/BOOTSTRAP_STRUCTURE_SCHEMA6.md',
+ 'scripts/ack-readiness/probe_boundary.py','scripts/ack-readiness/probe_controller.py',
+ 'scripts/ack-readiness/isolated_probe.py','scripts/ack-readiness/test_probe_boundary.py',
+ 'scripts/ack-readiness/test_isolated_probe.py','docs/ISOLATED_PROBE_HARNESS.md',
 }
 assert changed_since(SCHEMA5_BASE)<=SCHEMA6_ALLOWED,'schema6_nonobservability_change'
+# Harness repair cannot alter ANY runtime/emitter/validator implementation.
+HARNESS_BASE='34ba35a407296038a223c54cd048dcc0e6b67ca5'
+HARNESS_ALLOWED={
+ 'scripts/ack-readiness/probe_boundary.py','scripts/ack-readiness/probe_controller.py',
+ 'scripts/ack-readiness/isolated_probe.py','scripts/ack-readiness/test_probe_boundary.py',
+ 'scripts/ack-readiness/test_isolated_probe.py','docs/ISOLATED_PROBE_HARNESS.md',
+ 'scripts/ack-diag-verify.py','.github/workflows/ci.yml',
+}
+assert changed_since(HARNESS_BASE)<=HARNESS_ALLOWED,'non_harness_change'
+for path in subprocess.check_output(['git','ls-tree','-r','--name-only',HARNESS_BASE]).decode().splitlines():
+    if path not in HARNESS_ALLOWED:
+        assert Path(path).read_bytes()==subprocess.check_output(['git','show',HARNESS_BASE+':'+path]),('harness_changed_frozen_file',path)
 for path in subprocess.check_output(['git','ls-tree','-r','--name-only',SCHEMA5_BASE,
     'transport','tunnel','network','mobile','main.go','utils','go.mod','go.sum',
     'internal/ackdiag/runtime.go','internal/ackdiag/correlator.go','internal/ackdiag/lifecycle.go',
