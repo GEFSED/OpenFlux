@@ -132,7 +132,8 @@ class StartupTests(unittest.TestCase):
             p.stdin.write('GO\n');p.stdin.flush()
             count=len(lines(name))+(8 if name=='success' else 0)
             emitted=[p.stdout.readline().rstrip('\n') for _ in range(count)]
-            scope=dict(scope5(),pid=str(p.pid),exe=exe,invocation=inv,uid=str(os.getuid()),gid=str(os.getgid()))
+            # The child replays the current Go emitter, not the schema-5 projection.
+            scope=dict(scope5(),schema=6,pid=str(p.pid),exe=exe,invocation=inv,uid=str(os.getuid()),gid=str(os.getgid()))
             es=entries(emitted)
             for e in es:e.update(_PID=str(p.pid),_EXE=exe,_SYSTEMD_INVOCATION_ID=inv,_UID=scope['uid'],_GID=scope['gid'])
             raw='\n'.join(json.dumps(e) for e in es)
@@ -141,11 +142,11 @@ class StartupTests(unittest.TestCase):
             with patch.object(operations,'command',command),patch.object(operations,'load',return_value=scope),patch.object(operations,'save'):
                 records=operations.journal(inv)
             if name=='success':
-                self.assertEqual('PASS',readiness_observation(records,30,schema=5)['LOG_VALIDATION'])
+                self.assertEqual('PASS',readiness_observation(records,30,schema=6)['LOG_VALIDATION'])
                 p.stdin.write('STOP\n');p.stdin.flush()
             else:
                 self.assertEqual(1,p.wait(timeout=5))
-                with self.assertRaises(DiagnosticStartupFailed):readiness_observation(records,0,True,5)
+                with self.assertRaises(DiagnosticStartupFailed):readiness_observation(records,0,True,6)
             p.stdin.close();self.assertEqual(0 if name=='success' else 1,p.wait(timeout=5))
             self.assertEqual('',p.stderr.read())
         finally:

@@ -47,6 +47,10 @@ def validate_bootstrap(v):
     require(complete==(v['structure_scan_limit_reason']=='NONE'),'scan_limit_mismatch')
     require(not complete or v['body_read_complete'],'partial_body_cannot_prove_absence')
     require(not complete or v['body_bytes_read']<=1048576,'html_limit_mismatch')
+    limit=v['structure_scan_limit_reason']
+    require(limit!='HTML_SIZE' or v['body_bytes_read']>1048576,'unreached_html_limit')
+    require(limit!='SCRIPT_COUNT' or total==1024,'unreached_script_limit')
+    require(limit!='INLINE_JSON_SIZE' or v['body_bytes_read']>786432,'unreached_json_limit')
     require(v['initial_store_present']==(v['initial_store_structure_class']!='ABSENT'),'initial_store_presence_mismatch')
     require(v['other_inline_bootstrap_present']==(v['other_inline_bootstrap_structure_class']!='ABSENT'),'other_container_presence_mismatch')
     require(m['public_initial_store']==v['initial_store_present'],'initial_marker_mismatch')

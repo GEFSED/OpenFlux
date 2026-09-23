@@ -93,6 +93,8 @@ class StructureTests(unittest.TestCase):
         v=fixture('giant_json');v['structure_scan_complete']=True;self.reject(v)
         v=fixture('editor_required');v['required_auth_field_shape_present']=False;self.reject(v)
         v=fixture('browser');v['browser_compatibility_marker']='NO';self.reject(v)
+        for limit in ('HTML_SIZE','SCRIPT_COUNT','INLINE_JSON_SIZE'):
+            v=fixture('unknown');v.update(structure_scan_complete=False,structure_scan_limit_reason=limit);self.reject(v)
 
     def test_journal_strict_privacy_mixed_schema_and_unknown_events(self):
         source=fixture('legacy')
