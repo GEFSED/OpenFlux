@@ -191,7 +191,7 @@ func(e *Engine) outgoing(p packet,at time.Time)*attempt {
     // reordered data observations remain correlatable, never implicitly ACKed.
     // Numeric sequence arcs of retained epochs may not overlap. Without a
     // connection ID, delayed old-generation bytes cannot safely be distinguished.
-    if p.size>0{for _,g:=range e.flows[p.key]{if g==f||at.Before(g.born){continue};x,valid:=offset(p.seq,g.anchor);if valid&&x<g.high&&x+int64(p.size)>0{e.ambiguous("data_overlap",eventDATA,at,[]*flow{f,g});return nil}}}
+    if p.size>0{for _,g:=range e.flows[p.key]{if g==f||at.Before(g.born){continue};if intersectsGeneration(p.seq,p.size,g){e.ambiguous("data_overlap",eventDATA,at,[]*flow{f,g});return nil}}}
     if end>f.high{f.high=end};if p.fin{f.finEnd=end}
     if p.size==0{e.applyACKs(f);e.checkFlow(f);return nil}
     e.metrics["downlink_tcp_segments_created"]++

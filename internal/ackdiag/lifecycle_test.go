@@ -60,6 +60,19 @@ func TestRSTTimeSelectsOnlyExistingGeneration(t *testing.T){
     s.ackAt(1101,old.Add(time.Millisecond));s.ack(9101);assertState(t,s.e,200,200,0,true)
 }
 
+func TestCrossEpochPartialOverlapBeforeAnchor(t *testing.T){
+    for _,base:=range []uint32{1000,0xfffffff0}{
+        s:=sim(base+50);s.send(base+51,100);s.syn(base);s.send(base+1,200)
+        m:=s.e.Snapshot();if m["generation_ambiguity_data_overlap"]!=1||m["correlation_valid"]!=0||m["counter_consistency"]!=1{t.Fatal("interval start-only overlap check")}
+    }
+}
+
+func TestProvenanceOverflowIsExplicit(t *testing.T){
+    s:=sim(1000);s.send(1001,100)
+    for i:=0;i<MaxProvenance+1;i++{s.syn(1000)}
+    m:=s.e.Snapshot();if m["generation_evidence_count"]!=MaxProvenance||m["provenance_capacity_drops"]!=1||m["correlation_valid"]!=0{t.Fatal("silent evidence loss")}
+}
+
 func TestInvalidationReasonsAndSafeProvenance(t *testing.T){
     for reason:=lossTTL;reason<=lossOther;reason++{s:=sim(1000);s.send(1001,100);s.send(1001,100);s.ack(1051);s.advance(time.Second)
         f:=s.e.flows[s.key][0];s.e.invalidateRange(f,&f.ranges[1],reason,eventCAP,s.at);s.e.checkFlow(f)

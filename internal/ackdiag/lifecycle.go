@@ -27,6 +27,13 @@ const (
     eventCAP
 )
 const MaxProvenance = 256
+// Check BOTH endpoints of an arc. A DATA start before another generation's
+// SYN can still overlap that generation. Signed modular distance is safe here
+// within the documented half-space and IPv4 payload bound; no seq is exported.
+func intersectsGeneration(seq uint32, size int, g *flow)bool{
+    lo:=int64(int32(seq-g.anchor))
+    return lo<g.high&&lo+int64(size)>1
+}
 var ambiguityNames = [...]string{
     "same_isn_syn", "before_syn", "data_overlap", "ack_overlap",
     "ack_no_owner", "rst_no_owner", "rst_multiple_owners", "fin_without_ack",
@@ -122,6 +129,7 @@ func(e *Engine) lifecycleSnapshot(m map[string]uint64) {
     for _,n:=range ambiguityNames{m["generation_ambiguity_"+n]=e.metrics["generation_ambiguity_"+n]}
     for _,n:=range []string{"rst_unknown_flow_events","rst_attributed_events","expired_identity_tags","provenance_capacity_drops"}{m[n]=e.metrics[n]}
     m["rst_unacked_unique_bytes"]=0;m["acked_after_rst_bytes"]=0;m["replaced_unacked_unique_bytes"]=0
+    m["delivery_observation_complete"]=bit(m["outstanding_unique_bytes_current"]==0&&m["invalidated_unique_bytes"]==0)
     m["invalidation_records"]=0
     // Every invalid atom is retained and serialized with relative coordinates,
     // so no sampling/overwriting can hide a forced byte loss. Bound: MaxRecords.
