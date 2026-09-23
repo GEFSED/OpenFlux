@@ -13,7 +13,7 @@ import sys
 import tarfile
 import time
 import zipfile
-from probe_boundary import (ProbeFailure, restart_delta, manager_context, guard_context,
+from probe_boundary import (ProbeFailure, counter, restart_delta, manager_context, guard_context,
     make_boundary, remote_receipt, payload_digest, atomic_write, failure_fields,
     termination_fields, NOT_OBSERVED)
 
@@ -164,12 +164,25 @@ def run():
     boundary=None;cleanup_invocation=None
     REPORT.update(HARNESS_VALID=True, APPLICATION_FAILURE_CLASS=NOT_OBSERVED,
         HARNESS_FAILURE_CLASS=NOT_OBSERVED, BOOTSTRAP_COMPLETION_STATE=NOT_OBSERVED,
-        STARTUP_STAGE=NOT_OBSERVED,STARTUP_RESULT=NOT_OBSERVED,STARTUP_FAILURE_CLASS=NOT_OBSERVED)
+        STARTUP_STAGE=NOT_OBSERVED,STARTUP_RESULT=NOT_OBSERVED,STARTUP_FAILURE_CLASS=NOT_OBSERVED,
+        PROCESS_TERMINATION_OWNER=NOT_OBSERVED,PROCESS_EXIT_CODE=NOT_OBSERVED,
+        PROCESS_EXIT_SIGNAL=NOT_OBSERVED,SYSTEMD_RESULT=NOT_OBSERVED)
 
     def validate_counter(state):
         guard_context(boundary['context'], manager_context(cmd))
-        REPORT['AUTOMATIC_RESTART_DELTA']=restart_delta(boundary['baseline_nrestarts'],state['NRestarts'])
+        current=counter(state['NRestarts']);baseline=boundary['baseline_nrestarts']
+        REPORT['CURRENT_NRESTARTS']=current
+        REPORT['AUTOMATIC_RESTART_DELTA']=current-baseline if current>=baseline else NOT_OBSERVED
+        restart_delta(baseline,current)
         require(state['Restart']=='no','restart_guard_changed')
+
+    def record_termination(state):
+        if new_inv is not None and state['InvocationID']==new_inv:
+            REPORT.update(termination_fields(state,cleanup_invocation,REPORT['BOOTSTRAP_COMPLETION_STATE']))
+        else:
+            # Do not relabel a historical inactive unit's exit as this attempt.
+            REPORT.update(PROCESS_TERMINATION_OWNER=NOT_OBSERVED,PROCESS_EXIT_CODE=NOT_OBSERVED,
+                PROCESS_EXIT_SIGNAL=NOT_OBSERVED,SYSTEMD_RESULT=NOT_OBSERVED)
 
     def bind_scope(sample,state):
         nonlocal new_inv,new_pid,grounded
@@ -368,7 +381,7 @@ def run():
                 if dir_created:DROP.parent.rmdir()
                 cmd('systemctl','daemon-reload')
             final=show(UNIT)
-            REPORT.update(termination_fields(final,cleanup_invocation,REPORT['BOOTSTRAP_COMPLETION_STATE']))
+            record_termination(final)
             require(final['DropInPaths']==before[UNIT]['DropInPaths'] and final['Restart']==before[UNIT]['Restart'] and final['RestartUSec']==before[UNIT]['RestartUSec'],'original_policy_not_restored')
             require(exec_args(UNIT)==(str(PROD),[str(PROD)]+ARGS),'original_execstart_not_restored')
             if retained:
@@ -380,7 +393,7 @@ def run():
                 DIAG.unlink();bin_created=False
             time.sleep(3)
             final_all=integrity();final=final_all[UNIT]
-            REPORT.update(termination_fields(final,cleanup_invocation,REPORT['BOOTSTRAP_COMPLETION_STATE']))
+            record_termination(final)
             if not retained:require(final['MainPID']=='0' and no_job(),'retry_loop_resumed')
             else:require(final['MainPID']==new_pid and final['InvocationID']==new_inv,'retained_process_changed_after_restore')
             if boundary is not None:

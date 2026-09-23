@@ -169,6 +169,7 @@ class ActualWorkerTests(unittest.TestCase):
         sim,r,_=self.simulate('autorestart')
         self.assertEqual(1,sim.starts);self.assertFalse(r['HARNESS_VALID'])
         self.assertEqual('AUTOMATIC_RESTART_OBSERVED',r['HARNESS_FAILURE_CLASS'])
+        self.assertEqual(1,r['AUTOMATIC_RESTART_DELTA'])
         self.assertEqual('NOT_OBSERVED',r['APPLICATION_FAILURE_CLASS'])
         self.assertEqual('HARNESS_CLEANUP',r['PROCESS_TERMINATION_OWNER'])
         self.assertEqual('PASS',r['CONFIGURATION_RESTORATION'])
@@ -178,6 +179,7 @@ class ActualWorkerTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 sim,r,_=self.simulate(mode)
                 self.assertEqual(1,sim.starts);self.assertEqual(reason,r['HARNESS_FAILURE_CLASS'])
+                if mode=='regression':self.assertEqual('NOT_OBSERVED',r['AUTOMATIC_RESTART_DELTA'])
 
     def test_starts_once_and_retains_same_successful_process(self):
         sim,r,_=self.simulate('success')
@@ -208,6 +210,8 @@ class ActualWorkerTests(unittest.TestCase):
             sim,r,_=self.simulate(mode)
             self.assertEqual(0,sim.starts);self.assertEqual(0,sim.stops)
             self.assertFalse(r['HARNESS_VALID']);self.assertEqual('PASS',r['CONFIGURATION_RESTORATION'])
+            self.assertEqual('NOT_OBSERVED',r['PROCESS_TERMINATION_OWNER'])
+            self.assertEqual('NOT_OBSERVED',r['PROCESS_EXIT_CODE'])
 
     def test_scope_write_failure_after_start_preserves_original_boundary(self):
         sim,r,files=self.simulate('scope_write')
