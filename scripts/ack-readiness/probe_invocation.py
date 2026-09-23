@@ -116,6 +116,9 @@ class InvocationEpoch:
             pid=state.get('MainPID','0')
             stamp=state.get('ExecMainStartTimestampMonotonic')
             if not str(stamp or '').isdigit() or int(stamp)<self.boundary['scope']['start_monotonic_us']:
+                # systemd can publish a new activation ID before spawning
+                # ExecStart. It is not yet a post-start counter epoch.
+                if self.authorized is None and pid=='0' and state.get('ActiveState')=='activating':return
                 fail('EXEC_START_BOUNDARY_MISMATCH')
             if self.authorized is None:
                 # Establish only after the process has actually been spawned;

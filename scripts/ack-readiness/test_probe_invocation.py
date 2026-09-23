@@ -130,3 +130,11 @@ class InvocationTests(unittest.TestCase):
     def test_historical_reset_does_not_discard_durable_boundary(self):
         b=boundary();original=copy.deepcopy(b);e=InvocationEpoch(b);e.consume_start()
         e.observe(state(0),C,rows());e.finish();self.assertEqual(original,b)
+
+    def test_new_invocation_before_exec_spawn_is_pending_not_failure(self):
+        e=InvocationEpoch(boundary());e.consume_start()
+        pending=state(541,pid='0',stamp='0');pending.update(ActiveState='activating',ExecMainPID='0')
+        e.observe(pending,C,[])
+        self.assertIsNone(e.post_baseline)
+        e.observe(state(0),C,rows());e.finish()
+        self.assertEqual(0,e.post_baseline)
