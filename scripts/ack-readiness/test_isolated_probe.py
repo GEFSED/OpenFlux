@@ -24,6 +24,7 @@ class Simulation:
         self.root=Path(root);self.mode=mode;self.baseline=baseline
         self.now=1.;self.started_at=None;self.starts=0;self.stops=0;self.reloaded=0
         self.inv='c'*32;self.old='b'*32;self.pid='1234';self.current=baseline
+        self.assertion_injected=False
         self.binary=b'ELF-fixture-not-executable';self.prod=self.root/'production'
         self.prod.write_bytes(b'production fixture')
         self.diag=self.root/'openflux-bootstrap-schema6-34ba35a'
@@ -70,6 +71,7 @@ class Simulation:
         assert self.starts==0
         assert (self.evidence.root/'boundary.json').exists()
         assert (self.evidence.root/'start_intent.json').exists()
+        if self.mode=='start_control_failure':raise OSError('private control error')
         self.starts+=1;self.started_at=self.now
         owner=self
         class Process:
@@ -79,7 +81,9 @@ class Simulation:
         return Process()
 
     def observe(self,state,expected):
-        if self.mode=='assertion' and self.elapsed()>.15:raise AssertionError('secret-bearing underlying error must not escape')
+        if self.mode in ('assertion','cleanup_failure') and self.elapsed()>.15 and not self.assertion_injected:
+            self.assertion_injected=True
+            raise AssertionError('secret-bearing underlying error must not escape')
         return dict(state=state,proc_exists=state['MainPID']!='0',cmdline_read=state['MainPID']!='0',
             coherent=True,exe_match=True,start_ticks='150',exe_class='EXPECTED',raw=b'\0'.join(expected)+b'\0',argv=expected,read_error=None)
 
@@ -102,6 +106,7 @@ class Simulation:
             self.reloaded+=1;return ''
         if args[:2]==('systemctl','stop'):
             assert args[2]==probe.UNIT
+            if self.mode=='cleanup_failure':raise ProbeFailure('CONTROL_COMMAND_FAILED','OPERATOR_CONTROL_FAILURE')
             self.stops+=1;self.cleanup_done=True;return ''
         if args[0]=='journalctl':
             assert '--all' in args
@@ -141,7 +146,7 @@ class ActualWorkerTests(unittest.TestCase):
     def simulate(self,mode='failure',baseline=541):
         with tempfile.TemporaryDirectory() as d:
             sim=Simulation(d,mode,baseline);r=sim.run()
-            self.assertFalse(sim.drop.exists())
+            if mode!='cleanup_failure':self.assertFalse(sim.drop.exists())
             self.assertTrue(sim.hold.exists())
             self.assertEqual(b'production fixture',sim.prod.read_bytes())
             self.assertLessEqual(sim.starts,1)
@@ -222,3 +227,18 @@ class ActualWorkerTests(unittest.TestCase):
         sim,r,_=self.simulate('external_sigterm')
         self.assertEqual(0,sim.stops);self.assertEqual('EXTERNAL_OR_UNKNOWN_SIGNAL',r['PROCESS_TERMINATION_OWNER'])
         self.assertEqual('SIGTERM',r['PROCESS_EXIT_SIGNAL'])
+
+    def test_cleanup_failure_keeps_primary_failure(self):
+        sim,r,_=self.simulate('cleanup_failure')
+        self.assertEqual(1,sim.starts)
+        self.assertEqual('HARNESS_VALIDATION_FAILURE',r['ERROR_CATEGORY'])
+        self.assertEqual('CLEANUP_FAILURE',r['CLEANUP_ERROR']['ERROR_CATEGORY'])
+        self.assertEqual('BLOCKED',r['CONFIGURATION_RESTORATION'])
+
+    def test_start_control_failure_never_retries(self):
+        sim,r,files=self.simulate('start_control_failure')
+        self.assertEqual(0,sim.starts)
+        self.assertEqual(0,r['POST_START_COUNT'])
+        self.assertEqual('OPERATOR_CONTROL_FAILURE',r['ERROR_CATEGORY'])
+        self.assertEqual('START_CONTROL_FAILED',r['CONTROL_FAILURE_CLASS'])
+        self.assertIn('start_intent.json',files)

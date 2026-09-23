@@ -163,7 +163,8 @@ def run():
     last_records=[];last_valid=None;proof=None
     boundary=None;cleanup_invocation=None
     REPORT.update(HARNESS_VALID=True, APPLICATION_FAILURE_CLASS=NOT_OBSERVED,
-        HARNESS_FAILURE_CLASS=NOT_OBSERVED, BOOTSTRAP_COMPLETION_STATE=NOT_OBSERVED)
+        HARNESS_FAILURE_CLASS=NOT_OBSERVED, BOOTSTRAP_COMPLETION_STATE=NOT_OBSERVED,
+        STARTUP_STAGE=NOT_OBSERVED,STARTUP_RESULT=NOT_OBSERVED,STARTUP_FAILURE_CLASS=NOT_OBSERVED)
 
     def validate_counter(state):
         guard_context(boundary['context'], manager_context(cmd))
@@ -276,6 +277,8 @@ def run():
         try:
             start_process=subprocess.Popen(['systemctl','start',UNIT],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         except OSError:
+            REPORT['POST_START_COUNT']=0
+            REPORT['START_INTENT_CONSUMED']=True
             raise ProbeFailure('START_CONTROL_FAILED','OPERATOR_CONTROL_FAILURE') from None
         emit('single_start',{'POST_START_COUNT':1,'UTC':REPORT['POST_START_TIMESTAMP_UTC'],'Restart':'no','startup_timeout_seconds':90})
         stable_id=None;stable_since=None;last_journal=0;failed=False;succeeded=False
@@ -395,11 +398,15 @@ def interrupted(signum,frame):raise ProbeFailure('PROBE_INTERRUPTED','OPERATOR_C
 if __name__=='__main__':
     os.umask(0o077)
     for sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)
+    exit_code=0
     try:
         if sys.argv[1]=='ground':
             before,_=ground();emit('ground_only',{'SOURCE_HEAD':HEAD,'SCHEMA_VERSION':6,'DIAGNOSTIC_BINARY_SHA256':BIN_SHA,'PRODUCTION_SHA256':PROD_SHA,'SOURCE_GROUNDING':'PASS','VALIDATOR_SOURCE_GROUNDING':'PASS','states':before})
-        elif sys.argv[1]=='run-with-durable-controller':run()
+        elif sys.argv[1]=='run-with-durable-controller':
+            run()
+            exit_code=0 if REPORT.get('RESULT')=='User3IsolatedSchema6StructureProbeSucceeded' and REPORT.get('CONFIGURATION_RESTORATION')=='PASS' else 1
         else:raise Guard('invalid_mode')
     except BaseException as error:
         REPORT.update(RESULT='BlockedBeforeOneShotProbe',**failure_fields(error))
         save();emit('blocked',REPORT);raise SystemExit(1)
+    raise SystemExit(exit_code)
