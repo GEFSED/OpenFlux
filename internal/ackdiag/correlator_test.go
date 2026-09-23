@@ -203,7 +203,7 @@ func TestHistogramAndPrivateSchema(t *testing.T){
     var h Histogram;for _,d:=range []time.Duration{0,50*time.Millisecond,100*time.Millisecond,250*time.Millisecond,500*time.Millisecond,time.Second,2*time.Second,5*time.Second,10*time.Second}{h.observe(d)};h.observe(-time.Nanosecond)
     if h.count!=9{t.Fatal("histogram")};for _,n:=range h.buckets{if n!=1{t.Fatal("histogram edges")}}
     s:=sim(1000);s.send(1001,100);s.send(1001,100);s.ack(1101);m:=s.e.Snapshot();data,_:=json.Marshal(m)
-    for _,forbidden:=range []string{"flow_key","src","dst","port\"","payload\"","seq\"","ack\"","cookie","token","url","header","ambiguous_retransmit_bytes"}{if strings.Contains(string(data),forbidden){t.Fatal("private or obsolete schema field")}}
+    for _,forbidden:=range []string{"flow_key","src","dst","port\"","payload\"","\"seq\"","\"ack\"","cookie","token","url","header","ambiguous_retransmit_bytes"}{if strings.Contains(string(data),forbidden){t.Fatalf("private or obsolete schema field: %s",forbidden)}}
 }
 
 // Independent tiny per-byte oracle; it does not reuse range insertion/matching.

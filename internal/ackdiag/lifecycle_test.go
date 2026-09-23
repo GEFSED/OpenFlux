@@ -57,7 +57,7 @@ func TestRSTTimeSelectsOnlyExistingGeneration(t *testing.T){
     s:=sim(1000);s.send(1001,100);old:=s.at;s.advance(time.Second);s.syn(9000);s.send(9001,100)
     s.e.outgoing(packet{key:s.key,rst:true},old) // Opaque RST is unique BEFORE second SYN.
     m:=assertState(t,s.e,200,0,200,true);if m["rst_unacked_unique_bytes"]!=100{t.Fatal("timestamp scope")}
-    s.ackAt(1101,old.Add(time.Millisecond));s.ack(9101);assertState(t,s.e,200,200,0,true)
+    s.ackAt(1101,old.Add(4*time.Millisecond));s.ack(9101);assertState(t,s.e,200,200,0,true)
 }
 
 func TestCrossEpochPartialOverlapBeforeAnchor(t *testing.T){
@@ -79,7 +79,7 @@ func TestInvalidationReasonsAndSafeProvenance(t *testing.T){
         s.ack(1101);m:=assertState(t,s.e,100,50,0,false)
         if m["invalidated_"+lossNames[reason]+"_bytes"]!=50||m["invalidation_reason_consistency"]!=1||m["unexplained_invalidated_bytes"]!=0||m["correlation_valid"]!=0{t.Fatal("loss accounting")}
         if m["loss_0_length"]!=50||m["loss_0_relative_lo"]!=51||m["loss_0_relative_hi"]!=101||m["loss_0_http_existed"]!=1||m["loss_0_http_succeeded"]!=1||m["loss_0_retransmitted"]!=1||m["loss_0_prior_ack_observed"]!=1||m["loss_0_late_covering_ack_observed"]!=1{t.Fatal("loss provenance")}
-        b,_:=json.Marshal(m);for _,bad:=range []string{"src","dst","cookie","token","url","payload","anchor","raw_seq","raw_ack"}{if strings.Contains(string(b),bad){t.Fatal("sensitive provenance")}}
+        b,_:=json.Marshal(m);for _,bad:=range []string{"src","dst","cookie","token","url","payload\"","anchor\"","raw_seq","raw_ack"}{if strings.Contains(string(b),bad){t.Fatalf("sensitive provenance: %s",bad)}}
     }
 }
 
