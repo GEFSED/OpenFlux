@@ -19,8 +19,8 @@ BASE = '081d214300c1067f17f6c0d02f84a8491f1a7b98'
 HEAD = os.environ.get('ACK_DIAGNOSTIC_SOURCE_HEAD', '')
 ORIGINAL_HASH = '08fcf4020cd3c7274c7abd78fe386b40d2fcf8515082d3475ced324ad109217c'
 DIAG_HASH = os.environ.get('ACK_DIAGNOSTIC_BINARY_SHA256', '')
-# Future separately authorized deployment supplies the verified artifact archive
-# digest. Binary/source pins below are fixed; this task never invokes install.
+# A future separately authorized deployment supplies all three verified pins.
+# This local/CI task never invokes install or switch.
 ZIP_HASH = os.environ.get('ACK_ARTIFACT_ZIP_SHA256', '')
 ROOT = Path('/root/openflux')
 EVIDENCE = Path('/tmp/openflux-ack-schema4-evidence')
@@ -183,7 +183,8 @@ def install():
     with zipfile.ZipFile(ARCHIVE) as archive:
         manifest = json.loads(archive.read('source-manifest.json'))
         require(manifest['production_base'] == BASE and manifest['diagnostic_commit'] == HEAD and
-                manifest['diagnostics_only_source_verification'] == 'PASS', 'manifest_mismatch')
+                manifest['diagnostics_only_source_verification'] == 'PASS' and
+                manifest.get('startup_contract') == 4, 'manifest_mismatch')
         build_info = archive.read('diagnostic-build-info.txt').decode('utf-8')
         require('vcs.revision=' + HEAD in build_info and 'vcs.modified=false' in build_info and
                 'GOOS=linux' in build_info and 'GOARCH=amd64' in build_info, 'build_info_mismatch')
