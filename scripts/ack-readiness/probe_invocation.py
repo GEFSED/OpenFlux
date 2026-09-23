@@ -91,6 +91,8 @@ class InvocationEpoch:
                 self.add_invocation(row.get('_SYSTEMD_INVOCATION_ID'))
             elif manager:
                 ident=row.get('INVOCATION_ID')
+                if ident and ident!=self.boundary['baseline_invocation']:
+                    self.add_invocation(ident)
                 # A stop record can refer to the historical invocation. A start
                 # record cannot. Only metadata from trusted PID1 is authoritative.
                 msg=row.get('MESSAGE_ID')

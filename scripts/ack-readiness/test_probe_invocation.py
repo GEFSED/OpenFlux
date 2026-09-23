@@ -56,6 +56,11 @@ class InvocationTests(unittest.TestCase):
         with self.assertRaisesRegex(ProbeFailure,'ADDITIONAL_INVOCATION_OBSERVED'):
             e.observe(state(),C,rows()+[row(J,3)])
 
+    def test_second_invocation_only_in_manager_failure_metadata(self):
+        e=self.epoch();r=row(J,3,'started');r['MESSAGE_ID']='failed-event'
+        with self.assertRaisesRegex(ProbeFailure,'ADDITIONAL_INVOCATION_OBSERVED'):
+            e.observe(state(),C,rows()+[r])
+
     def test_two_started_events_without_invocation_metadata_fail(self):
         e=self.epoch();extra=row(J,3,'started');extra.pop('INVOCATION_ID')
         with self.assertRaisesRegex(ProbeFailure,'ADDITIONAL_INVOCATION_OBSERVED'):

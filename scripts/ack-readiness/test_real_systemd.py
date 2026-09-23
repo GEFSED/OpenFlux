@@ -13,7 +13,7 @@ class DisposableRealSystemdTests(unittest.TestCase):
         output=Path(os.environ['RUNNER_TEMP'])/'real-systemd-evidence.json'
         p=subprocess.run(['sudo','--preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT',sys.executable,
             str(Path(__file__).with_name('disposable_systemd.py')),str(output)],capture_output=True,text=True,timeout=180)
-        self.assertEqual(0,p.returncode,p.stderr[-6000:])
+        self.assertEqual(0,p.returncode,p.stderr[-4000:]+(output.read_text() if output.exists() else 'NO_EVIDENCE'))
         report=json.loads(output.read_text())
         self.assertEqual('PASS',report['RESULT'])
         self.assertEqual('PASS',report['DISPOSABLE_CLEANUP'])

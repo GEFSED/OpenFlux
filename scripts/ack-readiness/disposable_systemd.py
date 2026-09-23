@@ -24,6 +24,8 @@ def run(output):
     unit='codex-oneshot-test-'+ident+'.service'
     root=Path('/run')/('codex-oneshot-test-'+ident)
     conf=Path('/run/systemd/system')/unit
+    anchor_name='codex-oneshot-test-'+ident+'.target'
+    anchor=Path('/run/systemd/system')/anchor_name
     drop=Path(str(conf)+'.d')
     root.mkdir(mode=0o755)
     evidence={'cases':{},'integration':{},'disposable_unit':unit}
@@ -96,7 +98,12 @@ raise SystemExit(1)
 ''')
         conf.write_text('[Unit]\nDescription=Disposable one-shot lifecycle fixture\nStartLimitIntervalSec=0\n'
             '[Service]\nType=simple\nExecStart=/usr/bin/python3 '+str(root/'fixture.py')+'\nRestart=always\nRestartSec=100ms\n')
+        # An active target's Wants reference keeps this unit loaded after stop.
+        # Without it GC can discard the object before we observe deferred flush.
+        anchor.write_text('[Unit]\nDescription=Disposable reference anchor\nWants='+unit+'\n')
+        mode('hold')
         ctl('daemon-reload')
+        command('systemctl','start',anchor_name)
         s=seed();n=int(s['NRestarts']);assert n>0
         ctl('daemon-reload');assert int(state()['NRestarts'])==n
         evidence['cases']['daemon_reload_active']=[n,int(state()['NRestarts'])]
@@ -146,6 +153,7 @@ raise SystemExit(1)
         ctl('stop');n=int(state()['NRestarts']);ctl('daemon-reload')
         assert int(state()['NRestarts'])==n
         evidence['cases']['daemon_reload_inactive']=[n,n]
+        command('systemctl','stop',anchor_name);anchor.unlink()
         saved=conf.read_text();conf.unlink();drop.rmdir();ctl('daemon-reload')
         # Unit GC is asynchronous; a freshly loaded object has no restart history.
         time.sleep(2);conf.write_text(saved);ctl('daemon-reload');mode('hold');ctl('start')
@@ -155,6 +163,8 @@ raise SystemExit(1)
         evidence['RESULT']='PASS'
     finally:
         ctl('stop')
+        command('systemctl','stop',anchor_name)
+        if anchor.exists():anchor.unlink()
         if conf.exists():conf.unlink()
         if drop.exists():shutil.rmtree(drop)
         ctl('daemon-reload')
