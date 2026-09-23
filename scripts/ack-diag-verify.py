@@ -26,6 +26,7 @@ allowed={
     'scripts/ack-readiness/bootstrap_simulated_invocation.py',
     'docs/BOOTSTRAP_RESPONSE_OBSERVABILITY.md',
     'mobile/go.mod','mobile/go.sum',
+    'scripts/check-mobile-dependency-selection.py',
 }
 assert not subprocess.check_output(['git','status','--porcelain']).strip(), 'dirty_source'
 assert changed_since(FROZEN)<=allowed, sorted(changed_since(FROZEN)-allowed)
@@ -42,14 +43,14 @@ for path in files:
     if path not in ('transport/yandex/vyandex.go','mobile/go.mod','mobile/go.sum'):
         assert Path(path).read_bytes()==blob(path),('frozen_source_changed',path)
 
-# Only dependency bookkeeping for the existing root-pinned HTML tokenizer.
-# No version upgrade, Android source change, or mobile networking change.
-dep='\tgolang.org/x/net v0.55.0 // indirect\n'
+# Only dependency bookkeeping for the HTML tokenizer. The separate Linux
+# graph check proves v0.59.0 was already selected by the original mobile graph.
+dep='\tgolang.org/x/net v0.59.0 // indirect\n'
 mobile_mod=Path('mobile/go.mod').read_text()
-assert mobile_mod.count(dep)==1 and dep in blob('go.mod').decode()
+assert mobile_mod.count(dep)==1
 assert mobile_mod.replace(dep,'').encode()==blob('mobile/go.mod')
-checksums=''.join(line+'\n' for line in blob('go.sum').decode().splitlines()
-                  if line.startswith('golang.org/x/net v0.55.0'))
+checksums=('golang.org/x/net v0.59.0 h1:5zfYln+w5XCxwrnMMJPufRgNoXEaGxl0wo5GqPXyues=\n'
+           'golang.org/x/net v0.59.0/go.mod h1:2DA/G1UfVbCpQPeWTmMPGY7Cs2PkBkwu743bVX5PIVg=\n')
 assert len(checksums.splitlines())==2
 mobile_sum=Path('mobile/go.sum').read_text()
 assert mobile_sum.count(checksums)==1

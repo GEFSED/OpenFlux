@@ -114,11 +114,16 @@ authorization file has instrumentation additions, but its request, redirect,
 status acceptance, parser, retry and networking implementation is unchanged.
 No regex/read-error/status fix is included.
 
-The separate mobile module adds only the indirect x/net v0.55.0 declaration and
-two checksums already pinned by the frozen root module, because the diagnostic
-package now imports its HTML tokenizer. The verifier checks these three exact
-lines separately; no library upgrade or Android/application source change is
-permitted. Linux CI caught the missing module metadata before this correction.
+The separate mobile module adds only the indirect x/net v0.59.0 declaration and
+two checksums for the version already selected by its existing module graph.
+The root module remains pinned to v0.55.0. The diagnostic now imports the HTML
+tokenizer; the independent mobile tool dependencies select a different version.
+Linux CI compares the complete selected dependency graph of the original and
+current mobile module in an isolated temporary workspace and requires equality.
+The source verifier checks the three exact bookkeeping lines separately. No
+Android/application source change or dependency version upgrade is permitted.
+Linux CI caught the missing module metadata before this correction; unrelated
+tidy removals are deliberately not applied.
 
 Fixtures cover all twenty requested categories plus invalid JSON, non-2xx with
 config, multiple matches and bounded scanning. Loopback integration invokes the
