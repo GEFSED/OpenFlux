@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import uuid
 
 NOT_OBSERVED = 'NOT_OBSERVED'
 
@@ -35,9 +36,9 @@ def counter(value):
 def restart_delta(baseline, current):
     before, after = counter(baseline), counter(current)
     if after < before:
-        raise ProbeFailure('NRESTARTS_BASELINE_INVALIDATED')
+        raise ProbeFailure('POST_START_NRESTARTS_EPOCH_INVALIDATED')
     if after > before:
-        raise ProbeFailure('AUTOMATIC_RESTART_OBSERVED')
+        raise ProbeFailure('AUTOMATIC_RESTART_COUNTER_ADVANCED')
     return after - before
 
 
@@ -83,7 +84,7 @@ def argv_identity(tokens):
 
 def make_boundary(scope, state, context, expected, utc):
     validate_context(context)
-    value = dict(version=1, scope=dict(scope), pre_start_utc=utc, target_unit=scope['unit'],
+    value = dict(version=2, operation_id=uuid.uuid4().hex, expected_argv=[t.decode('utf-8') for t in expected], scope=dict(scope), pre_start_utc=utc, target_unit=scope['unit'],
         baseline_nrestarts=counter(state['NRestarts']), baseline_mainpid=state['MainPID'],
         baseline_invocation=state.get('InvocationID', ''), expected_executable=scope['exe'],
         expected_argv_identity=argv_identity(expected), context=dict(context))
@@ -92,10 +93,13 @@ def make_boundary(scope, state, context, expected, utc):
 
 
 def validate_boundary(v):
-    keys = {'version', 'scope', 'pre_start_utc', 'target_unit', 'baseline_nrestarts',
+    keys = {'version', 'operation_id', 'expected_argv', 'scope', 'pre_start_utc', 'target_unit', 'baseline_nrestarts',
             'baseline_mainpid', 'baseline_invocation', 'expected_executable', 'expected_argv_identity', 'context'}
     try:
-        assert type(v) is dict and set(v) == keys and type(v['version']) is int and v['version'] == 1
+        assert type(v) is dict and set(v) == keys and type(v['version']) is int and v['version'] == 2
+        assert re.fullmatch('[a-f0-9]{32}', v['operation_id'])
+        assert type(v['expected_argv']) is list
+        assert argv_identity([x.encode('utf-8') for x in v['expected_argv']]) == v['expected_argv_identity']
         validate_context(v['context'])
         assert type(v['baseline_nrestarts']) is int
         counter(v['baseline_nrestarts'])
@@ -188,9 +192,20 @@ class LocalEvidence:
                 or not re.fullmatch('[a-f0-9]{32}', payload.get('invocation', ''))
                 or payload['invocation'] == boundary['baseline_invocation']):
                 raise ProbeFailure('SCOPE_INVALID')
+        elif name == 'authorized_invocation':
+            boundary = json.loads((self.root / 'boundary.json').read_text())
+            if (set(payload) != {'operation_id','invocation','pid','exec_start_monotonic_us','post_start_nrestarts'}
+                or payload['operation_id'] != boundary['operation_id']
+                or not re.fullmatch('[a-f0-9]{32}', payload.get('invocation',''))
+                or payload['invocation'] == boundary['baseline_invocation']
+                or not re.fullmatch('[1-9][0-9]*', payload.get('pid',''))
+                or type(payload['exec_start_monotonic_us']) is not int
+                or payload['exec_start_monotonic_us'] < boundary['scope']['start_monotonic_us']):
+                raise ProbeFailure('AUTHORIZED_INVOCATION_INVALID')
+            counter(payload['post_start_nrestarts'])
         elif name == 'start_intent':
             boundary = json.loads((self.root / 'boundary.json').read_text())
-            if payload != {'boundary_sha256': payload_digest(boundary), 'maximum_start_count': 1}:
+            if payload != {'boundary_sha256': payload_digest(boundary), 'maximum_start_count': 1, 'operation_id': boundary['operation_id']}:
                 raise ProbeFailure('START_INTENT_INVALID')
         else:
             raise ProbeFailure('UNKNOWN_EVIDENCE_KIND')
@@ -231,10 +246,10 @@ def termination_fields(state, cleanup_invocation=None, completion=NOT_OBSERVED):
     if not exited:
         return result
     if code == '1':
-        result.update(PROCESS_TERMINATION_OWNER='APPLICATION_EXIT', PROCESS_EXIT_CODE=int(status))
+        result.update(PROCESS_TERMINATION_OWNER='APPLICATION', PROCESS_EXIT_CODE=int(status))
     elif code in ('2', '3'):
         result['PROCESS_EXIT_SIGNAL'] = signal.Signals(int(status)).name if int(status) in signal.valid_signals() else 'OTHER_SIGNAL'
         # A natural exit racing with stop is not falsely attributed to cleanup.
         owned = cleanup_invocation and cleanup_invocation == state.get('InvocationID') and int(status) in (15, 9)
-        result['PROCESS_TERMINATION_OWNER'] = 'HARNESS_CLEANUP' if owned else 'EXTERNAL_OR_UNKNOWN_SIGNAL'
+        result['PROCESS_TERMINATION_OWNER'] = 'HARNESS_CLEANUP' if owned else 'UNKNOWN'
     return result

@@ -15,13 +15,14 @@ from unittest.mock import patch
 import isolated_probe as probe
 from probe_boundary import LocalEvidence, ProbeFailure
 from test_probe_boundary import CONTEXT
+from probe_invocation import UNIT_STARTED
 from test_structure import fixture, sequence
 from test_startup import lines
 
 
 class Simulation:
-    def __init__(self, root, mode='failure', baseline=541):
-        self.root=Path(root);self.mode=mode;self.baseline=baseline
+    def __init__(self, root, mode='failure', baseline=541, post=None):
+        self.root=Path(root);self.mode=mode;self.baseline=baseline;self.post=baseline if post is None else post
         self.now=1.;self.started_at=None;self.starts=0;self.stops=0;self.reloaded=0
         self.inv='c'*32;self.old='b'*32;self.pid='1234';self.current=baseline
         self.assertion_injected=False
@@ -40,13 +41,14 @@ class Simulation:
     def state(self):
         dead=self.cleanup_done or (self.starts and self.mode not in ('success','assertion','autorestart','regression','boot','manager','scope_write') and self.elapsed()>=.8)
         if self.starts and self.elapsed()>.15:
-            if self.mode=='autorestart':self.current=self.baseline+1
-            if self.mode=='regression':self.current=max(0,self.baseline-1)
+            if self.mode=='autorestart':self.current=self.post+1
+            if self.mode=='regression':self.current=max(0,self.post-1)
         s=dict(Id=probe.UNIT,MainPID=self.pid if self.starts and not dead else '0',
             ActiveState='active' if self.starts and not dead else 'inactive',
             SubState='running' if self.starts and not dead else 'dead',
             InvocationID=self.inv if self.starts else self.old,NRestarts=str(self.current),
             Restart='no',RestartUSec='5s',DropInPaths=str(self.hold)+(' '+str(self.drop) if self.drop.exists() else ''),
+            ExecMainPID=self.pid if self.starts else '0',ExecMainStartTimestampMonotonic=str(int(self.started_at*1e6)+1) if self.starts else '0',
             ExecMainCode='2' if self.cleanup_done else '1',ExecMainStatus='15' if self.cleanup_done else '1',
             Result='success' if self.cleanup_done else 'exit-code')
         if dead and self.mode=='external_sigterm':s.update(ExecMainCode='2',ExecMainStatus='15',Result='signal')
@@ -72,7 +74,7 @@ class Simulation:
         assert (self.evidence.root/'boundary.json').exists()
         assert (self.evidence.root/'start_intent.json').exists()
         if self.mode=='start_control_failure':raise OSError('private control error')
-        self.starts+=1;self.started_at=self.now
+        self.starts+=1;self.started_at=self.now;self.current=self.post
         owner=self
         class Process:
             returncode=0
@@ -88,6 +90,7 @@ class Simulation:
             coherent=True,exe_match=True,start_ticks='150',exe_class='EXPECTED',raw=b'\0'.join(expected)+b'\0',argv=expected,read_error=None)
 
     def journal(self):
+        if not self.starts:return ''
         # Only complete schema records. The process state controls exit timing.
         if self.elapsed()<.4:texts=lines('missing',6)[:3]
         elif self.mode in ('early_exit','external_sigterm'):texts=lines('missing',6)[:3]
@@ -99,6 +102,9 @@ class Simulation:
                 __MONOTONIC_TIMESTAMP=str(b['scope']['start_monotonic_us']+i+1),__REALTIME_TIMESTAMP=str(1000000+i),
                 _BOOT_ID=CONTEXT['boot_id'],_PID=self.pid,_EXE=str(self.diag),_SYSTEMD_UNIT=probe.UNIT,
                 _SYSTEMD_INVOCATION_ID=self.inv,_TRANSPORT='stdout',_UID='0',_GID='0'))
+        rows.insert(0,dict(__CURSOR='systemd-started',__MONOTONIC_TIMESTAMP=str(b['scope']['start_monotonic_us']+1),
+            __REALTIME_TIMESTAMP='1000000',_BOOT_ID=CONTEXT['boot_id'],_PID='1',_COMM='systemd',
+            _EXE='/usr/lib/systemd/systemd',UNIT=probe.UNIT,INVOCATION_ID=self.inv,MESSAGE_ID=UNIT_STARTED))
         return '\n'.join(map(json.dumps,rows))
 
     def cmd(self,*args,**kwargs):
@@ -109,8 +115,9 @@ class Simulation:
             if self.mode=='cleanup_failure':raise ProbeFailure('CONTROL_COMMAND_FAILED','OPERATOR_CONTROL_FAILURE')
             self.stops+=1;self.cleanup_done=True;return ''
         if args[0]=='journalctl':
+            if args==('journalctl','--sync'):return ''
             assert '--all' in args
-            if '-n' in args:return '{}' if self.mode=='cursor_missing' else json.dumps({'__CURSOR':'original-cursor'})
+            if '-n' in args:return '{}' if self.mode=='cursor_missing' else json.dumps({'__CURSOR':'original-cursor','__MONOTONIC_TIMESTAMP':'1000000'})
             assert '--after-cursor=original-cursor' in args
             return self.journal()
         raise AssertionError('unexpected command')
@@ -143,9 +150,9 @@ class Simulation:
 
 
 class ActualWorkerTests(unittest.TestCase):
-    def simulate(self,mode='failure',baseline=541):
+    def simulate(self,mode='failure',baseline=541,post=None):
         with tempfile.TemporaryDirectory() as d:
-            sim=Simulation(d,mode,baseline);r=sim.run()
+            sim=Simulation(d,mode,baseline,post);r=sim.run()
             if mode!='cleanup_failure':self.assertFalse(sim.drop.exists())
             self.assertTrue(sim.hold.exists())
             self.assertEqual(b'production fixture',sim.prod.read_bytes())
@@ -158,7 +165,7 @@ class ActualWorkerTests(unittest.TestCase):
         self.assertTrue(r['HARNESS_VALID']);self.assertEqual(0,r['AUTOMATIC_RESTART_DELTA'])
         self.assertEqual('APPLICATION_STARTUP_FAILURE',r['ERROR_CATEGORY'])
         self.assertEqual('auth_client_config_missing',r['APPLICATION_FAILURE_CLASS'])
-        self.assertEqual('APPLICATION_EXIT',r['PROCESS_TERMINATION_OWNER'])
+        self.assertEqual('APPLICATION',r['PROCESS_TERMINATION_OWNER'])
         self.assertEqual(1,r['PROCESS_EXIT_CODE']);self.assertEqual('FAILED',r['BOOTSTRAP_COMPLETION_STATE'])
         self.assertTrue(r['BOOTSTRAP_RECORDS']);self.assertEqual('PASS',r['CONFIGURATION_RESTORATION'])
         self.assertEqual('original-cursor',files['boundary.json']['scope']['cursor'])
@@ -168,14 +175,14 @@ class ActualWorkerTests(unittest.TestCase):
     def test_full_mock_automatic_restart_negative(self):
         sim,r,_=self.simulate('autorestart')
         self.assertEqual(1,sim.starts);self.assertFalse(r['HARNESS_VALID'])
-        self.assertEqual('AUTOMATIC_RESTART_OBSERVED',r['HARNESS_FAILURE_CLASS'])
+        self.assertEqual('AUTOMATIC_RESTART_COUNTER_ADVANCED',r['HARNESS_FAILURE_CLASS'])
         self.assertEqual(1,r['AUTOMATIC_RESTART_DELTA'])
         self.assertEqual('NOT_OBSERVED',r['APPLICATION_FAILURE_CLASS'])
         self.assertEqual('HARNESS_CLEANUP',r['PROCESS_TERMINATION_OWNER'])
         self.assertEqual('PASS',r['CONFIGURATION_RESTORATION'])
 
     def test_counter_regression_boot_and_manager_fail_closed(self):
-        for mode,reason in (('regression','NRESTARTS_BASELINE_INVALIDATED'),('boot','BOOT_ID_CHANGED'),('manager','SYSTEMD_MANAGER_IDENTITY_CHANGED')):
+        for mode,reason in (('regression','POST_START_NRESTARTS_EPOCH_INVALIDATED'),('boot','BOOT_ID_CHANGED'),('manager','SYSTEMD_MANAGER_IDENTITY_CHANGED')):
             with self.subTest(mode=mode):
                 sim,r,_=self.simulate(mode)
                 self.assertEqual(1,sim.starts);self.assertEqual(reason,r['HARNESS_FAILURE_CLASS'])
@@ -222,14 +229,14 @@ class ActualWorkerTests(unittest.TestCase):
 
     def test_exit_before_http_does_not_invent_schema_fields(self):
         sim,r,_=self.simulate('early_exit')
-        self.assertEqual(0,sim.stops);self.assertEqual('APPLICATION_EXIT',r['PROCESS_TERMINATION_OWNER'])
+        self.assertEqual(0,sim.stops);self.assertEqual('APPLICATION',r['PROCESS_TERMINATION_OWNER'])
         self.assertEqual('NOT_OBSERVED',r['STARTUP_FAILURE_CLASS'])
         self.assertEqual('NOT_OBSERVED',r['BOOTSTRAP_COMPLETION_STATE'])
         self.assertEqual([],r['BOOTSTRAP_RECORDS'])
 
     def test_external_sigterm_distinguished(self):
         sim,r,_=self.simulate('external_sigterm')
-        self.assertEqual(0,sim.stops);self.assertEqual('EXTERNAL_OR_UNKNOWN_SIGNAL',r['PROCESS_TERMINATION_OWNER'])
+        self.assertEqual(0,sim.stops);self.assertEqual('UNKNOWN',r['PROCESS_TERMINATION_OWNER'])
         self.assertEqual('SIGTERM',r['PROCESS_EXIT_SIGNAL'])
 
     def test_cleanup_failure_keeps_primary_failure(self):
@@ -242,7 +249,18 @@ class ActualWorkerTests(unittest.TestCase):
     def test_start_control_failure_never_retries(self):
         sim,r,files=self.simulate('start_control_failure')
         self.assertEqual(0,sim.starts)
-        self.assertEqual(0,r['POST_START_COUNT'])
+        self.assertEqual(1,r['POST_START_COUNT']);self.assertEqual(1,r['CONTROL_START_CALL_COUNT'])
         self.assertEqual('OPERATOR_CONTROL_FAILURE',r['ERROR_CATEGORY'])
         self.assertEqual('START_CONTROL_FAILED',r['CONTROL_FAILURE_CLASS'])
         self.assertIn('start_intent.json',files)
+
+    def test_historical_541_to_zero_full_actual_worker_replay(self):
+        sim,r,files=self.simulate(post=0)
+        self.assertTrue(r['HARNESS_VALID'])
+        self.assertEqual(541,files['boundary.json']['baseline_nrestarts'])
+        self.assertEqual(0,r['POST_START_NRESTARTS_BASELINE'])
+        self.assertEqual(1,r['OBSERVED_INVOCATION_COUNT'])
+        self.assertEqual(1,r['CONTROL_START_CALL_COUNT'])
+        self.assertEqual(0,r['UNAUTHORIZED_ADDITIONAL_INVOCATIONS'])
+        self.assertTrue(r['BOOTSTRAP_RECORDS'])
+        self.assertEqual(0,sim.stops)

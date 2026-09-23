@@ -13,9 +13,11 @@ import sys
 import tarfile
 import time
 import zipfile
-from probe_boundary import (ProbeFailure, counter, restart_delta, manager_context, guard_context,
+from probe_boundary import (ProbeFailure, counter, manager_context, guard_context,
     make_boundary, remote_receipt, payload_digest, atomic_write, failure_fields,
     termination_fields, NOT_OBSERVED)
+
+from probe_invocation import InvocationEpoch, read_ledger
 
 HEAD='34ba35a407296038a223c54cd048dcc0e6b67ca5'
 BIN_SHA='a61d4c4777d045346590d9fc8613b14500f4a7e0ed5cfbe2f5b8d8f660acd2e0'
@@ -30,7 +32,7 @@ DIAG=Path('/root/openflux/openflux-bootstrap-schema6-34ba35a')
 DROP=Path('/run/systemd/system/openflux-user3.service.d/95-schema6-isolated-34ba35a.conf')
 ROOT=Path(__file__).resolve().parent
 ARGS=['--exit-node','--mode=proxy','--transport=vyandex','--url-file=/root/openflux/user3/document-url','--encryption-key-file=/root/openflux/user3/encryption-key']
-FIELDS=['Id','ActiveState','SubState','MainPID','InvocationID','NRestarts','Result','Restart','RestartUSec','DropInPaths','ExecMainStartTimestamp','ActiveEnterTimestamp','ExecMainCode','ExecMainStatus']
+FIELDS=['Id','ActiveState','SubState','MainPID','InvocationID','NRestarts','Result','Restart','RestartUSec','DropInPaths','ExecMainStartTimestamp','ActiveEnterTimestamp','ExecMainCode','ExecMainStatus','ExecMainPID','ExecMainStartTimestampMonotonic']
 REPORT={'SOURCE_HEAD':HEAD,'SCHEMA_VERSION':6,'POST_START_COUNT':0,'DIAGNOSTIC_BINARY_SHA256':BIN_SHA}
 
 class Guard(ProbeFailure):
@@ -161,20 +163,26 @@ def run():
     bin_created=drop_created=dir_created=False
     retained=False;new_pid=None;new_inv=None;scope=None;start_process=None;grounded=None
     last_records=[];last_valid=None;proof=None
-    boundary=None;cleanup_invocation=None
+    boundary=None;cleanup_invocation=None;epoch=None;epoch_persisted=False
     REPORT.update(HARNESS_VALID=True, APPLICATION_FAILURE_CLASS=NOT_OBSERVED,
         HARNESS_FAILURE_CLASS=NOT_OBSERVED, BOOTSTRAP_COMPLETION_STATE=NOT_OBSERVED,
         STARTUP_STAGE=NOT_OBSERVED,STARTUP_RESULT=NOT_OBSERVED,STARTUP_FAILURE_CLASS=NOT_OBSERVED,
         PROCESS_TERMINATION_OWNER=NOT_OBSERVED,PROCESS_EXIT_CODE=NOT_OBSERVED,
         PROCESS_EXIT_SIGNAL=NOT_OBSERVED,SYSTEMD_RESULT=NOT_OBSERVED)
 
-    def validate_counter(state):
-        guard_context(boundary['context'], manager_context(cmd))
-        current=counter(state['NRestarts']);baseline=boundary['baseline_nrestarts']
-        REPORT['CURRENT_NRESTARTS']=current
-        REPORT['AUTOMATIC_RESTART_DELTA']=current-baseline if current>=baseline else NOT_OBSERVED
-        restart_delta(baseline,current)
-        require(state['Restart']=='no','restart_guard_changed')
+    def validate_epoch(state):
+        nonlocal epoch_persisted,new_inv
+        try:
+            epoch.observe(state,manager_context(cmd),read_ledger(cmd,boundary))
+            if epoch.authorized is not None and not epoch_persisted:
+                new_inv=epoch.authorized
+                REPORT['NEW_INVOCATION_ID']=new_inv
+                data=dict(operation_id=boundary['operation_id'],invocation=new_inv,pid=epoch.pid,
+                    exec_start_monotonic_us=int(epoch.exec_start),post_start_nrestarts=epoch.post_baseline)
+                remote_receipt('authorized_invocation',data)
+                atomic_write(ROOT/'authorized-invocation.json',data,exclusive=True)
+                epoch_persisted=True
+        finally:REPORT.update(epoch.fields())
 
     def record_termination(state):
         if new_inv is not None and state['InvocationID']==new_inv:
@@ -265,41 +273,46 @@ def run():
         require(exec_args(UNIT)==(str(DIAG),[str(DIAG)]+ARGS),'effective_diagnostic_execstart_mismatch')
         integrity()
         context=manager_context(cmd)
-        last=json.loads(cmd('journalctl','--no-pager','--all','-n','1','-o','json','--output-fields=__CURSOR').strip())
+        last=json.loads(cmd('journalctl','--no-pager','--all','-n','1','-o','json','--output-fields=__CURSOR,__MONOTONIC_TIMESTAMP').strip())
         require(type(last.get('__CURSOR')) is str,'journal_boundary_unavailable')
         state=show(UNIT) # immediately-before-start baseline, not the earlier preflight
         guard_context(context,manager_context(cmd))
         require(state['MainPID']=='0' and state['Restart']=='no' and no_job(),'user3_not_stopped_at_boundary')
-        scope=dict(schema=6,cursor=last['__CURSOR'],start_monotonic_us=time.monotonic_ns()//1000,boot_id=context['boot_id'],unit=UNIT,exe=str(DIAG),previous_pid='0')
+        scope=dict(schema=6,cursor=last['__CURSOR'],start_monotonic_us=int(last['__MONOTONIC_TIMESTAMP']),boot_id=context['boot_id'],unit=UNIT,exe=str(DIAG),previous_pid='0')
         boundary=make_boundary(scope,state,context,expected,utc())
+        epoch=InvocationEpoch(boundary)
         # The local operator controller fsyncs its evidence directory and ACKs.
         # A disconnected controller or failed write prevents any start.
         remote_receipt('boundary',boundary)
         atomic_write(ROOT/'journal-boundary.json',boundary,exclusive=True)
         REPORT.update(PRE_START_TIMESTAMP_UTC=boundary['pre_start_utc'],PRE_START_NRESTARTS=state['NRestarts'],JOURNAL_BOUNDARY_PERSISTED=True)
         marker=ROOT/'single-start-issued'
-        intent={'boundary_sha256':payload_digest(boundary),'maximum_start_count':1}
+        intent={'boundary_sha256':payload_digest(boundary),'maximum_start_count':1,'operation_id':boundary['operation_id']}
         remote_receipt('start_intent',intent)
         atomic_write(marker,intent,exclusive=True)
         current=show(UNIT)
-        validate_counter(current)
+        validate_epoch(current)
         require(current['MainPID']=='0' and current['InvocationID']==boundary['baseline_invocation'] and no_job(),'state_changed_before_start')
+        epoch.consume_start()
+        REPORT.update(epoch.fields())
         REPORT['POST_START_COUNT']=1;REPORT['POST_START_TIMESTAMP_UTC']=utc();save()
         start_at=time.monotonic()
         # THE ONLY start call in this script. Never called again, including cleanup.
         try:
             start_process=subprocess.Popen(['systemctl','start',UNIT],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         except OSError:
-            REPORT['POST_START_COUNT']=0
+            REPORT['POST_START_COUNT']=1
             REPORT['START_INTENT_CONSUMED']=True
             raise ProbeFailure('START_CONTROL_FAILED','OPERATOR_CONTROL_FAILURE') from None
         emit('single_start',{'POST_START_COUNT':1,'UTC':REPORT['POST_START_TIMESTAMP_UTC'],'Restart':'no','startup_timeout_seconds':90})
         stable_id=None;stable_since=None;last_journal=0;failed=False;succeeded=False
         while time.monotonic()-start_at<90:
-            state=show(UNIT);sample=observe_process(state,expected);at=time.monotonic()
+            state=show(UNIT);validate_epoch(state)
+            if start_process.poll() is not None and start_process.returncode != 0:
+                raise ProbeFailure('START_CONTROL_RESULT_AMBIGUOUS','OPERATOR_CONTROL_FAILURE')
+            sample=observe_process(state,expected);at=time.monotonic()
             if state['InvocationID'] and state['InvocationID']!=boundary['baseline_invocation']:
                 bind_scope(sample,state)
-                validate_counter(state)
                 if sample['coherent'] and sample['exe_match'] and sample['cmdline_read']:
                     verify_sample(sample,expected)
                     if new_pid is None:new_pid=state['MainPID']
@@ -318,7 +331,6 @@ def run():
                     except DiagnosticStartupFailed: last_valid=None
                     if last_valid and all(last_valid[k] for k in ('authorization_completed','relay_workers_started','proxy_initialized')):
                         succeeded=True;break
-            else:validate_counter(state)
             if at-start_at>5 and int((at-start_at)*10)%100==0:integrity()
             time.sleep(0.05 if at-start_at<5 else 0.25)
         if start_process.poll() is not None:
@@ -334,7 +346,7 @@ def run():
                 REPORT['STARTUP_RESULT']=starts[-1]['startup_result']
                 for key in ('authorization_completed','relay_workers_started','proxy_initialized'):REPORT[key.upper()]=starts[-1][key]
             state=show(UNIT)
-            validate_counter(state)
+            validate_epoch(state)
             require(state['MainPID']=='0','failure_not_stopped_without_retry')
             exit_fields=termination_fields(state)
             REPORT.update(USER3_EXIT_CODE=exit_fields['PROCESS_EXIT_CODE'],USER3_EXIT_SIGNAL=exit_fields['PROCESS_EXIT_SIGNAL'],USER3_EXEC_MAIN_CODE=state['ExecMainCode'],USER3_SYSTEMD_RESULT=state['Result'],USER3_RESTART_DELTA_AFTER_START=0)
@@ -345,7 +357,7 @@ def run():
             emit('startup_success',{'USER3_PID':new_pid,'OBSERVE_SECONDS':120})
             while True:
                 current=integrity();state=current[UNIT]
-                validate_counter(state)
+                validate_epoch(state)
                 require(state['ActiveState']=='active' and state['SubState']=='running' and state['MainPID']==new_pid and state['InvocationID']==new_inv,'successful_invocation_changed')
                 verify_sample(observe_process(state,expected),expected)
                 records=journal();startup_outcome(records);samples+=1
@@ -359,12 +371,13 @@ def run():
         else:
             last_records=journal();capture_classification(last_records,False)
             raise Guard('bounded_startup_timeout')
+        validate_epoch(show(UNIT));epoch.finish()
         integrity();save()
         emit('captured',{'RESULT':REPORT['RESULT'],'BOOTSTRAP_RECORDS':REPORT.get('BOOTSTRAP_RECORDS',[]),'STARTUP_RECORDS':REPORT.get('STARTUP_RECORDS',[])})
     except BaseException as error:
         # Never reinterpret a harness/control failure as provider failure.
         REPORT.update(failure_fields(error))
-        REPORT['RESULT']='ProbeHarnessFailed' if REPORT['ERROR_CATEGORY']=='HARNESS_VALIDATION_FAILURE' else 'ProbeControlFailed'
+        REPORT['RESULT']='ProbeHarnessFailed' if REPORT['ERROR_CATEGORY']=='HARNESS_VALIDATION_FAILURE' else 'OPERATOR_CONTROL_FAILURE'
         if isinstance(error,Rejected):REPORT['HARNESS_FAILURE_CLASS']='JOURNAL_VALIDATION_FAILED'
         retained=False
         emit('probe_blocker',{k:REPORT[k] for k in ('RESULT','ERROR_CATEGORY','HARNESS_FAILURE_CLASS','CONTROL_FAILURE_CLASS','APPLICATION_FAILURE_CLASS')})
@@ -397,7 +410,9 @@ def run():
             if not retained:require(final['MainPID']=='0' and no_job(),'retry_loop_resumed')
             else:require(final['MainPID']==new_pid and final['InvocationID']==new_inv,'retained_process_changed_after_restore')
             if boundary is not None:
-                try:validate_counter(final)
+                try:
+                    validate_epoch(final)
+                    if REPORT['HARNESS_VALID'] and epoch.control_calls:epoch.finish()
                 except ProbeFailure as error:
                     REPORT['FINAL_OBSERVATION_GUARD']=failure_fields(error)
                     if REPORT['HARNESS_VALID']:REPORT.update(failure_fields(error),RESULT='ProbeHarnessFailed')

@@ -11,7 +11,7 @@ permissions:
 jobs:
   linux:
     name: Linux exact-source ACK validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -79,9 +79,11 @@ jobs:
           cp -r "$ACK_BOOTSTRAP_FIXTURE_DIR" "$RUNNER_TEMP/ack-artifacts/"
           cp -r "$ACK_STRUCTURE_FIXTURE_DIR" "$RUNNER_TEMP/ack-artifacts/"
           cp docs/BOOTSTRAP_STRUCTURE_SCHEMA6.md "$RUNNER_TEMP/ack-artifacts/"
+          cp "$RUNNER_TEMP/real-systemd-evidence.json" "$RUNNER_TEMP/ack-artifacts/"
+          cp docs/SYSTEMD_V255_RESTART_EPOCH.md "$RUNNER_TEMP/ack-artifacts/"
           cp docs/ISOLATED_PROBE_HARNESS.md "$RUNNER_TEMP/ack-artifacts/"
           mkdir "$RUNNER_TEMP/ack-artifacts/isolated-probe-harness"
-          cp scripts/ack-readiness/{isolated_probe,probe_boundary,probe_controller}.py "$RUNNER_TEMP/ack-artifacts/isolated-probe-harness/"
+          cp scripts/ack-readiness/{isolated_probe,probe_boundary,probe_controller,probe_invocation}.py "$RUNNER_TEMP/ack-artifacts/isolated-probe-harness/"
       - name: Root tests
         run: go test ./...
       - name: Root race tests

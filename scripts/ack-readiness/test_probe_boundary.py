@@ -35,12 +35,12 @@ class CounterTests(unittest.TestCase):
             with self.subTest(n=n):self.assertEqual(0, restart_delta(n, str(n)))
 
     def test_automatic_restart(self):
-        with self.assertRaisesRegex(ProbeFailure, 'AUTOMATIC_RESTART_OBSERVED'):
+        with self.assertRaisesRegex(ProbeFailure, 'AUTOMATIC_RESTART_COUNTER_ADVANCED'):
             restart_delta(541, 542)
 
     def test_regression_is_invalid_not_zero(self):
         for current in (0, 1, 540):
-            with self.assertRaisesRegex(ProbeFailure, 'NRESTARTS_BASELINE_INVALIDATED'):
+            with self.assertRaisesRegex(ProbeFailure, 'POST_START_NRESTARTS_EPOCH_INVALIDATED'):
                 restart_delta(541, current)
 
     def test_counter_strict_types(self):
@@ -71,7 +71,7 @@ class BoundaryTests(unittest.TestCase):
             disk=json.loads((Path(d)/'boundary.json').read_text())
             self.assertEqual(data,disk)
             self.assertEqual('before',disk['scope']['cursor'])
-            self.assertNotIn('--url-file',json.dumps(disk))
+            self.assertEqual('/synthetic/file',disk['expected_argv'][1].split('=',1)[1])
             self.assertEqual(541,disk['baseline_nrestarts'])
 
     def test_write_failure_prevents_receipt(self):
@@ -83,8 +83,8 @@ class BoundaryTests(unittest.TestCase):
     def test_boundary_and_start_intent_immutable_no_resume(self):
         with tempfile.TemporaryDirectory() as d:
             store=LocalEvidence(d);b=boundary();store.accept('boundary',b)
-            store.accept('start_intent',dict(boundary_sha256=payload_digest(b),maximum_start_count=1))
-            for name,payload in (('boundary',b),('start_intent',dict(boundary_sha256=payload_digest(b),maximum_start_count=1))):
+            store.accept('start_intent',dict(boundary_sha256=payload_digest(b),maximum_start_count=1,operation_id=b['operation_id']))
+            for name,payload in (('boundary',b),('start_intent',dict(boundary_sha256=payload_digest(b),maximum_start_count=1,operation_id=b['operation_id']))):
                 with self.assertRaisesRegex(ProbeFailure,'EVIDENCE_ALREADY_EXISTS'):store.accept(name,payload)
 
     def test_boundary_unavailable(self):
@@ -127,7 +127,7 @@ class BoundaryTests(unittest.TestCase):
 import json
 b=BOUNDARY
 remote_receipt('boundary',b)
-remote_receipt('start_intent',dict(boundary_sha256=payload_digest(b),maximum_start_count=1))
+remote_receipt('start_intent',dict(boundary_sha256=payload_digest(b),maximum_start_count=1,operation_id=b['operation_id']))
 print(json.dumps(dict(kind='simulated_start',count=1)),flush=True)
 raise RuntimeError('synthetic post-start harness exception')
 '''.replace('BOUNDARY',repr(b))
@@ -190,17 +190,17 @@ class ExitTests(unittest.TestCase):
     def test_unrelated_sigterm_not_attributed_to_harness(self):
         for owner in (None,'d'*32):
             v=termination_fields(self.state('2','15'),owner)
-            self.assertEqual('EXTERNAL_OR_UNKNOWN_SIGNAL',v['PROCESS_TERMINATION_OWNER'])
+            self.assertEqual('UNKNOWN',v['PROCESS_TERMINATION_OWNER'])
 
     def test_application_exit_1_before_http(self):
         v=termination_fields(self.state('1','1'))
-        self.assertEqual('APPLICATION_EXIT',v['PROCESS_TERMINATION_OWNER'])
+        self.assertEqual('APPLICATION',v['PROCESS_TERMINATION_OWNER'])
         self.assertEqual(1,v['PROCESS_EXIT_CODE'])
         self.assertEqual('NOT_OBSERVED',v['BOOTSTRAP_COMPLETION_STATE'])
 
     def test_natural_exit_racing_cleanup_is_not_claimed_sigterm(self):
         v=termination_fields(self.state('1','1'),'c'*32)
-        self.assertEqual('APPLICATION_EXIT',v['PROCESS_TERMINATION_OWNER'])
+        self.assertEqual('APPLICATION',v['PROCESS_TERMINATION_OWNER'])
 
     def test_error_separation_and_no_raw_error(self):
         secret='https://private.invalid/?token=SECRET'

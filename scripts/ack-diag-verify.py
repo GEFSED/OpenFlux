@@ -33,6 +33,9 @@ allowed={
     'scripts/ack-readiness/probe_boundary.py','scripts/ack-readiness/probe_controller.py',
     'scripts/ack-readiness/isolated_probe.py','scripts/ack-readiness/test_probe_boundary.py',
     'scripts/ack-readiness/test_isolated_probe.py','docs/ISOLATED_PROBE_HARNESS.md',
+ 'scripts/ack-readiness/probe_invocation.py','scripts/ack-readiness/test_probe_invocation.py',
+ 'scripts/ack-readiness/test_real_systemd.py','scripts/ack-readiness/disposable_systemd.py',
+ 'docs/SYSTEMD_V255_RESTART_EPOCH.md',
 }
 assert not subprocess.check_output(['git','status','--porcelain']).strip(), 'dirty_source'
 assert changed_since(FROZEN)<=allowed, sorted(changed_since(FROZEN)-allowed)
@@ -51,6 +54,9 @@ SCHEMA6_ALLOWED={
  'scripts/ack-readiness/probe_boundary.py','scripts/ack-readiness/probe_controller.py',
  'scripts/ack-readiness/isolated_probe.py','scripts/ack-readiness/test_probe_boundary.py',
  'scripts/ack-readiness/test_isolated_probe.py','docs/ISOLATED_PROBE_HARNESS.md',
+ 'scripts/ack-readiness/probe_invocation.py','scripts/ack-readiness/test_probe_invocation.py',
+ 'scripts/ack-readiness/test_real_systemd.py','scripts/ack-readiness/disposable_systemd.py',
+ 'docs/SYSTEMD_V255_RESTART_EPOCH.md',
 }
 assert changed_since(SCHEMA5_BASE)<=SCHEMA6_ALLOWED,'schema6_nonobservability_change'
 # Harness repair cannot alter ANY runtime/emitter/validator implementation.
@@ -59,6 +65,9 @@ HARNESS_ALLOWED={
  'scripts/ack-readiness/probe_boundary.py','scripts/ack-readiness/probe_controller.py',
  'scripts/ack-readiness/isolated_probe.py','scripts/ack-readiness/test_probe_boundary.py',
  'scripts/ack-readiness/test_isolated_probe.py','docs/ISOLATED_PROBE_HARNESS.md',
+ 'scripts/ack-readiness/probe_invocation.py','scripts/ack-readiness/test_probe_invocation.py',
+ 'scripts/ack-readiness/test_real_systemd.py','scripts/ack-readiness/disposable_systemd.py',
+ 'docs/SYSTEMD_V255_RESTART_EPOCH.md',
  'scripts/ack-diag-verify.py','.github/workflows/ci.yml',
 }
 assert changed_since(HARNESS_BASE)<=HARNESS_ALLOWED,'non_harness_change'
