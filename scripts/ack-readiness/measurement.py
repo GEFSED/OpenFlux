@@ -1,5 +1,6 @@
 """Schema-3 numeric readiness/capture only. No packet or network behavior."""
-from schema3 import LIMITS, VALID_ZERO, HISTOGRAMS, BUCKETS, validate_snapshot
+from schema3 import LIMITS, VALID_ZERO, HISTOGRAMS, BUCKETS
+from schema4 import validate_numeric as validate_snapshot, startup_outcome
 
 
 def valid(v):
@@ -25,8 +26,10 @@ def idle_proof(snapshots):
                 UNEXPLAINED_INVALIDATED_BYTES=0, LIMITS=LIMITS)
 
 
-def readiness_observation(records, elapsed):
+def readiness_observation(records, elapsed, process_exited=False, schema=3):
     """Shared deployment/local-simulation gate, after process and log checks."""
+    startup=None
+    if schema==4:startup=startup_outcome(records,process_exited)
     snapshots = [r for r in records if 'values' in r]
     if not snapshots:
         return None
@@ -42,7 +45,11 @@ def readiness_observation(records, elapsed):
         return None
     if not any(r.get('event') == 'banner' for r in records):
         raise RuntimeError('startup_banner_missing')
-    return dict(LOG_SCHEMA=3, LOG_VALIDATION='PASS', UNKNOWN_DIAGNOSTIC_LOGS=0,
+    if schema==4 and (not startup or not all(startup[k] for k in (
+            'transport_started','authorization_completed','relay_workers_started',
+            'proxy_initialized','diagnostic_snapshot_loop_started'))):
+        return None
+    return dict(LOG_SCHEMA=schema, LOG_VALIDATION='PASS', UNKNOWN_DIAGNOSTIC_LOGS=0,
                 NON_TEXT_DIAGNOSTIC_LOGS=0, SECRET_LEAKAGE='NONE_OBSERVED',
                 VOLGA_CONNECTED=True, IDLE_PROOF=proof)
 

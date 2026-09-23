@@ -57,15 +57,18 @@ jobs:
         run: |
           set -o pipefail
           go test -v ./internal/ackdiag | tee "$RUNNER_TEMP/ack-artifacts/correlator-tests.txt"
-      - name: Export frozen schema 3 fixtures and validate readiness harness
+      - name: Export frozen schema 3 and startup schema 4 fixtures; validate readiness
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           set -o pipefail
           export ACK_SCHEMA_FIXTURE_DIR="$RUNNER_TEMP/ack-schema3-fixtures"
+          export ACK_STARTUP_FIXTURE_DIR="$RUNNER_TEMP/ack-startup-fixtures"
           go test -count=1 -run '^TestExportSchema3Fixtures$' -v ./internal/ackdiag
+          go test -count=1 -run '^TestExportStartupFixtures$' -v ./internal/ackdiag
           python3 -m unittest discover -s scripts/ack-readiness -v 2>&1 | tee "$RUNNER_TEMP/ack-artifacts/schema3-validator-tests.txt"
           cp docs/ACK_SCHEMA3_READINESS.md "$RUNNER_TEMP/ack-artifacts/"
+          cp docs/ACK_STARTUP_OBSERVABILITY.md "$RUNNER_TEMP/ack-artifacts/"
       - name: Root tests
         run: go test ./...
       - name: Root race tests

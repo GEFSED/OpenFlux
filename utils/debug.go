@@ -3,8 +3,8 @@ package utils
 import (
 	"fmt"
 	"log"
-	"os"
 	"sync"
+	"universal-bypass-tool/internal/ackdiag"
 )
 
 var (
@@ -16,7 +16,7 @@ var (
 
 func EnableDebug() {
 	verbose = true
-	debugLog = log.New(os.Stderr, "", log.LstdFlags|log.Lmicroseconds)
+	debugLog = log.New(ackDebugOutput(), "", log.LstdFlags|log.Lmicroseconds)
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds | log.Lshortfile)
 }
 
@@ -30,6 +30,7 @@ func SetDebug(on bool) {
 }
 
 func Debugf(format string, args ...interface{}) {
+	ackdiag.ObserveStartupFormat(format)
 	if verbose {
 		message := fmt.Sprintf(format, args...)
 		debugLog.Output(2, message)
@@ -38,6 +39,7 @@ func Debugf(format string, args ...interface{}) {
 		sink := logSink
 		logSinkMu.RUnlock()
 		if sink != nil {
+			if ackLogging.Load(){message="[ACK-LOG] suppressed=1"}
 			sink(message)
 		}
 	}

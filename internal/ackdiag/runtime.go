@@ -26,7 +26,9 @@ func Event(name string) {if enabled.Load(){Default.Event(name)}}
 func SetWSConnected(on bool) {if enabled.Load(){Default.WSConnected(on)}}
 func Emit() {
 	if !enabled.Load(){return}
-	values:=Default.Snapshot()
+	StartupOK(SnapshotLoop)
+	values:=SnapshotForLog(Default.Snapshot())
 	data,err:=json.Marshal(values)
-	if err==nil{logger.Printf("[ACK-DIAG] %s",data)}
+	if err!=nil{StartupFailure(SnapshotLoop,SchemaFailure);return}
+	if err=logger.Output(2,"[ACK-DIAG] "+string(data));err!=nil{StartupFailure(SnapshotLoop,SchemaFailure)}
 }

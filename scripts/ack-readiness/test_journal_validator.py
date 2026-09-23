@@ -3,7 +3,7 @@ import unittest
 from fixtures import fixture
 from journal_validator import FIELDS, Rejected, journal_command, validate_records
 
-SCOPE = dict(cursor='before', boot_id='boot', start_monotonic_us=100,
+SCOPE = dict(schema=3, cursor='before', boot_id='boot', start_monotonic_us=100,
              pid='123', exe='/root/openflux/openflux-ack-diag',
              unit='openflux-user2.service', invocation='invocation')
 

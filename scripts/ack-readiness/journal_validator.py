@@ -2,6 +2,7 @@
 import json
 import re
 from schema3 import FIELDS, HISTOGRAMS, BUCKETS, SchemaError, validate_snapshot
+from schema4 import validate_snapshot as validate_snapshot4, validate_startup, StartupStream
 SAFE_METADATA = ('__REALTIME_TIMESTAMP', '__MONOTONIC_TIMESTAMP', '_SYSTEMD_UNIT',
                  '_PID', '_UID', '_GID', '_COMM', '_EXE', 'SYSLOG_IDENTIFIER',
                  '_TRANSPORT', 'PRIORITY')
@@ -70,7 +71,7 @@ def unique_pairs(pairs):
     return result
 
 
-def allowed_message(entry):
+def allowed_message(entry, schema=4):
     props = message_properties(entry)
     if props['MESSAGE_REPRESENTATION_TYPE'] == 'null':
         # Unknown/possibly elided MESSAGE is unavailable, NOT proof of binary
@@ -91,6 +92,14 @@ def allowed_message(entry):
         return {'event': 'banner'}
     if text == '[ACK-LOG] suppressed=1':
         return {'event': 'suppressed'}
+    if text.startswith('[ACK-STARTUP] '):
+        if schema!=4:fail('unexpected_startup_schema', entry)
+        try:
+            value=json.loads(text[len('[ACK-STARTUP] '):], object_pairs_hook=unique_pairs)
+            validate_startup(value)
+        except SchemaError as error:fail(str(error),entry)
+        except (ValueError,TypeError):fail('malformed_startup_json',entry)
+        return {'startup':value}
     # This timestamp and prefix are fixed by internal/ackdiag/runtime.go.
     match = STAMP.match(text)
     if not match or not text[match.end():].startswith('[ACK-DIAG] '):
@@ -101,7 +110,7 @@ def allowed_message(entry):
     except (ValueError, TypeError):
         fail('invalid_snapshot_json', entry)
     try:
-        validate_snapshot(values)
+        (validate_snapshot4 if schema==4 else validate_snapshot)(values)
     except SchemaError as error:
         fail(str(error), entry)
     return {'values': values}
@@ -119,6 +128,9 @@ def validate_records(entries, scope):
     accepted, provenance = [], []
     seen = set()
     previous_app_time = -1
+    schema=scope.get('schema',4)
+    if type(schema) is not int or schema not in (3,4):fail('unsupported_scope_schema',{})
+    startup=StartupStream()
     for entry in entries:
         try:
             monotonic = int(entry['__MONOTONIC_TIMESTAMP'])
@@ -143,7 +155,14 @@ def validate_records(entries, scope):
                 fail('reordered_application_record', entry)
             seen.add(cursor)
             previous_app_time = monotonic
-            record = allowed_message(entry)
+            record = allowed_message(entry,schema)
+            if 'startup' in record:
+                try:startup.accept(record['startup'])
+                except SchemaError as error:fail(str(error),entry)
+            if 'values' in record and schema==4:
+                if startup.last is None or (startup.last['startup_result']!='failure' and
+                                           not startup.last['diagnostic_snapshot_loop_started']):
+                    fail('snapshot_without_startup_loop_evidence',entry)
             try:
                 record['time_us'] = int(entry['__REALTIME_TIMESTAMP'])
                 if record['time_us'] <= 0:

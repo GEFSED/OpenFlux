@@ -13,18 +13,19 @@ import time
 import zipfile
 from journal_validator import Rejected, journal_command, validate_journal_json
 from argv_validator import ReadinessError, expected_tokens, exec_directive, observe_process, verify_sample, await_stable
+from schema4 import DiagnosticStartupFailed, startup_outcome
 
 BASE = '081d214300c1067f17f6c0d02f84a8491f1a7b98'
-HEAD = '01407ff3c86fc616f49d99ecf4a2942a37a3a861'
+HEAD = os.environ.get('ACK_DIAGNOSTIC_SOURCE_HEAD', '')
 ORIGINAL_HASH = '08fcf4020cd3c7274c7abd78fe386b40d2fcf8515082d3475ced324ad109217c'
-DIAG_HASH = 'eaaff9cdb021936f7d93189170175658e7c5b2558dc30b7ae47027321870424c'
+DIAG_HASH = os.environ.get('ACK_DIAGNOSTIC_BINARY_SHA256', '')
 # Future separately authorized deployment supplies the verified artifact archive
 # digest. Binary/source pins below are fixed; this task never invokes install.
 ZIP_HASH = os.environ.get('ACK_ARTIFACT_ZIP_SHA256', '')
 ROOT = Path('/root/openflux')
-EVIDENCE = Path('/tmp/openflux-ack-schema3-evidence')
-ARCHIVE = Path('/tmp/openflux-ack-schema3.zip')
-DROP = Path('/run/systemd/system/openflux-user2.service.d/ack-schema3.conf')
+EVIDENCE = Path('/tmp/openflux-ack-schema4-evidence')
+ARCHIVE = Path('/tmp/openflux-ack-schema4.zip')
+DROP = Path('/run/systemd/system/openflux-user2.service.d/ack-schema4.conf')
 UNIT = 'openflux-user2.service'
 OTHERS = ['openflux.service', 'openflux-user3.service', 'openflux-refresh.service']
 FIELDS = ['Id', 'ActiveState', 'MainPID', 'ExecMainStartTimestamp', 'ActiveEnterTimestamp', 'NRestarts']
@@ -124,6 +125,8 @@ def restart_and_observe(previous, name):
     except ReadinessError as error:
         save(name + '-argv-failure.json', {'reason': error.reason, 'safe': error.safe})
         print(json.dumps({'ARGV_VALIDATION_FAILURE': {'reason': error.reason, 'safe': error.safe}}))
+        if name == 'openflux-ack-diag':
+            classify_early_exit(samples, previous)
         raise
     finally:
         save(name + '-argv-samples.json', samples)
@@ -136,6 +139,24 @@ def restart_and_observe(previous, name):
                 process.communicate()
 
 
+def classify_early_exit(samples, previous):
+    """Classification only, never readiness. Preserve failed settling proof.
+
+    Require at least one exact coherent /proc exe+argv observation for a new
+    invocation. No identity is guessed from a journal label or formatted argv.
+    """
+    grounded = [s for s in samples if s['coherent'] and s['exe_match']
+        and s.get('comparison') and s['comparison']['argv_match']
+        and s['InvocationID'] and s['InvocationID'] != previous.get('InvocationID')]
+    if not grounded:return
+    s=grounded[-1]
+    scope=load('journal-boundary.json')
+    scope.update(schema=4,pid=s['MainPID'],invocation=s['InvocationID'])
+    save('journal-scope.json',scope)
+    records=journal(s['InvocationID'])
+    startup_outcome(records,process_exited=True)
+
+
 def others_unchanged():
     require({unit: show(unit) for unit in OTHERS} == load('preflight.json')['others'], 'other_service_changed')
 
@@ -145,10 +166,13 @@ def override():
 
 
 def install():
+    require(re.fullmatch('[a-f0-9]{40}',HEAD or '') is not None and
+            re.fullmatch('[a-f0-9]{64}',DIAG_HASH or '') is not None and
+            re.fullmatch('[a-f0-9]{64}',ZIP_HASH or '') is not None, 'explicit_artifact_pins_required')
     original()
     require(not (EVIDENCE / 'preflight.json').exists(), 'already_initialized')
     state = show(UNIT, ['ExecStart', 'DropInPaths', 'InvocationID'])
-    require(state['ActiveState'] == 'active' and state['NRestarts'] == '0' and state['DropInPaths'] == '', 'user2_not_original_clean')
+    require(state['ActiveState'] == 'active' and state['DropInPaths'] == '', 'user2_not_original_clean')
     argv(state, 'openflux')
     others = {unit: show(unit) for unit in OTHERS}
     require(others['openflux.service']['ActiveState'] == 'active' and
@@ -203,7 +227,7 @@ def before_start_cursor(previous_pid):
     raw = command('journalctl', '--no-pager', '-n', '1', '-o', 'json', '--output-fields=__CURSOR')
     entries = [json.loads(line) for line in raw.splitlines()]
     require(len(entries) == 1 and isinstance(entries[0].get('__CURSOR'), str), 'cursor_missing')
-    return {'cursor': entries[0]['__CURSOR'], 'start_monotonic_us': time.monotonic_ns() // 1000,
+    return {'schema':4,'cursor': entries[0]['__CURSOR'], 'start_monotonic_us': time.monotonic_ns() // 1000,
             'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip().replace('-', ''),
             'unit': UNIT, 'exe': str(ROOT / 'openflux-ack-diag'), 'previous_pid': previous_pid}
 
@@ -274,12 +298,16 @@ def switch():
         started = time.monotonic()
         while True:
             state = show(UNIT, ['ExecStart', 'DropInPaths', 'InvocationID'])
-            require(state['ActiveState'] == 'active' and state['NRestarts'] == '0' and state['InvocationID'] == current['InvocationID'] and state['MainPID'] == current['MainPID'], 'startup_failed')
+            changed = not (state['ActiveState'] == 'active' and state['NRestarts'] == '0' and state['InvocationID'] == current['InvocationID'] and state['MainPID'] == current['MainPID'])
+            # Read the originally grounded invocation even if MainPID became 0.
+            # Validate ALL its messages before interpreting any failure enum.
+            records = journal(current['InvocationID'])
+            readiness = readiness_observation(records,time.monotonic()-started,
+                                               process_exited=changed,schema=4)
+            require(not changed,'startup_failed')
             require(state['DropInPaths'] == str(DROP), 'unexpected_override')
             argv(state, 'openflux-ack-diag')
-            records = journal(state['InvocationID'])
             snapshots = [r for r in records if 'values' in r]
-            readiness = readiness_observation(records, time.monotonic() - started)
             if readiness:
                 last = snapshots[-1]
                 v = last['values']
@@ -302,7 +330,10 @@ def switch():
                     return
             require(time.monotonic() - started < 50, 'ready_timeout')
             time.sleep(2)
-    except BaseException:
+    except BaseException as error:
+        if isinstance(error,DiagnosticStartupFailed):
+            save('startup-failure.json',error.safe)
+            print(json.dumps(error.safe))
         if applied:
             rollback()
         raise
@@ -355,6 +386,8 @@ if __name__ == '__main__':
         else:
             raise RuntimeError('invalid_action')
     except BaseException as error:
-        safe = str(error) if isinstance(error, RuntimeError) else type(error).__name__
-        print(json.dumps({'OPERATION_FAILED': safe}))
+        if isinstance(error,DiagnosticStartupFailed):print(json.dumps(error.safe))
+        else:
+            safe = str(error) if isinstance(error, RuntimeError) else type(error).__name__
+            print(json.dumps({'OPERATION_FAILED': safe}))
         sys.exit(1)

@@ -33,7 +33,7 @@ class EndToEndTests(unittest.TestCase):
         sample, proof = await_stable(lambda: observe_process(state, expected),
                                     {'MainPID': '0', 'InvocationID': 'old'}, expected)
         self.assertTrue(proof['ARGV_MATCH'] and proof['MAINPID_STABLE'] and proof['NEW_INVOCATION_CONFIRMED'])
-        scope = dict(cursor='before', boot_id='simulated-boot', start_monotonic_us=100,
+        scope = dict(schema=3, cursor='before', boot_id='simulated-boot', start_monotonic_us=100,
                      pid=str(proc.pid), invocation=inv, exe=exe,
                      unit='openflux-user2.service', uid=str(os.getuid()), gid=str(os.getgid()))
         entries = []

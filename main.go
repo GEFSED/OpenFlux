@@ -28,10 +28,14 @@ var (
 )
 
 func main() {
+	ackdiag.BeginStartup()
 	utils.ConfigureAckDiagnosticLogging()
 	ackdiag.Enable()
+	ackdiag.StartupOK(ackdiag.DiagnosticInit)
 	//os.Setenv("GODEBUG", "netdns=go")
-	fmt.Print("written by p1neappleXpress\n")
+	if _, err := fmt.Print("written by p1neappleXpress\n"); err != nil {
+		ackdiag.StartupFailure(ackdiag.DiagnosticInit, ackdiag.SchemaFailure)
+	}
 
 	exitNode := flag.Bool("exit-node", false, "Run as exit node")
 	client := flag.Bool("client", false, "Run as client")
@@ -51,6 +55,7 @@ func main() {
 
 	exitMode, err := tunnel.ParseExitMode(*mode)
 	if err != nil {
+		ackdiag.StartupFailure(ackdiag.ProcessStart, ackdiag.UnknownFailure)
 		log.Fatalf("--mode: %v", err)
 	}
 
@@ -65,6 +70,7 @@ func main() {
 	}
 
 	if !*exitNode && !*client {
+		ackdiag.StartupFailure(ackdiag.ProcessStart, ackdiag.UnknownFailure)
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -88,6 +94,7 @@ func main() {
 		var err error
 		globalDocUrl, err = readRequiredOption(globalDocUrl, *urlFile, "document URL")
 		if err != nil {
+			ackdiag.StartupFailure(ackdiag.ProcessStart, ackdiag.UnknownFailure)
 			log.Fatal(err)
 		}
 		inner = yandex.NewYandexVolgaTransport(globalDocUrl, config)
@@ -95,6 +102,7 @@ func main() {
 		var err error
 		globalDocUrl, err = readRequiredOption(globalDocUrl, *urlFile, "document URL")
 		if err != nil {
+			ackdiag.StartupFailure(ackdiag.ProcessStart, ackdiag.UnknownFailure)
 			log.Fatal(err)
 		}
 		inner = yandex.NewYandexDocsTransport(globalDocUrl, config)
@@ -104,12 +112,14 @@ func main() {
 	case "cupsonline":
 		inner = cupsonline.NewCupsonlineTransport(globalDocUrl, config, !*exitNode)
 	default:
+		ackdiag.StartupFailure(ackdiag.ProcessStart, ackdiag.UnknownFailure)
 		log.Fatalf("Unknown transport type: %s", *transportType)
 	}
 
 	if *encryptionKeyFile != "" {
 		secretBytes, err := os.ReadFile(*encryptionKeyFile)
 		if err != nil {
+			ackdiag.StartupFailure(ackdiag.ProcessStart, ackdiag.UnknownFailure)
 			log.Fatalf("Read encryption key file: %v", err)
 		}
 		context := *transportType
@@ -118,6 +128,7 @@ func main() {
 		}
 		encrypted, err := transport.NewEncryptedTransport(inner, strings.TrimSpace(string(secretBytes)), context, *exitNode)
 		if err != nil {
+			ackdiag.StartupFailure(ackdiag.ProcessStart, ackdiag.UnknownFailure)
 			log.Fatalf("Configure encrypted transport: %v", err)
 		}
 		inner = encrypted
@@ -128,11 +139,16 @@ func main() {
 
 	trans := transport.NewCompressedTransport(inner)
 
+	ackdiag.StartupBegin(ackdiag.TransportStart)
 	if err := trans.Start(); err != nil {
+		ackdiag.StartupTransportFailure(err)
 		log.Fatalf("Failed to start transport: %v", err)
 	}
+	ackdiag.StartupOK(ackdiag.TransportStart)
 
+	ackdiag.StartupBegin(ackdiag.ProxyInit)
 	tun := tunnel.NewTCPTunnelMode(trans, *exitNode, exitMode)
+	ackdiag.StartupOK(ackdiag.ProxyInit)
 
 	if *exitNode {
 		if exitMode == tunnel.ExitModeRaw {
