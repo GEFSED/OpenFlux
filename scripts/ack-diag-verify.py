@@ -17,6 +17,7 @@ allowed = set(patches) | {
     '.github/workflows/ci.yml', 'docs/EXIT_ACK_LATENCY_DIAG.md',
     'scripts/ack-diag-patches.json', 'scripts/ack-diag-verify.py',
     'internal/ackdiag/correlator.go', 'internal/ackdiag/correlator_test.go',
+    'internal/ackdiag/lifecycle.go', 'internal/ackdiag/lifecycle_test.go',
     'internal/ackdiag/runtime.go', 'utils/ack_diag_log.go', 'utils/ack_diag_log_test.go',
     'transport/ack_diag_test.go',
 }
@@ -28,6 +29,7 @@ assert not subprocess.check_output(['git', 'status', '--porcelain']).strip()
 PREVIOUS = 'f31a49f7953eb910998ca2bdded22952faaed80d'
 mutable = {
     'internal/ackdiag/correlator.go', 'internal/ackdiag/correlator_test.go',
+    'internal/ackdiag/lifecycle.go', 'internal/ackdiag/lifecycle_test.go',
     'transport/ack_diag_test.go', 'docs/EXIT_ACK_LATENCY_DIAG.md',
     'scripts/ack-diag-verify.py', '.github/workflows/ci.yml',
 }
@@ -38,6 +40,14 @@ for path in patches:
 for path in ('internal/ackdiag/runtime.go', 'utils/ack_diag_log.go'):
     assert Path(path).read_bytes() == subprocess.check_output(['git', 'show', PREVIOUS + ':' + path]), path
 print('Networking, hook sites, runtime logger byte-identical to previous diagnostic: PASS')
+VALIDATED = '4e991a6e3856da7f4372be69091d830e5e3421c8'
+rst_changes = set(subprocess.check_output(['git', 'diff', '--name-only', VALIDATED, 'HEAD']).decode().splitlines())
+assert rst_changes <= {
+    'internal/ackdiag/correlator.go', 'internal/ackdiag/correlator_test.go',
+    'internal/ackdiag/lifecycle.go', 'internal/ackdiag/lifecycle_test.go',
+    'docs/EXIT_ACK_LATENCY_DIAG.md', 'scripts/ack-diag-verify.py',
+}, sorted(rst_changes)
+print('RST follow-up: correlator/tests/docs/verifier only; all network code unchanged: PASS')
 head = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip()
 manifest = {'production_base': BASE, 'diagnostic_commit': head,
             'diagnostics_only_source_verification': 'PASS',

@@ -75,11 +75,14 @@ type record struct {
     ackAt time.Time
     ackCover int64
     invalid bool
+    loss *lossEvidence
 }
 type ackEvent struct { end int64; at time.Time; expired bool }
 type flow struct {
+    id uint64 // Synthetic generation ID; never derived from a tuple or ISN.
     anchor uint32
     born time.Time
+    resetAt, replacedAt time.Time
     high, ackHigh, finEnd int64
     ackSeen, peerFIN, closed bool
     ranges []record // Sorted, disjoint; delivered history is retained until stop.
@@ -112,6 +115,7 @@ type Engine struct {
     ttl time.Duration
     outstanding, outstandingRanges uint64
     wsDecode,decodeInject,httpDuration,enqueueDelay,httpQueueDelay Histogram
+    provenance []generationEvidence
 }
 var metricNames=[]string{
     "downlink_tcp_segments_created","unique_downlink_tcp_bytes","retransmitted_segments","retransmitted_bytes","retransmission_attempts",
@@ -139,12 +143,6 @@ func(e *Engine) room(records,attempts,refs,acks int)bool {
 func firstOut(r record)time.Time {
     t:=r.attempts[0].out;for _,a:=range r.attempts[1:]{if a.out.Before(t){t=a.out}};return t
 }
-func(e *Engine) invalidateOpen(f *flow,eviction bool) {
-    for i:=range f.ranges{r:=&f.ranges[i];if r.ackAt.IsZero()&&!r.invalid{
-        r.invalid=true;if eviction{e.metrics["evicted_unique_bytes"]+=uint64(r.hi-r.lo);e.metrics["correlator_evictions"]++}
-    }}
-}
-
 // outgoing and acknowledge are also the event-level test interface. Callers hold
 // mu. Event times are observation times, allowing deterministic reordered hooks.
 func(e *Engine) outgoing(p packet,at time.Time)*attempt {
@@ -153,34 +151,47 @@ func(e *Engine) outgoing(p packet,at time.Time)*attempt {
     // RST and pure ACK SEQ fields do not describe new downlink data. In particular
     // a legal RST may have SEQ=0, far from the SYN. Never unwrap that as data.
     if p.rst {
-        if len(gs)>1{e.invalid("ambiguous_flow_generation");return nil}
         e.metrics["ignored_control_sequences"]++
-        if f!=nil{f.closed=true;e.invalidateOpen(f,false);e.metrics["flow_reset_events"]++;e.checkFlow(f)}
+        e.observeReset(p,at,false)
         return nil
     }
     if p.size==0&&!p.syn&&!p.fin{e.metrics["ignored_control_sequences"]++;return nil}
     if p.syn {
-        if f!=nil&&f.anchor==p.seq&&(f.closed||f.created>0){e.invalid("ambiguous_flow_generation");return nil}
+        if f!=nil&&at.Before(f.born){e.ambiguous("before_syn",eventSYN,at,gs);return nil}
+        if f!=nil&&f.anchor==p.seq&&(f.closed||f.created>0){e.ambiguous("same_isn_syn",eventSYN,at,gs);return nil}
         if f==nil||f.anchor!=p.seq {
             if e.generations>=e.capFlows{e.invalid("diagnostic_capacity_drops");return nil}
-            if f!=nil{e.invalidateOpen(f,false);f.closed=true;e.metrics["flow_epoch_resets"]++;e.checkFlow(f)}
-            f=&flow{anchor:p.seq,born:at,high:1};e.flows[p.key]=append(gs,f);e.generations++
+            if f!=nil{f.replacedAt=at;e.metrics["flow_epoch_resets"]++;e.checkFlow(f)}
+            f=&flow{id:uint64(e.generations+1),anchor:p.seq,born:at,high:1};e.flows[p.key]=append(gs,f);e.generations++
         }
     }
     if f==nil{e.invalid("unanchored_flows");return nil}
     // A late observer event belongs to the generation alive at its timestamp.
     if at.Before(f.born){
         f=nil;for _,g:=range gs{if !at.Before(g.born){f=g}}
-        if f==nil{e.invalid("ambiguous_flow_generation");return nil}
+        if f==nil{e.ambiguous("before_syn",eventDATA,at,gs);return nil}
+    }
+    // Reordered old-generation DATA can be selected by a disjoint observed
+    // serial arc. If it could also extend the current epoch, fail closed.
+    if p.size>0&&!p.syn{
+        var owner *flow
+        for _,g:=range gs{if at.Before(g.born){continue};x,ok:=offset(p.seq,g.anchor);if !ok||x<1||x>=g.high{continue}
+            if owner!=nil{e.ambiguous("data_overlap",eventDATA,at,[]*flow{owner,g});return nil};owner=g
+        }
+        if owner!=nil&&owner!=f{
+            if x,ok:=offset(p.seq,f.anchor);ok&&x>=1{e.ambiguous("data_overlap",eventDATA,at,[]*flow{f,owner});return nil}
+            f=owner
+        }
     }
     lo,ok:=offset(p.seq,f.anchor);if !ok{e.invalid("unsupported_serial_range");return nil}
     if p.syn{lo++}
     hi:=lo+int64(p.size);end:=hi;if p.fin{end++}
     if lo<1||end>=1<<31{e.invalid("unsupported_serial_range");return nil}
-    if p.size>0&&f.closed{e.invalid("ambiguous_flow_generation");return nil}
+    // Observed RST/FIN is not proof of receiver acceptance. Subsequent or
+    // reordered data observations remain correlatable, never implicitly ACKed.
     // Numeric sequence arcs of retained epochs may not overlap. Without a
     // connection ID, delayed old-generation bytes cannot safely be distinguished.
-    if p.size>0{for _,g:=range e.flows[p.key]{if g==f{continue};x,valid:=offset(p.seq,g.anchor);if valid&&x<g.high&&x+int64(p.size)>0{e.invalid("ambiguous_flow_generation");return nil}}}
+    if p.size>0{for _,g:=range e.flows[p.key]{if g==f||at.Before(g.born){continue};x,valid:=offset(p.seq,g.anchor);if valid&&x<g.high&&x+int64(p.size)>0{e.ambiguous("data_overlap",eventDATA,at,[]*flow{f,g});return nil}}}
     if end>f.high{f.high=end};if p.fin{f.finEnd=end}
     if p.size==0{e.applyACKs(f);e.checkFlow(f);return nil}
     e.metrics["downlink_tcp_segments_created"]++
@@ -219,18 +230,22 @@ func(e *Engine) Outgoing(data []byte){
 }
 
 func(e *Engine) acknowledge(p packet,at time.Time){
+    if p.rst{e.observeReset(p,at,true);return}
     gs:=e.flows[p.key];if len(gs)==0{return}
     f:=gs[len(gs)-1]
-    if p.rst{if len(gs)>1{e.invalid("ambiguous_flow_generation");return};f.closed=true;e.invalidateOpen(f,false);e.metrics["flow_reset_events"]++;e.checkFlow(f);return}
-    if !p.ackFlag{if p.fin{if len(gs)>1{e.invalid("ambiguous_flow_generation");return};f.peerFIN=true;e.updateClosed(f)};return};e.metrics["ack_observations"]++
+    if !p.ackFlag{if p.fin{if len(gs)>1{e.ambiguous("fin_without_ack",eventFIN,at,gs);return};f.peerFIN=true;e.updateClosed(f)};return};e.metrics["ack_observations"]++
     // ACKs which fit an old epoch are routed to that epoch only. If two epochs
     // overlap, fail closed instead of letting old traffic acknowledge new data.
     var match *flow;var ack int64
     for _,g:=range gs{
+        if at.Before(g.born){continue}
         x,ok:=offset(p.ack,g.anchor);if !ok||x<1||x>g.high{continue}
-        if match!=nil{e.invalid("ambiguous_flow_generation");return};match=g;ack=x
+        if match!=nil{e.ambiguous("ack_overlap",eventACK,at,[]*flow{match,g});return};match=g;ack=x
     }
     if match!=nil{f=match}else{
+        // Defer a future ACK only when there is exactly one possible owner.
+        if len(gs)>1{e.ambiguous("ack_no_owner",eventACK,at,gs);return}
+        if at.Before(f.born){e.ambiguous("before_syn",eventACK,at,gs);return}
         var ok bool;ack,ok=offset(p.ack,f.anchor);if !ok||ack<1{e.invalid("unsupported_serial_range");return}
     }
     if p.fin{f.peerFIN=true}
@@ -251,7 +266,8 @@ func(e *Engine) applyACKEvent(f *flow,ev ackEvent){
     if ev.expired||ev.end>f.high{return}
     for i:=0;i<len(f.ranges);i++{
         r:=&f.ranges[i]
-        if r.invalid||r.lo>=ev.end||firstOut(*r).After(ev.at){continue}
+        if r.invalid{if r.loss!=nil&&ev.end>=r.hi&&!ev.at.Before(r.loss.at){r.loss.lateACK=true};continue}
+        if r.lo>=ev.end||firstOut(*r).After(ev.at){continue}
         if !r.ackAt.IsZero()&&!ev.at.Before(r.ackAt){continue}
         if ev.end<r.hi{
             if !e.room(1,0,len(r.attempts),0){return}
@@ -339,15 +355,13 @@ func(e *Engine) Event(n string){e.mu.Lock();defer e.mu.Unlock();switch n{case "w
 func(e *Engine) WSConnected(on bool){e.mu.Lock();defer e.mu.Unlock();e.metrics["ws_connected"]=0;if on{e.metrics["ws_connected"]=1}}
 
 func(e *Engine) expire(now time.Time){
-    for _,gs:=range e.flows{for _,f:=range gs{
-        for i:=range f.acks{a:=&f.acks[i];if !a.expired&&a.end>f.high&&now.Sub(a.at)>=e.ttl{a.expired=true;e.invalid("expired_observer_ack_events");e.metrics["correlator_evictions"]++}}
-        for i:=range f.ranges{
-        r:=&f.ranges[i];if !r.invalid&&r.ackAt.IsZero()&&now.Sub(firstOut(*r))>=e.ttl{
-            e.peak("oldest_unacked_age_max_ns",uint64(now.Sub(firstOut(*r))))
-            r.invalid=true;e.metrics["correlator_evictions"]++;e.metrics["evicted_unique_bytes"]+=uint64(r.hi-r.lo)
-        }
-    };e.checkFlow(f)}}
-    for k,t:=range e.tags{if now.Sub(t.created)>=e.ttl{delete(e.tags,k);e.tagBytes-=t.retained;e.metrics["correlator_evictions"]++}}
+    // Unique ranges, attempts, generations and ACK history are session-retained
+    // under hard caps. Only transient buffer identity tags have an idle TTL.
+    for k,t:=range e.tags{if now.Sub(t.created)>=e.ttl{
+        delete(e.tags,k);e.tagBytes-=t.retained;e.metrics["correlator_evictions"]++
+        e.metrics["expired_identity_tags"]++
+        if t.owner!=nil{e.invalidateAttempt(t.owner,lossTTL,eventTTL,now)}
+    }}
 }
 
 var latencyNames=[]string{"tunnel_first_out_to_ack","tunnel_last_out_to_ack","http_first_start_to_ack","http_last_start_to_ack","http_first_success_end_to_ack","http_last_success_end_to_ack"}
@@ -392,10 +406,11 @@ func(e *Engine) Snapshot()map[string]uint64{
     }}
     e.peak("oldest_unacked_age_max_ns",m["oldest_unacked_age_current_ns"]);m["oldest_unacked_age_max_ns"]=e.metrics["oldest_unacked_age_max_ns"]
     m["ack_advancement_unique_bytes"]=m["acked_unique_downlink_tcp_bytes"]
+    e.lifecycleSnapshot(m)
     m["counter_consistency"]=1
     if total!=m["unique_downlink_tcp_bytes"]||total!=m["acked_unique_downlink_tcp_bytes"]+m["outstanding_unique_bytes_current"]+m["invalidated_unique_bytes"]||m["acked_unique_downlink_tcp_bytes"]>total||m["outstanding_unique_bytes_current"]!=m["http_not_started_bytes"]+m["http_inflight_bytes"]+m["http_success_not_acked_bytes"]+m["http_failed_not_acked_bytes"]||nr!=e.records||na!=e.attempts||nref!=e.references||nack!=e.acks||ng!=e.generations{e.invalid("invariant_failures");m["invariant_failures"]=e.metrics["invariant_failures"];m["counter_consistency"]=0}
     m["correlation_valid"]=m["counter_consistency"]
-    for _,k:=range []string{"invalidated_unique_bytes","correlator_evictions","diagnostic_capacity_drops","sequence_constraint_violations","ambiguous_flow_generation","unanchored_flows","unresolved_ack_events","expired_observer_ack_events","pending_observer_ack_events","ack_without_http_start_bytes","ws_timestamp_missing","invariant_failures"}{if m[k]>0{m["correlation_valid"]=0}}
+    for _,k:=range []string{"invalidated_unique_bytes","correlator_evictions","diagnostic_capacity_drops","sequence_constraint_violations","ambiguous_flow_generation","unanchored_flows","unresolved_ack_events","expired_observer_ack_events","pending_observer_ack_events","ack_without_http_start_bytes","ws_timestamp_missing","invariant_failures","provenance_capacity_drops"}{if m[k]>0{m["correlation_valid"]=0}}
     for i,n:=range latencyNames{hist[i].snapshot(m,n)}
     e.wsDecode.snapshot(m,"ws_to_ack_decode");e.decodeInject.snapshot(m,"ack_decode_to_inject");e.httpDuration.snapshot(m,"http_duration");e.enqueueDelay.snapshot(m,"tunnel_to_enqueue");e.httpQueueDelay.snapshot(m,"enqueue_to_http_start")
     return m

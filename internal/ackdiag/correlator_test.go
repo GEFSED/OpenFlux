@@ -86,9 +86,9 @@ func TestFlowCloseReuseAndOldACK(t *testing.T){
     s.ack(9101);assertState(t,s.e,200,200,0,true)
     if s.e.generations!=2{t.Fatal("generation history lost")}
 }
-func TestAmbiguousReuseAndResetOutstandingFailClosed(t *testing.T){
+func TestAmbiguousReuseAndResetOutstandingRetained(t *testing.T){
     s:=sim(1000);s.send(1001,100);s.e.outgoing(packet{key:s.key,rst:true},s.at)
-    m:=assertState(t,s.e,100,0,0,false);if m["invalidated_unique_bytes"]!=100||m["correlation_valid"]!=0{t.Fatal("RST silently delivered/lost bytes")}
+    m:=assertState(t,s.e,100,0,100,true);if m["invalidated_unique_bytes"]!=0||m["rst_unacked_unique_bytes"]!=100{t.Fatal("RST silently delivered/lost bytes")}
     s.advance(time.Second);s.syn(1000);if s.e.Snapshot()["ambiguous_flow_generation"]!=1{t.Fatal("same-ISN reuse guessed")}
     s=sim(1000);s.send(1001,100);s.ack(1101);s.syn(1050);s.send(1051,100)
     if s.e.Snapshot()["ambiguous_flow_generation"]!=1{t.Fatal("overlapping epochs guessed")}
@@ -107,15 +107,16 @@ func TestOldViolationRuleReproducedWithoutGuessingRealPackets(t *testing.T){
     m:=assertState(t,s.e,0,0,0,true)
     if old!=5||m["ignored_control_sequences"]!=6{t.Fatal("old predicate reproduction")}
 }
-func TestSerialUnsupportedAndDeferredACKExpiry(t *testing.T){
+func TestSerialUnsupportedAndDeferredACKRetention(t *testing.T){
     s:=sim(1000);s.send(1000+(1<<31),1);if s.e.Snapshot()["unsupported_serial_range"]!=1{t.Fatal("half space guessed")}
     s=sim(1000);s.send(999,1);if s.e.Snapshot()["unsupported_serial_range"]!=1{t.Fatal("pre-SYN data guessed")}
     s=sim(1000);s.ack(1201);if s.e.Snapshot()["correlation_valid"]!=0{t.Fatal("unresolved ACK valid")};s.advance(RecordTTL);m:=s.e.Snapshot()
-    if m["expired_observer_ack_events"]!=1||m["correlator_evictions"]!=1{t.Fatal("missing observation not invalidated")}
+    if m["expired_observer_ack_events"]!=0||m["correlator_evictions"]!=0||m["correlation_valid"]!=0{t.Fatal("pending observation must remain invalid, retained")}
+    s.sendAt(1001,200,s.e.flows[s.key][0].born.Add(time.Millisecond));assertState(t,s.e,200,200,0,true)
 }
 func TestTTLAndAllHardCaps(t *testing.T){
-    s:=sim(1000);s.send(1001,100);s.advance(RecordTTL);m:=assertState(t,s.e,100,0,0,false)
-    if m["correlator_evictions"]!=1||m["invalidated_unique_bytes"]!=100||m["correlation_valid"]!=0{t.Fatal("TTL")}
+    s:=sim(1000);s.send(1001,100);s.advance(2*RecordTTL);m:=assertState(t,s.e,100,0,100,true)
+    if m["correlator_evictions"]!=0||m["invalidated_unique_bytes"]!=0{t.Fatal("ledger wall-clock expiry")}
     for _,which:=range []string{"range","attempt","reference","ack","flow"}{t.Run(which,func(t *testing.T){
         s:=sim(1000)
         switch which{case "range":s.e.capRecords=0;case "attempt":s.e.capAttempts=0;case "reference":s.e.capReferences=0;case "ack":s.e.capACKs=0;case "flow":s.e.capFlows=1}
