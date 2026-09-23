@@ -1,4 +1,4 @@
-"""Exact production grounding plus an explicit startup-observation-only diff."""
+"""Exact production grounding plus enumerated startup/bootstrap observations."""
 import hashlib
 import json
 from pathlib import Path
@@ -20,6 +20,11 @@ allowed={
     'scripts/ack-readiness/test_journal_validator.py','scripts/ack-readiness/test_end_to_end.py',
     'scripts/ack-readiness/test_startup.py','scripts/ack-readiness/startup_simulated_invocation.py',
     'scripts/ack-diag-verify.py','.github/workflows/ci.yml','docs/ACK_STARTUP_OBSERVABILITY.md',
+    'internal/ackdiag/bootstrap.go','internal/ackdiag/bootstrap_test.go',
+    'transport/yandex/vyandex.go','transport/yandex/bootstrap_observation_test.go',
+    'scripts/ack-readiness/schema5.py','scripts/ack-readiness/test_bootstrap.py',
+    'scripts/ack-readiness/bootstrap_simulated_invocation.py',
+    'docs/BOOTSTRAP_RESPONSE_OBSERVABILITY.md',
 }
 assert not subprocess.check_output(['git','status','--porcelain']).strip(), 'dirty_source'
 assert changed_since(FROZEN)<=allowed, sorted(changed_since(FROZEN)-allowed)
@@ -32,7 +37,31 @@ files=subprocess.check_output(['git','ls-tree','-r','--name-only',FROZEN,
     'internal/ackdiag/correlator_test.go','internal/ackdiag/lifecycle_test.go',
     'internal/ackdiag/schema3_fixture_test.go','scripts/ack-diag-patches.json',
     'scripts/ack-readiness/argv_validator.py','scripts/ack-readiness/schema3.py']).decode().splitlines()
-for path in files:assert Path(path).read_bytes()==blob(path),('frozen_source_changed',path)
+for path in files:
+    if path!='transport/yandex/vyandex.go':
+        assert Path(path).read_bytes()==blob(path),('frozen_source_changed',path)
+
+# Remove ONLY enumerated metadata calls. Even the ignored ReadAll error remains
+# ignored by every production decision. Byte equality proves that regex,
+# requests, redirects, statuses, auth, relay and HTTP/WS hooks are unchanged.
+auth=Path('transport/yandex/vyandex.go').read_text()
+for added in (
+    '\tvar bootstrap *ackdiag.BootstrapResponse\n',
+    '\tdefer func() { ackdiag.EmitBootstrap(bootstrap) }()\n',
+    '\t\t\tbootstrap = ackdiag.ObserveBootstrapTerminal("NETWORK_ERROR", currentURL, err)\n',
+    '\t\tbootstrap = ackdiag.ObserveBootstrapResponse(currentURL, resp, body, bodyErr, reClientConfig)\n',
+    '\t\t\tackdiag.EmitBootstrap(bootstrap)\n',
+    '\t\t\tbootstrap = nil\n',
+    '\t\tbootstrap = ackdiag.ObserveBootstrapTerminal("REDIRECT_LIMIT", docURL, nil)\n',
+    '\tackdiag.BootstrapSearch(bootstrap, len(m) >= 2)\n',
+    '\t\tackdiag.BootstrapParsed(bootstrap, err)\n',
+    '\tackdiag.BootstrapParsed(bootstrap, nil)\n',
+):
+    assert auth.count(added)==1, 'bootstrap_attachment_count'
+    auth=auth.replace(added,'')
+assert auth.count('body, bodyErr := io.ReadAll(resp.Body)')==1
+auth=auth.replace('body, bodyErr := io.ReadAll(resp.Body)','body, _ := io.ReadAll(resp.Body)')
+assert auth.encode()==blob('transport/yandex/vyandex.go'),'bootstrap_production_behavior_changed'
 
 # Removing the enumerated observation calls reconstructs exact previous main.
 main=Path('main.go').read_text()
@@ -72,10 +101,11 @@ assert runtime.encode()==blob('internal/ackdiag/runtime.go'),'correlation_attach
 head=subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()
 changed=changed_since(BASE)
 manifest=dict(production_base=BASE,diagnostic_commit=head,
-    diagnostics_only_source_verification='PASS',startup_contract=4,
+    diagnostics_only_source_verification='PASS',startup_contract=5,
+    bootstrap_contract=5,bootstrap_production_projection='PASS',
     startup_base=FROZEN,network_code_match=True,hook_site_match=True,
     authorization_semantics_unchanged=True,proxy_semantics_unchanged=True,
     source_files={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in sorted(changed)})
 out=Path(sys.argv[1]);out.mkdir(parents=True,exist_ok=True)
 (out/'source-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
-print('PASS: frozen network/auth/proxy/hooks/correlator; diagnostic startup/logging additions only')
+print('PASS: frozen network/auth/proxy/hooks/correlator; enumerated diagnostic bootstrap/startup observations only')

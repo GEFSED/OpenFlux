@@ -137,6 +137,8 @@ type volgaAuth struct {
 }
 
 func authorize(docURL string) (*volgaAuth, error) {
+	var bootstrap *ackdiag.BootstrapResponse
+	defer func() { ackdiag.EmitBootstrap(bootstrap) }()
 	utils.Debugf("[VOLGA] authorize(%s)", docURL)
 
 	jar, _ := cookiejar.New(nil)
@@ -168,14 +170,18 @@ func authorize(docURL string) (*volgaAuth, error) {
 
 		resp, err := session.Do(req)
 		if err != nil {
+			bootstrap = ackdiag.ObserveBootstrapTerminal("NETWORK_ERROR", currentURL, err)
 			return nil, fmt.Errorf("GET %s: %w", currentURL, err)
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, bodyErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		bootstrap = ackdiag.ObserveBootstrapResponse(currentURL, resp, body, bodyErr, reClientConfig)
 
 		utils.Debugf("[VOLGA] GET %s -> %d (%d bytes)", currentURL, resp.StatusCode, len(body))
 
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			ackdiag.EmitBootstrap(bootstrap)
+			bootstrap = nil
 			loc := resp.Header.Get("Location")
 			if loc == "" {
 				return nil, fmt.Errorf("redirect without Location from %s", currentURL)
@@ -194,12 +200,14 @@ func authorize(docURL string) (*volgaAuth, error) {
 	}
 
 	if finalBody == nil {
+		bootstrap = ackdiag.ObserveBootstrapTerminal("REDIRECT_LIMIT", docURL, nil)
 		return nil, fmt.Errorf("too many redirects from %s", docURL)
 	}
 
 	utils.Debugf("[VOLGA] final URL: %s", finalURL)
 
 	m := reClientConfig.FindSubmatch(finalBody)
+	ackdiag.BootstrapSearch(bootstrap, len(m) >= 2)
 	if len(m) < 2 {
 		preview := string(finalBody)
 		if len(preview) > 3000 {
@@ -213,8 +221,10 @@ func authorize(docURL string) (*volgaAuth, error) {
 	dec := json.NewDecoder(bytes.NewReader(m[1]))
 	dec.UseNumber()
 	if err := dec.Decode(&cfg); err != nil {
+		ackdiag.BootstrapParsed(bootstrap, err)
 		return nil, fmt.Errorf("parse client-config: %w", err)
 	}
+	ackdiag.BootstrapParsed(bootstrap, nil)
 
 	utils.Debugf("[VOLGA] client-config keys: %v", mapKeys(cfg))
 

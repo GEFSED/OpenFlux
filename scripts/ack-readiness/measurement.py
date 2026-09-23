@@ -1,6 +1,6 @@
 """Schema-3 numeric readiness/capture only. No packet or network behavior."""
 from schema3 import LIMITS, VALID_ZERO, HISTOGRAMS, BUCKETS
-from schema4 import validate_numeric as validate_snapshot, startup_outcome
+from schema5 import validate_numeric as validate_snapshot, startup_outcome
 
 
 def valid(v):
@@ -29,7 +29,7 @@ def idle_proof(snapshots):
 def readiness_observation(records, elapsed, process_exited=False, schema=3):
     """Shared deployment/local-simulation gate, after process and log checks."""
     startup=None
-    if schema==4:startup=startup_outcome(records,process_exited)
+    if schema in (4,5):startup=startup_outcome(records,process_exited)
     snapshots = [r for r in records if 'values' in r]
     if not snapshots:
         return None
@@ -45,7 +45,7 @@ def readiness_observation(records, elapsed, process_exited=False, schema=3):
         return None
     if not any(r.get('event') == 'banner' for r in records):
         raise RuntimeError('startup_banner_missing')
-    if schema==4 and (not startup or not all(startup[k] for k in (
+    if schema in (4,5) and (not startup or not all(startup[k] for k in (
             'transport_started','authorization_completed','relay_workers_started',
             'proxy_initialized','diagnostic_snapshot_loop_started'))):
         return None

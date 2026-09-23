@@ -58,10 +58,10 @@ func decodeStartup(t *testing.T,line string) StartupEvent {
 	return e
 }
 func TestStartupScenariosAndSecrets(t *testing.T){
-	cases:=map[string]FailureClass{"success":NoFailure,"transport_failure":TransportOther,"missing":AuthMissing,"captcha":AuthChallenge,"auth_other":AuthOther,"relay_failure":RelayFailure,"proxy_failure":ProxyFailure,"diagnostic_failure":DiagnosticFailure,"banner_failure":SchemaFailure,"snapshot_failure":SchemaFailure,"unknown":UnknownFailure,"long_error":AuthMissing}
+	cases:=map[string]FailureClass{"success":NoFailure,"transport_failure":TransportOther,"missing":AuthMissing,"captcha":AuthMissing,"auth_other":AuthOther,"relay_failure":RelayFailure,"proxy_failure":ProxyFailure,"diagnostic_failure":DiagnosticFailure,"banner_failure":SchemaFailure,"snapshot_failure":SchemaFailure,"unknown":UnknownFailure,"long_error":AuthMissing}
 	for name,want:=range cases {t.Run(name,func(t *testing.T){
 		lines:=startupScenario(name)
-		for i,l:=range lines {e:=decodeStartup(t,l);if e.Schema!=4||e.Ordinal!=uint64(i+1){t.Fatal("contract")};if strings.Contains(l,syntheticSecret)||strings.Contains(l,"https://"){t.Fatal("secret leak")}}
+		for i,l:=range lines {e:=decodeStartup(t,l);if e.Schema!=LogSchema||e.Ordinal!=uint64(i+1){t.Fatal("contract")};if strings.Contains(l,syntheticSecret)||strings.Contains(l,"https://"){t.Fatal("secret leak")}}
 		last:=decodeStartup(t,lines[len(lines)-1]);if last.Failure!=want{t.Fatal("failure class")}
 		if name=="success"&&(!last.TransportStarted||!last.AuthorizationCompleted||!last.RelayWorkersStarted||!last.ProxyInitialized||!last.SnapshotLoopStarted){t.Fatal("completion flags")}
 		if name!="success"&&last.Result!="failure"{t.Fatal("missing failure")}

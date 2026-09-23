@@ -52,7 +52,7 @@ func TestStartupOriginalExitBehaviorAndSecretSuppression(t *testing.T) {
 		if name=="success" {if !snapshot||!last.SnapshotLoopStarted{t.Fatal("first snapshot")}} else {
 			if snapshot{t.Fatal("unexpected snapshot")}
 			if name!="exit_before_loop"&&last.Result!="failure"{t.Fatal("missing classified failure")}
-			if name=="captcha"&&last.Failure!=ackdiag.AuthChallenge{t.Fatal("captcha evidence")}
+			if name=="captcha"&&last.Failure!=ackdiag.AuthMissing{t.Fatal("captcha evidence")}
 		}
 	})}
 }

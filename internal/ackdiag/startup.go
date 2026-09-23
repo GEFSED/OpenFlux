@@ -3,7 +3,6 @@ package ackdiag
 import (
 	"encoding/json"
 	"io"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -12,7 +11,7 @@ import (
 
 // LogSchema versions the external log contract, not Engine's frozen schema-3
 // accounting. Schema 3 has no startup-event envelope.
-const LogSchema = 4
+const LogSchema = 5
 
 type StartupStage string
 type FailureClass string
@@ -58,6 +57,8 @@ type StartupRecorder struct {
 	out, fallback io.Writer
 	state StartupEvent
 	failed bool
+	bootstrapOrdinal uint64
+	bootstrapChallenge bool
 }
 
 func NewStartupRecorder(out, fallback io.Writer) *StartupRecorder {
@@ -107,9 +108,8 @@ func (r *StartupRecorder) Record(stage StartupStage, result string, failure Fail
 	}
 }
 
-// Classify only the exact production auth wrapper/missing-config error. URL
-// hostname+path are inspected in memory; query/fragment never affect the class.
-// "captcha" elsewhere in an error or exit status alone is NOT evidence.
+// Error strings alone never establish a challenge. Only the bootstrap body
+// structural observer can upgrade AuthMissing in StartupTransportFailure.
 func ClassifyTransportFailure(err error) (StartupStage, FailureClass) {
 	if err==nil{return TransportStart,UnknownFailure}
 	s:=err.Error()
@@ -117,14 +117,6 @@ func ClassifyTransportFailure(err error) (StartupStage, FailureClass) {
 	s=strings.TrimPrefix(s,"auth: ")
 	const missing="client-config not found in "
 	if !strings.HasPrefix(s,missing){return Authorization,AuthOther}
-	u,e:=url.Parse(strings.TrimPrefix(s,missing))
-	if e==nil && (u.Scheme=="https"||u.Scheme=="http") {
-		h:=strings.ToLower(u.Hostname());p:=strings.ToLower(u.Path)
-		if (h=="yandex.ru"||strings.HasSuffix(h,".yandex.ru")) &&
-			(p=="/showcaptcha"||strings.HasPrefix(p,"/showcaptcha/")||p=="/captcha"||strings.HasPrefix(p,"/captcha/")) {
-			return Authorization,AuthChallenge
-		}
-	}
 	return Authorization,AuthMissing
 }
 
@@ -137,7 +129,14 @@ func BeginStartup() {
 func StartupBegin(s StartupStage){if r:=startupRecorder.Load();r!=nil{r.Record(s,"begin",NoFailure)}}
 func StartupOK(s StartupStage){if r:=startupRecorder.Load();r!=nil{r.Record(s,"ok",NoFailure)}}
 func StartupFailure(s StartupStage,f FailureClass){if r:=startupRecorder.Load();r!=nil{r.Record(s,"failure",f)}}
-func StartupTransportFailure(err error){s,f:=ClassifyTransportFailure(err);StartupFailure(s,f)}
+func StartupTransportFailure(err error){
+	s,f:=ClassifyTransportFailure(err)
+	if r:=startupRecorder.Load();r!=nil&&f==AuthMissing {
+		r.mu.Lock();challenge:=r.bootstrapChallenge;r.mu.Unlock()
+		if challenge {f=AuthChallenge}
+	}
+	StartupFailure(s,f)
+}
 
 // Observe ONLY compile-time format strings at existing log call sites, before
 // the verbose flag gate. No arguments, formatted errors, or packet data enter
