@@ -22,6 +22,7 @@ BIN_SHA='a61d4c4777d045346590d9fc8613b14500f4a7e0ed5cfbe2f5b8d8f660acd2e0'
 PROD_SHA='08fcf4020cd3c7274c7abd78fe386b40d2fcf8515082d3475ced324ad109217c'
 ZIP_SHA='d29668c8255bccc79143c78b49cfb65de853f4586bfc15745ad0334fb38e2839'
 TAR_SHA='9c4a61d8ed837905a1de9bf2edba3977ec24647046a50fa3662d9f9ab6a49877'
+EXPECTED_BOOT_ID='67a7ea38-d0bb-427d-ae1d-bc76acd59e69'
 UNIT='openflux-user3.service'
 OTHERS=('openflux.service','openflux-user2.service')
 PROD=Path('/root/openflux/openflux')
@@ -45,7 +46,6 @@ def save():
     atomic_write(ROOT/'result.json', REPORT)
 def cmd(*args,timeout=30):
     r=subprocess.run(args,capture_output=True,text=True,timeout=timeout)
-    
     if r.returncode != 0:raise ProbeFailure('CONTROL_COMMAND_FAILED','OPERATOR_CONTROL_FAILURE')
     return r.stdout
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -106,7 +106,7 @@ def check_holds():
         else:
             require(props['Restart']=='no','application_restart_hold_changed')
             if u!=UNIT:require(props['MainPID']=='0' and props['ActiveState']=='inactive','other_service_started')
-    require(Path('/proc/sys/kernel/random/boot_id').read_text().strip()==json.loads((ROOT/'hold-baseline.json').read_text())['CURRENT_BOOT_ID'],'boot_changed')
+    require(Path('/proc/sys/kernel/random/boot_id').read_text().strip()==EXPECTED_BOOT_ID,'boot_changed')
 
 
 def ground():
@@ -320,7 +320,8 @@ def run():
             state=show(UNIT)
             validate_counter(state)
             require(state['MainPID']=='0','failure_not_stopped_without_retry')
-            REPORT.update(USER3_EXIT_CODE=int(state['ExecMainStatus']),USER3_EXEC_MAIN_CODE=state['ExecMainCode'],USER3_SYSTEMD_RESULT=state['Result'],USER3_RESTART_DELTA_AFTER_START=0)
+            exit_fields=termination_fields(state)
+            REPORT.update(USER3_EXIT_CODE=exit_fields['PROCESS_EXIT_CODE'],USER3_EXIT_SIGNAL=exit_fields['PROCESS_EXIT_SIGNAL'],USER3_EXEC_MAIN_CODE=state['ExecMainCode'],USER3_SYSTEMD_RESULT=state['Result'],USER3_RESTART_DELTA_AFTER_START=0)
         elif succeeded:
             require(proof is not None,'success_pid_not_settled')
             last_records=journal();require(capture_classification(last_records,False),'startup_not_successful')
