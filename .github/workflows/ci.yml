@@ -28,6 +28,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Audit nested module metadata without edits
+        working-directory: mobile
+        run: go mod tidy -diff
       - name: Production binary provenance and build settings
         run: |
           curl --fail --location --silent --show-error https://github.com/damnurmum/OpenFlux-Android/releases/download/v0.6.0/OpenFlux-linux-amd64 -o "$RUNNER_TEMP/production-openflux"
