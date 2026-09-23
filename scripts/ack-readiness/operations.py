@@ -13,7 +13,7 @@ import time
 import zipfile
 from journal_validator import Rejected, journal_command, validate_journal_json
 from argv_validator import ReadinessError, expected_tokens, exec_directive, observe_process, verify_sample, await_stable
-from schema5 import DiagnosticStartupFailed, startup_outcome
+from schema6 import DiagnosticStartupFailed, startup_outcome
 
 BASE = '081d214300c1067f17f6c0d02f84a8491f1a7b98'
 HEAD = os.environ.get('ACK_DIAGNOSTIC_SOURCE_HEAD', '')
@@ -23,9 +23,9 @@ DIAG_HASH = os.environ.get('ACK_DIAGNOSTIC_BINARY_SHA256', '')
 # This local/CI task never invokes install or switch.
 ZIP_HASH = os.environ.get('ACK_ARTIFACT_ZIP_SHA256', '')
 ROOT = Path('/root/openflux')
-EVIDENCE = Path('/tmp/openflux-ack-schema5-evidence')
-ARCHIVE = Path('/tmp/openflux-ack-schema5.zip')
-DROP = Path('/run/systemd/system/openflux-user2.service.d/ack-schema5.conf')
+EVIDENCE = Path('/tmp/openflux-ack-schema6-evidence')
+ARCHIVE = Path('/tmp/openflux-ack-schema6.zip')
+DROP = Path('/run/systemd/system/openflux-user2.service.d/ack-schema6.conf')
 UNIT = 'openflux-user2.service'
 OTHERS = ['openflux.service', 'openflux-user3.service', 'openflux-refresh.service']
 FIELDS = ['Id', 'ActiveState', 'MainPID', 'ExecMainStartTimestamp', 'ActiveEnterTimestamp', 'NRestarts']
@@ -151,7 +151,7 @@ def classify_early_exit(samples, previous):
     if not grounded:return
     s=grounded[-1]
     scope=load('journal-boundary.json')
-    scope.update(schema=5,pid=s['MainPID'],invocation=s['InvocationID'])
+    scope.update(schema=6,pid=s['MainPID'],invocation=s['InvocationID'])
     save('journal-scope.json',scope)
     records=journal(s['InvocationID'])
     startup_outcome(records,process_exited=True)
@@ -228,7 +228,7 @@ def before_start_cursor(previous_pid):
     raw = command('journalctl', '--no-pager', '-n', '1', '-o', 'json', '--output-fields=__CURSOR')
     entries = [json.loads(line) for line in raw.splitlines()]
     require(len(entries) == 1 and isinstance(entries[0].get('__CURSOR'), str), 'cursor_missing')
-    return {'schema':5,'cursor': entries[0]['__CURSOR'], 'start_monotonic_us': time.monotonic_ns() // 1000,
+    return {'schema':6,'cursor': entries[0]['__CURSOR'], 'start_monotonic_us': time.monotonic_ns() // 1000,
             'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip().replace('-', ''),
             'unit': UNIT, 'exe': str(ROOT / 'openflux-ack-diag'), 'previous_pid': previous_pid}
 
@@ -304,7 +304,7 @@ def switch():
             # Validate ALL its messages before interpreting any failure enum.
             records = journal(current['InvocationID'])
             readiness = readiness_observation(records,time.monotonic()-started,
-                                               process_exited=changed,schema=5)
+                                               process_exited=changed,schema=6)
             require(not changed,'startup_failed')
             require(state['DropInPaths'] == str(DROP), 'unexpected_override')
             argv(state, 'openflux-ack-diag')

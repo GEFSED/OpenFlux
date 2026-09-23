@@ -12,12 +12,13 @@ import operations
 from argv_validator import await_stable, expected_tokens, observe_process
 from journal_validator import Rejected, validate_records
 from schema3 import SchemaError
-from schema5 import validate_bootstrap, bootstrap_outcome
+from schema5 import validate_bootstrap, bootstrap_outcome, KEYS
 from measurement import readiness_observation
 from test_startup import entries, lines, scope5
 
 def fixture(name):
-    return json.loads((Path(os.environ['ACK_BOOTSTRAP_FIXTURE_DIR'])/(name+'.json')).read_text())
+    v=json.loads((Path(os.environ['ACK_BOOTSTRAP_FIXTURE_DIR'])/(name+'.json')).read_text())
+    return dict({k:v[k] for k in KEYS},schema=5)
 
 def response(e):return '[ACK-BOOTSTRAP] '+json.dumps(e,separators=(',',':'))
 
@@ -44,7 +45,7 @@ class BootstrapTests(unittest.TestCase):
 
     def test_exact_go_positive_fixtures(self):
         for p in Path(os.environ['ACK_BOOTSTRAP_FIXTURE_DIR']).glob('*.json'):
-            with self.subTest(p=p.stem):validate_bootstrap(json.loads(p.read_text()))
+            with self.subTest(p=p.stem):validate_bootstrap(fixture(p.stem))
 
     def test_unknown_fields_numbers_types_enums_and_relationships(self):
         original=fixture('normal')

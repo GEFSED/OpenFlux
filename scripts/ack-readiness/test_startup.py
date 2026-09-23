@@ -27,8 +27,10 @@ CASES={'transport_failure':('transport_start','transport_start_other'),
     'unknown':('proxy_init','unknown_startup_failure'),
     'long_error':('authorization','auth_client_config_missing'),
     'exit_before_loop':('proxy_init','unknown_startup_failure')}
-def lines(name):
-    return json.loads((Path(os.environ['ACK_STARTUP_FIXTURE_DIR'])/(name+'.json')).read_text())
+def lines(name,schema=5):
+    # Exercise the historical contract explicitly; schema-6 integration uses 6.
+    values=json.loads((Path(os.environ['ACK_STARTUP_FIXTURE_DIR'])/(name+'.json')).read_text())
+    return [v.replace('"schema":6','"schema":'+str(schema)) for v in values]
 def entries(texts):
     return [entry(s,__CURSOR='new-%d'%i,__MONOTONIC_TIMESTAMP=str(100+i*2000000),
                   __REALTIME_TIMESTAMP=str(100000000+i*2000000)) for i,s in enumerate(texts)]

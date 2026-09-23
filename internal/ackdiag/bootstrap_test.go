@@ -51,7 +51,7 @@ func bootstrapCases() []bootstrapCase {return []bootstrapCase{
 }}
 func fixtureResponse(c bootstrapCase)*BootstrapResponse{
  raw:=c.route;if raw==""{raw=syntheticURL}
- if c.terminal!=""{e:=&BootstrapResponse{Schema:LogSchema,Event:"bootstrap_response",Ordinal:1,HTTPStatusClass:"OTHER",ContentTypeClass:"MISSING",ContentEncodingClass:"IDENTITY",BodyReadErrorClass:readErrorClass(c.err),FinalRouteClass:routeClass(raw,false),ResponseResult:c.terminal,ClientConfigParseResult:"NOT_ATTEMPTED"};if c.terminal=="REDIRECT_LIMIT"{e.Ordinal=11};return e}
+ if c.terminal!=""{e:=&BootstrapResponse{Schema:LogSchema,Event:"bootstrap_response",Ordinal:1,HTTPStatusClass:"OTHER",ContentTypeClass:"MISSING",ContentEncodingClass:"IDENTITY",BodyReadErrorClass:readErrorClass(c.err),FinalRouteClass:routeClass(raw,false),ResponseResult:c.terminal,ClientConfigParseResult:"NOT_ATTEMPTED"};initBootstrapStructure(e,raw);e.StructureScanLimitReason="OTHER";if c.terminal=="REDIRECT_LIMIT"{e.Ordinal=11};return e}
  resp:=&http.Response{StatusCode:c.status,Header:make(http.Header),Uncompressed:c.uncompressed};resp.Header.Set("Content-Type","text/html; charset=utf-8");resp.Header.Set("Content-Encoding",c.encoding)
  e:=newBootstrapResponse(raw,resp,[]byte(c.body),c.err,frozenPattern);e.Ordinal=1
  if c.status<300||c.status>=400 {

@@ -27,9 +27,33 @@ allowed={
     'docs/BOOTSTRAP_RESPONSE_OBSERVABILITY.md',
     'mobile/go.mod','mobile/go.sum',
     'scripts/check-mobile-dependency-selection.py',
+    'internal/ackdiag/bootstrap_structure.go','internal/ackdiag/bootstrap_structure_test.go',
+    'scripts/ack-readiness/schema6.py','scripts/ack-readiness/test_structure.py',
+    'docs/BOOTSTRAP_STRUCTURE_SCHEMA6.md',
 }
 assert not subprocess.check_output(['git','status','--porcelain']).strip(), 'dirty_source'
 assert changed_since(FROZEN)<=allowed, sorted(changed_since(FROZEN)-allowed)
+
+# This task may extend only diagnostic records, their validation, tests and docs.
+SCHEMA5_BASE='3774ace1f58feb2c303df7db7220826c946d545e'
+SCHEMA6_ALLOWED={
+ 'internal/ackdiag/bootstrap.go','internal/ackdiag/startup.go',
+ 'internal/ackdiag/bootstrap_structure.go','internal/ackdiag/bootstrap_structure_test.go',
+ 'internal/ackdiag/bootstrap_test.go',
+ 'scripts/ack-readiness/schema6.py','scripts/ack-readiness/test_structure.py',
+ 'scripts/ack-readiness/journal_validator.py','scripts/ack-readiness/measurement.py',
+ 'scripts/ack-readiness/operations.py','scripts/ack-readiness/test_startup.py',
+ 'scripts/ack-readiness/test_bootstrap.py','scripts/ack-diag-verify.py',
+ '.github/workflows/ci.yml','docs/BOOTSTRAP_STRUCTURE_SCHEMA6.md',
+}
+assert changed_since(SCHEMA5_BASE)<=SCHEMA6_ALLOWED,'schema6_nonobservability_change'
+for path in subprocess.check_output(['git','ls-tree','-r','--name-only',SCHEMA5_BASE,
+    'transport','tunnel','network','mobile','main.go','utils','go.mod','go.sum',
+    'internal/ackdiag/runtime.go','internal/ackdiag/correlator.go','internal/ackdiag/lifecycle.go',
+    'scripts/ack-readiness/argv_validator.py','scripts/ack-readiness/schema5.py']).decode().splitlines():
+    assert Path(path).read_bytes()==subprocess.check_output(['git','show',SCHEMA5_BASE+':'+path]),('schema6_frozen_source_changed',path)
+old_startup=subprocess.check_output(['git','show',SCHEMA5_BASE+':internal/ackdiag/startup.go'])
+assert Path('internal/ackdiag/startup.go').read_bytes().replace(b'const LogSchema = 6',b'const LogSchema = 5')==old_startup,'startup_semantics_changed'
 
 # Every old packet/HTTP/WS hook and network/auth/proxy function is byte-identical.
 # No dependency, configuration, buffer, timer, worker, or queue change is allowed.
@@ -116,8 +140,8 @@ assert runtime.encode()==blob('internal/ackdiag/runtime.go'),'correlation_attach
 head=subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()
 changed=changed_since(BASE)
 manifest=dict(production_base=BASE,diagnostic_commit=head,
-    diagnostics_only_source_verification='PASS',startup_contract=5,
-    bootstrap_contract=5,bootstrap_production_projection='PASS',
+    diagnostics_only_source_verification='PASS',startup_contract=6,
+    bootstrap_contract=6,bootstrap_production_projection='PASS',schema5_baseline=SCHEMA5_BASE,
     startup_base=FROZEN,network_code_match=True,hook_site_match=True,
     authorization_semantics_unchanged=True,proxy_semantics_unchanged=True,
     source_files={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in sorted(changed)})

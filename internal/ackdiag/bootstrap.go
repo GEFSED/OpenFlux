@@ -21,6 +21,7 @@ import (
 )
 
 type BootstrapResponse struct {
+ BootstrapStructure
  Schema int `json:"schema"`
  Event string `json:"event"`
  Ordinal uint64 `json:"ordinal"`
@@ -91,11 +92,12 @@ func inspectStructure(e *BootstrapResponse,body []byte) {
  const limit=1024*1024
  e.StructureScanComplete=len(body)<=limit
  if len(body)>limit{body=body[:limit]}
- z:=html.NewTokenizer(bytes.NewReader(body));z.SetMaxBuf(65536)
+ z:=html.NewTokenizer(bytes.NewReader(body));z.SetMaxBuf(1024*1024+1)
  challengeForm,captchaInput,smartWidget,smartScript:=false,false,false,false
  loginForm,passwordInput:=false,false
- for {
+ for tokens:=0;;tokens++ {
   tt:=z.Next();if tt==html.ErrorToken{if z.Err()!=io.EOF{e.StructureScanComplete=false};break}
+  if tokens>=StructureTokenLimit{e.StructureScanComplete=false;break}
   if tt!=html.StartTagToken&&tt!=html.SelfClosingTagToken&&tt!=html.DoctypeToken{continue}
   tok:=z.Token();if tok.Data=="html"||tt==html.DoctypeToken{e.IsHTML=true}
   attrs:=map[string]string{};for _,a:=range tok.Attr{attrs[a.Key]=a.Val}
@@ -124,6 +126,7 @@ func newBootstrapResponse(raw string,resp *http.Response,body []byte,readErr err
  e.IsHTML=e.ContentTypeClass=="HTML"
  if e.ContentEncodingClass=="IDENTITY"||e.ContentEncodingClass=="GZIP_AUTO_DECODED"{inspectStructure(e,body)}
  e.FinalRouteClass=routeClass(raw,e.HasKnownChallengeStructure)
+ inspectBootstrapStructure(e,raw,body)
  // Same exact production expression; bounded result allocation only. Count=64
  // with capped=true means at least 65 matches, not an invented exact count.
  matches:=pattern.FindAllIndex(body,65);e.ClientConfigMatchCount=uint64(len(matches))
@@ -148,7 +151,10 @@ func ObserveBootstrapResponse(raw string,resp *http.Response,body []byte,err err
 func ObserveBootstrapTerminal(result,raw string,err error) *BootstrapResponse {
  if startupRecorder.Load()==nil{return nil}
  if result!="NETWORK_ERROR"&&result!="REDIRECT_LIMIT"{result="UNKNOWN_RESPONSE"}
- return &BootstrapResponse{Schema:LogSchema,Event:"bootstrap_response",HTTPStatusClass:"OTHER",ContentTypeClass:"MISSING",ContentEncodingClass:"IDENTITY",BodyReadErrorClass:readErrorClass(err),FinalRouteClass:routeClass(raw,false),ResponseResult:result,ClientConfigParseResult:"NOT_ATTEMPTED"}
+ e:=&BootstrapResponse{Schema:LogSchema,Event:"bootstrap_response",HTTPStatusClass:"OTHER",ContentTypeClass:"MISSING",ContentEncodingClass:"IDENTITY",BodyReadErrorClass:readErrorClass(err),FinalRouteClass:routeClass(raw,false),ResponseResult:result,ClientConfigParseResult:"NOT_ATTEMPTED"}
+ initBootstrapStructure(e,raw)
+ e.StructureScanLimitReason="OTHER"
+ return e
 }
 func BootstrapSearch(e *BootstrapResponse,matched bool) {
  if e==nil{return};e.ClientConfigSearched=true;e.ClientConfigMatched=matched;e.ClientConfigSearchOnNon2XX=e.HTTPStatusClass!="2XX";e.ResponseResult=bootstrapResult(e)

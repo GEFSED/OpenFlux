@@ -11,7 +11,7 @@ import (
 
 // LogSchema versions the external log contract, not Engine's frozen schema-3
 // accounting. Schema 3 has no startup-event envelope.
-const LogSchema = 5
+const LogSchema = 6
 
 type StartupStage string
 type FailureClass string

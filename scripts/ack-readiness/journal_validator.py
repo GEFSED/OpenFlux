@@ -4,6 +4,7 @@ import re
 from schema3 import FIELDS, HISTOGRAMS, BUCKETS, SchemaError, validate_snapshot
 from schema4 import validate_snapshot as validate_snapshot4, validate_startup, StartupStream
 import schema5
+import schema6
 SAFE_METADATA = ('__REALTIME_TIMESTAMP', '__MONOTONIC_TIMESTAMP', '_SYSTEMD_UNIT',
                  '_PID', '_UID', '_GID', '_COMM', '_EXE', 'SYSLOG_IDENTIFIER',
                  '_TRANSPORT', 'PRIORITY')
@@ -94,18 +95,18 @@ def allowed_message(entry, schema=5):
     if text == '[ACK-LOG] suppressed=1':
         return {'event': 'suppressed'}
     if text.startswith('[ACK-BOOTSTRAP] '):
-        if schema!=5:fail('unexpected_bootstrap_schema',entry)
+        if schema not in (5,6):fail('unexpected_bootstrap_schema',entry)
         try:
             value=json.loads(text[len('[ACK-BOOTSTRAP] '):],object_pairs_hook=unique_pairs)
-            schema5.validate_bootstrap(value)
+            (schema6 if schema==6 else schema5).validate_bootstrap(value)
         except SchemaError as error:fail(str(error),entry)
         except (ValueError,TypeError):fail('malformed_bootstrap_json',entry)
         return {'bootstrap':value}
     if text.startswith('[ACK-STARTUP] '):
-        if schema not in (4,5):fail('unexpected_startup_schema', entry)
+        if schema not in (4,5,6):fail('unexpected_startup_schema', entry)
         try:
             value=json.loads(text[len('[ACK-STARTUP] '):], object_pairs_hook=unique_pairs)
-            (schema5.validate_startup if schema==5 else validate_startup)(value)
+            (schema6.validate_startup if schema==6 else schema5.validate_startup if schema==5 else validate_startup)(value)
         except SchemaError as error:fail(str(error),entry)
         except (ValueError,TypeError):fail('malformed_startup_json',entry)
         return {'startup':value}
@@ -119,7 +120,7 @@ def allowed_message(entry, schema=5):
     except (ValueError, TypeError):
         fail('invalid_snapshot_json', entry)
     try:
-        (schema5.validate_snapshot if schema==5 else validate_snapshot4 if schema==4 else validate_snapshot)(values)
+        (schema6.validate_snapshot if schema==6 else schema5.validate_snapshot if schema==5 else validate_snapshot4 if schema==4 else validate_snapshot)(values)
     except SchemaError as error:
         fail(str(error), entry)
     return {'values': values}
@@ -137,10 +138,10 @@ def validate_records(entries, scope):
     accepted, provenance = [], []
     seen = set()
     previous_app_time = -1
-    schema=scope.get('schema',5)
-    if type(schema) is not int or schema not in (3,4,5):fail('unsupported_scope_schema',{})
-    startup=schema5.StartupStream() if schema==5 else StartupStream()
-    bootstrap=schema5.BootstrapStream()
+    schema=scope.get('schema',6)
+    if type(schema) is not int or schema not in (3,4,5,6):fail('unsupported_scope_schema',{})
+    startup=schema6.StartupStream() if schema==6 else schema5.StartupStream() if schema==5 else StartupStream()
+    bootstrap=schema6.BootstrapStream() if schema==6 else schema5.BootstrapStream()
     for entry in entries:
         try:
             monotonic = int(entry['__MONOTONIC_TIMESTAMP'])
@@ -172,7 +173,7 @@ def validate_records(entries, scope):
             if 'bootstrap' in record:
                 try:bootstrap.accept(record['bootstrap'],startup.last)
                 except SchemaError as error:fail(str(error),entry)
-            if 'values' in record and schema in (4,5):
+            if 'values' in record and schema in (4,5,6):
                 if startup.last is None or (startup.last['startup_result']!='failure' and
                                            not startup.last['diagnostic_snapshot_loop_started']):
                     fail('snapshot_without_startup_loop_evidence',entry)
