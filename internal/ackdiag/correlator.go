@@ -215,6 +215,9 @@ func(e *Engine) outgoing(p packet,at time.Time)*attempt {
     mapped:=int64(0);for _,r:=range next{for _,owner:=range r.attempts{if owner==a{mapped+=r.hi-r.lo}}};if mapped!=hi-lo{e.invalid("invariant_failures");return nil}
     oldRefs,newRefs:=0,0;for _,r:=range f.ranges{oldRefs+=len(r.attempts)};for _,r:=range next{newRefs+=len(r.attempts)}
     if !e.room(len(next)-len(f.ranges),1,newRefs-oldRefs,0){return nil}
+    // Splitting invalid atoms must not share mutable late-ACK provenance:
+    // a later partial ACK may cover only one of the resulting intersections.
+    for i:=range next{if next[i].loss!=nil{copyLoss:=*next[i].loss;next[i].loss=&copyLoss}}
     e.records+=len(next)-len(f.ranges);e.references+=newRefs-oldRefs;e.attempts++
     f.ranges=next;f.attempts=append(f.attempts,a)
     e.metrics["unique_downlink_tcp_bytes"]+=unique;f.created+=unique

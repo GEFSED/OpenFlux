@@ -92,6 +92,14 @@ func TestNoLedgerTTLAndExplicitTagLoss(t *testing.T){
     if m["invalidated_ttl_bytes"]!=100||m["expired_identity_tags"]!=1||m["correlator_evictions"]!=1{t.Fatal("tag loss not explicit")}
 }
 
+func TestInvalidatedRangeSplitKeepsPerRangeLateACKEvidence(t *testing.T){
+    s:=sim(1000);s.send(1001,100);f:=s.e.flows[s.key][0]
+    s.e.invalidateRange(f,&f.ranges[0],lossOther,eventCAP,s.at);s.e.checkFlow(f)
+    s.send(1051,25);s.ack(1051)
+    m:=assertState(t,s.e,100,0,0,false)
+    if m["invalidation_records"]!=3||m["loss_0_late_covering_ack_observed"]!=1||m["loss_1_late_covering_ack_observed"]!=0||m["loss_2_late_covering_ack_observed"]!=0{t.Fatal("shared invalidation evidence across split atoms")}
+}
+
 func TestRSTChurnStress(t *testing.T){
     for _,seed:=range []int64{178,4309}{
         rng:=rand.New(rand.NewSource(seed));s:=sim(0);s.e=New(func()time.Time{return s.at});var total uint64
