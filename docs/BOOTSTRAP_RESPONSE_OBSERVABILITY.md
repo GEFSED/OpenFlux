@@ -11,14 +11,14 @@ These locations refer to the production commit, not the instrumented file:
 
 | Requested location | File and line | Behavior |
 |---|---|---|
-| AUTH_REQUEST_CREATION | transport/yandex/vyandex.go:161 | GET, existing User-Agent and Accept-Language |
+| AUTH_REQUEST_CREATION | transport/yandex/vyandex.go:160 | GET, existing User-Agent and Accept-Language |
 | HTTP_CLIENT_CONFIGURATION | transport/yandex/vyandex.go:141 | Fresh cookie jar, 30 second client timeout, existing Transport |
-| REDIRECT_POLICY | transport/yandex/vyandex.go:149,160,177 | ErrUseLastResponse, manual loop of at most ten GETs |
+| REDIRECT_POLICY | transport/yandex/vyandex.go:150,159,177 | ErrUseLastResponse, manual loop of at most ten GETs |
 | HTTP_DO | transport/yandex/vyandex.go:168 | Error returns before body processing |
 | RESPONSE_STATUS_HANDLING | transport/yandex/vyandex.go:177 | 3xx uses Location; every other status becomes finalBody |
 | BODY_READER / BODY_READALL | transport/yandex/vyandex.go:172 | io.ReadAll(resp.Body), then Close |
 | BODY_READ_ERROR_HANDLING | transport/yandex/vyandex.go:172 | Error discarded; returned bytes retained |
-| CONTENT_ENCODING_HANDLING | transport/yandex/vyandex.go:145,168,172 | No explicit decoder; net/http automatic gzip behavior only |
+| CONTENT_ENCODING_HANDLING | transport/yandex/vyandex.go:144,168,172 | No explicit decoder; net/http automatic gzip behavior only |
 | CONTENT_TYPE_HANDLING | transport/yandex/vyandex.go:190,201 | No acceptance check |
 | CLIENT_CONFIG_REGEX | transport/yandex/vyandex.go:81 | Literal format-sensitive regexp |
 | CLIENT_CONFIG_EXTRACTION | transport/yandex/vyandex.go:201,213 | First match, JSON decoder with UseNumber |
@@ -113,6 +113,12 @@ Every prior packet/HTTP/WS hook, correlator and proxy file is frozen. Thus the
 authorization file has instrumentation additions, but its request, redirect,
 status acceptance, parser, retry and networking implementation is unchanged.
 No regex/read-error/status fix is included.
+
+The separate mobile module adds only the indirect x/net v0.55.0 declaration and
+two checksums already pinned by the frozen root module, because the diagnostic
+package now imports its HTML tokenizer. The verifier checks these three exact
+lines separately; no library upgrade or Android/application source change is
+permitted. Linux CI caught the missing module metadata before this correction.
 
 Fixtures cover all twenty requested categories plus invalid JSON, non-2xx with
 config, multiple matches and bounded scanning. Loopback integration invokes the

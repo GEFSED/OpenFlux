@@ -25,6 +25,7 @@ allowed={
     'scripts/ack-readiness/schema5.py','scripts/ack-readiness/test_bootstrap.py',
     'scripts/ack-readiness/bootstrap_simulated_invocation.py',
     'docs/BOOTSTRAP_RESPONSE_OBSERVABILITY.md',
+    'mobile/go.mod','mobile/go.sum',
 }
 assert not subprocess.check_output(['git','status','--porcelain']).strip(), 'dirty_source'
 assert changed_since(FROZEN)<=allowed, sorted(changed_since(FROZEN)-allowed)
@@ -38,8 +39,21 @@ files=subprocess.check_output(['git','ls-tree','-r','--name-only',FROZEN,
     'internal/ackdiag/schema3_fixture_test.go','scripts/ack-diag-patches.json',
     'scripts/ack-readiness/argv_validator.py','scripts/ack-readiness/schema3.py']).decode().splitlines()
 for path in files:
-    if path!='transport/yandex/vyandex.go':
+    if path not in ('transport/yandex/vyandex.go','mobile/go.mod','mobile/go.sum'):
         assert Path(path).read_bytes()==blob(path),('frozen_source_changed',path)
+
+# Only dependency bookkeeping for the existing root-pinned HTML tokenizer.
+# No version upgrade, Android source change, or mobile networking change.
+dep='\tgolang.org/x/net v0.55.0 // indirect\n'
+mobile_mod=Path('mobile/go.mod').read_text()
+assert mobile_mod.count(dep)==1 and dep in blob('go.mod').decode()
+assert mobile_mod.replace(dep,'').encode()==blob('mobile/go.mod')
+checksums=''.join(line+'\n' for line in blob('go.sum').decode().splitlines()
+                  if line.startswith('golang.org/x/net v0.55.0'))
+assert len(checksums.splitlines())==2
+mobile_sum=Path('mobile/go.sum').read_text()
+assert mobile_sum.count(checksums)==1
+assert mobile_sum.replace(checksums,'').encode()==blob('mobile/go.sum')
 
 # Remove ONLY enumerated metadata calls. Even the ignored ReadAll error remains
 # ignored by every production decision. Byte equality proves that regex,
