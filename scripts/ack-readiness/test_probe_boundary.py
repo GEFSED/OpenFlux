@@ -3,6 +3,8 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -117,6 +119,44 @@ class BoundaryTests(unittest.TestCase):
                 def wait(self,timeout):return 0
             w=Worker();self.assertEqual(0,receive(w,d))
             self.assertEqual(payload_digest(json.loads((Path(d)/'boundary.json').read_text())),json.loads(w.stdin.getvalue())['sha256'])
+
+    def test_real_linux_pipe_protocol_survives_worker_exception(self):
+        with tempfile.TemporaryDirectory() as d:
+            b=boundary()
+            code='''from probe_boundary import remote_receipt,payload_digest
+import json
+b=BOUNDARY
+remote_receipt('boundary',b)
+remote_receipt('start_intent',dict(boundary_sha256=payload_digest(b),maximum_start_count=1))
+print(json.dumps(dict(kind='simulated_start',count=1)),flush=True)
+raise RuntimeError('synthetic post-start harness exception')
+'''.replace('BOUNDARY',repr(b))
+            p=subprocess.Popen([sys.executable,'-u','-c',code],cwd=Path(__file__).parent,
+                stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+            try:
+                self.assertEqual(1,receive(p,d))
+                self.assertEqual(b,json.loads((Path(d)/'boundary.json').read_text()))
+                self.assertEqual([{'kind':'simulated_start','count':1}],json.loads((Path(d)/'worker-evidence.json').read_text()))
+            finally:
+                if p.poll() is None:p.kill();p.wait()
+                p.stdin.close();p.stdout.close()
+
+    def test_real_linux_pipe_local_write_failure_blocks_simulated_start(self):
+        with tempfile.TemporaryDirectory() as d:
+            code='''from probe_boundary import remote_receipt
+import json
+remote_receipt('boundary',BOUNDARY)
+print(json.dumps(dict(kind='simulated_start',count=1)),flush=True)
+'''.replace('BOUNDARY',repr(boundary()))
+            p=subprocess.Popen([sys.executable,'-u','-c',code],cwd=Path(__file__).parent,
+                stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+            try:
+                with patch('probe_boundary.os.fsync',side_effect=OSError):
+                    with self.assertRaisesRegex(ProbeFailure,'EVIDENCE_WRITE_FAILED'):receive(p,d)
+                self.assertFalse((Path(d)/'worker-evidence.json').exists())
+            finally:
+                if p.poll() is None:p.kill();p.wait()
+                p.stdin.close();p.stdout.close()
 
     def test_replay_old_records_and_other_invocation(self):
         texts=sequence(fixture('public_root'))
