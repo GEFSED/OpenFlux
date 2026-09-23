@@ -11,7 +11,7 @@ class DisposableRealSystemdTests(unittest.TestCase):
         and os.environ.get('RUNNER_ENVIRONMENT')=='github-hosted', 'requires disposable GitHub-hosted Linux VM')
     def test_v255_lifecycle_and_invocation_detector(self):
         output=Path(os.environ['RUNNER_TEMP'])/'real-systemd-evidence.json'
-        p=subprocess.run(['sudo','--preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT',sys.executable,
+        p=subprocess.run(['sudo','--preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT',sys.executable,'-B',
             str(Path(__file__).with_name('disposable_systemd.py')),str(output)],capture_output=True,text=True,timeout=180)
         self.assertEqual(0,p.returncode,p.stderr[-4000:]+(output.read_text() if output.exists() else 'NO_EVIDENCE'))
         report=json.loads(output.read_text())

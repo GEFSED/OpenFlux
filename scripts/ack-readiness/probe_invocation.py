@@ -147,6 +147,7 @@ class InvocationEpoch:
                and self.current is not None and self.current>=self.post_baseline else NOT_OBSERVED)
         return dict(CONTROL_START_CALL_COUNT=self.control_calls,AUTHORIZED_START_COUNT=self.control_calls,
             OBSERVED_INVOCATION_COUNT=len(self.invocations),
+            OBSERVED_INVOCATION_IDS=sorted(self.invocations),
             UNAUTHORIZED_ADDITIONAL_INVOCATIONS=max(0,len(self.invocations)-1,len(self.started)-1,len(self.starting)-1),
             AUTHORIZED_INVOCATION_ID=self.authorized or NOT_OBSERVED,AUTHORIZED_MAINPID=self.pid or NOT_OBSERVED,
             AUTHORIZED_EXEC_START_TIMESTAMP_MONOTONIC=self.exec_start or NOT_OBSERVED,

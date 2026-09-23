@@ -156,7 +156,11 @@ raise SystemExit(1)
         command('systemctl','stop',anchor_name);anchor.unlink()
         saved=conf.read_text();conf.unlink();drop.rmdir();ctl('daemon-reload')
         # Unit GC is asynchronous; a freshly loaded object has no restart history.
-        time.sleep(2);conf.write_text(saved);ctl('daemon-reload');mode('hold');ctl('start')
+        time.sleep(2)
+        unloaded=state()
+        assert unloaded['LoadState']=='not-found' and int(unloaded['NRestarts'])==0
+        evidence['cases']['unloaded_unit_object']={'LoadState':unloaded['LoadState'],'NRestarts':int(unloaded['NRestarts'])}
+        conf.write_text(saved);ctl('daemon-reload');mode('hold');ctl('start')
         evidence['cases']['unit_remove_reload_start']=[n,int(state()['NRestarts'])]
         assert int(state()['NRestarts'])==0
         evidence['source_only_cases']=['manager-reexec preserves serialized count/flush flag','reboot creates fresh unit/boot context']

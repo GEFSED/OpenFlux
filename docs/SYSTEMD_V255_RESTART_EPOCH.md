@@ -37,8 +37,8 @@ Best-supported historical explanation: the earlier harness's intentional stop
 of a running diagnostic entered the no-auto-restart dead path under Restart=no,
 arming flush_n_restarts. The next explicit start consumed that flag and reset
 541 to 0. This fits unchanged boot/PID1/D-Bus owner and zero scheduled restarts.
-Confidence HIGH for the supported lifecycle explanation, not direct proof of
-the historical internal flag: it was not recorded. Stop during auto-restart
+The reset mechanism is source-proven and reproduced; confidence MEDIUM for
+the exact historical cause because the internal flag was not recorded. Stop during auto-restart
 can also explain why another earlier explicit start retained 541.
 
 The disposable v255 integration records actual before/after values for
