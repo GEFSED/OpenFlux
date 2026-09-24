@@ -1,11 +1,14 @@
-"""Candidate provenance: frozen scheduling/wire path plus selective captcha port."""
+"""Candidate provenance: frozen behavior plus enum-only startup observations."""
+import collections
 import pathlib
+import re
 import subprocess
 
 BASE = "8566f727c8238436728758f139130cef433147b7"
 LAB = "53862516bfa8733a91c9c971264f9b1211bfae3e"
 CANDIDATE_V1 = "00bfb9d9f2551985f3f7684b5196fa335d85da76"
 CAPTCHA_REFERENCE = "ff14ced55966d98301099c17e8bde577f337c9f6"
+CANDIDATE_V2 = "10cd36debd1f50b367690b796e4def8cdb873e3b"
 def blob(rev, path):
     return subprocess.check_output(["git", "show", rev + ":" + path])
 def current(path):
@@ -30,7 +33,25 @@ def outside_authorization(data):
     _, after = rest.split(b"func getStr(", 1)
     return before, after
 assert outside_authorization(current(path)) == outside_authorization(blob(CANDIDATE_V1, path)), "non-auth Volga implementation changed"
+# The only allowed auth delta from v2 is standalone observation calls with fixed
+# enum arguments. Removing them must reconstruct the entire v2 file byte-for-byte.
+# This preserves requests, errors, branches, budgets, cookies and retry order.
+observations = re.findall(rb"(?m)^\t+emitVolgaStartup\((Volga[A-Za-z]+)\)\n", current(path))
+expected_observations = {
+    b"VolgaAuthStart": 1, b"VolgaDocumentRequestFailed": 3,
+    b"VolgaRedirectRejected": 4, b"VolgaCaptchaDetected": 1,
+    b"VolgaCaptchaStarted": 1, b"VolgaCaptchaCompleted": 1,
+    b"VolgaCaptchaFailed": 2, b"VolgaAuthRetry": 1,
+    b"VolgaClientConfigMissing": 1, b"VolgaClientConfigInvalid": 1,
+    b"VolgaOfficeActionMissing": 1, b"VolgaActionURLMissing": 1,
+    b"VolgaAccessTokenMissing": 1, b"VolgaAuthInitialFailed": 6,
+    b"VolgaSessionFailed": 5, b"VolgaAuthSuccess": 1,
+}
+assert collections.Counter(observations) == expected_observations, "startup observation scope changed"
+without_observations = re.sub(rb"(?m)^\t+emitVolgaStartup\(Volga[A-Za-z]+\)\n", b"", current(path))
+assert without_observations == blob(CANDIDATE_V2, path), "v2 authorization behavior changed"
 assert current("transport/yandex/captcha.go") == blob(CAPTCHA_REFERENCE, "transport/yandex/captcha.go"), "validated captcha helper changed"
+assert current("transport/yandex/captcha_test.go") == blob(CANDIDATE_V2, "transport/yandex/captcha_test.go"), "existing captcha/privacy tests changed"
 # Freeze every existing mobile/TUN/codec/profile/lifecycle/guard implementation,
 # test oracle and Android Java/resource file, not only selected config fields.
 paths = subprocess.check_output([
@@ -59,11 +80,12 @@ gradle = current("android/app/build.gradle").decode()
 assert 'applicationId "io.openflux.app"' in gradle
 assert 'versionCode 10' in gradle and 'versionName "1.0.0"' in gradle
 assert 'applicationIdSuffix ".candidate"' in gradle
-assert 'versionNameSuffix "-candidate.2"' in gradle
-assert 'output.versionCodeOverride = 12' in gradle
-assert gradle.replace('versionNameSuffix "-candidate.2"', 'versionNameSuffix "-candidate.1"').replace('output.versionCodeOverride = 12', 'output.versionCodeOverride = 11').encode() == blob(CANDIDATE_V1, "android/app/build.gradle"), "ordinary Gradle configuration changed"
+assert 'versionNameSuffix "-candidate.3"' in gradle
+assert 'output.versionCodeOverride = 13' in gradle
+assert gradle.replace('versionNameSuffix "-candidate.3"', 'versionNameSuffix "-candidate.1"').replace('output.versionCodeOverride = 13', 'output.versionCodeOverride = 11').encode() == blob(CANDIDATE_V1, "android/app/build.gradle"), "ordinary Gradle configuration changed"
 print("EXACT_BASE_AND_FROZEN_ORACLES=PASS")
 print("STANDARD_SCHEDULING_WIRE_AND_PROFILE_STORE_UNCHANGED=PASS")
 print("GUARD_IMPLEMENTATION_BYTE_IDENTICAL=PASS")
 print("CAPTCHA_HELPER_EXACT_REFERENCE=PASS")
+print("V2_AUTH_BEHAVIOR_EXACT_WITHOUT_FIXED_OBSERVATIONS=PASS")
 print("ANDROID_VPN_AND_MOBILE_PATHS_BYTE_IDENTICAL=PASS")
