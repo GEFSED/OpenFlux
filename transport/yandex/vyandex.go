@@ -81,6 +81,9 @@ func DefaultVolgaConfig() VolgaConfig {
 
 const volgaUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:153.0) Gecko/20100101 Firefox/153.0"
 
+// Candidate experiment: auth only; relay HTTP and WS keep volgaUserAgent.
+const volgaAuthUserAgent = "Mozilla/5.0"
+
 var reClientConfig = regexp.MustCompile(`<script[^>]*id="client-config"[^>]*>(.*?)</script>`)
 
 var (
@@ -176,7 +179,7 @@ func authorizeWithClient(ctx context.Context, docURL string, session *http.Clien
 			emitVolgaStartup(VolgaDocumentRequestFailed)
 			return nil, fmt.Errorf("invalid document request")
 		}
-		req.Header.Set("User-Agent", volgaUserAgent)
+		req.Header.Set("User-Agent", volgaAuthUserAgent)
 		req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9")
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 		if i > 0 {
@@ -299,7 +302,7 @@ func authorizeWithClient(ctx context.Context, docURL string, session *http.Clien
 		emitVolgaStartup(VolgaAuthInitialFailed)
 		return nil, fmt.Errorf("invalid document authorization request")
 	}
-	req2.Header.Set("User-Agent", volgaUserAgent)
+	req2.Header.Set("User-Agent", volgaAuthUserAgent)
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req2.Header.Set("Origin", "https://disk.yandex.ru")
 	req2.Header.Set("Referer", finalURL)
@@ -374,7 +377,7 @@ func authorizeWithClient(ctx context.Context, docURL string, session *http.Clien
 		emitVolgaStartup(VolgaSessionFailed)
 		return nil, fmt.Errorf("invalid document session request")
 	}
-	req3.Header.Set("User-Agent", volgaUserAgent)
+	req3.Header.Set("User-Agent", volgaAuthUserAgent)
 	req3.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req3.Header.Set("Referer", actionURL)
 	resp3, err := session.Do(req3)

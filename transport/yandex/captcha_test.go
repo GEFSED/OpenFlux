@@ -95,7 +95,7 @@ func runCaptchaSteps(t *testing.T, steps []captchaStep, wantError string) *volga
 		}
 		s := steps[index]
 		index++
-		if r.Method != s.method || r.URL.Path != s.path || r.Header.Get("User-Agent") != volgaUserAgent {
+		if r.Method != s.method || r.URL.Path != s.path || r.Header.Get("User-Agent") != volgaAuthUserAgent {
 			t.Fatal("unexpected request class or UA")
 		}
 		if s.check != nil {
@@ -294,7 +294,7 @@ func verifyFingerprint(t *testing.T, r *http.Request) {
 	}
 	defer z.Close()
 	var fp map[string]interface{}
-	if json.NewDecoder(z).Decode(&fp) != nil || fp["c9"] != volgaUserAgent || fp["version"] != "1.5.0" {
+	if json.NewDecoder(z).Decode(&fp) != nil || fp["c9"] != volgaAuthUserAgent || fp["version"] != "1.5.0" {
 		t.Fatal("fingerprint contract")
 	}
 	nonce, err := hex.DecodeString(fp["m10"].(string))

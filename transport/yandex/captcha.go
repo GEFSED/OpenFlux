@@ -144,7 +144,7 @@ func solveVolgaCaptcha(ctx context.Context, session *http.Client, challenge *url
 	if err != nil {
 		return err
 	}
-	fingerprint, err := encodeCaptchaFingerprint(buildCaptchaFingerprint(nonce, volgaUserAgent))
+	fingerprint, err := encodeCaptchaFingerprint(buildCaptchaFingerprint(nonce, volgaAuthUserAgent))
 	if err != nil {
 		return err
 	}
@@ -252,7 +252,7 @@ func encodeCaptchaFingerprint(fp map[string]interface{}) (string, error) {
 }
 
 func setCaptchaHeaders(req *http.Request) {
-	req.Header.Set("User-Agent", volgaUserAgent)
+	req.Header.Set("User-Agent", volgaAuthUserAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	// Explicit gzip keeps encoded AND decoded sizes under our own bound.
