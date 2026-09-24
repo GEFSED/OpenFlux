@@ -1,4 +1,4 @@
-"""Candidate provenance: minimal auth UA; frozen relay, WS and other behavior."""
+"""Candidate provenance: completion continuation only; all other behavior frozen."""
 import collections
 import pathlib
 import re
@@ -10,13 +10,78 @@ CANDIDATE_V1 = "00bfb9d9f2551985f3f7684b5196fa335d85da76"
 CAPTCHA_REFERENCE = "ff14ced55966d98301099c17e8bde577f337c9f6"
 CANDIDATE_V2 = "10cd36debd1f50b367690b796e4def8cdb873e3b"
 CANDIDATE_V21 = "d0cafdf73c072893666483b057d56d76a4e149ef"
+CANDIDATE_V22 = "fb8602e1a6f30e1e9e5a44d936e8207db82fa0cd"
 def blob(rev, path):
     return subprocess.check_output(["git", "show", rev + ":" + path])
-def current(path):
+def working_file(path):
     data = pathlib.Path(path).read_bytes()
     if pathlib.Path(path).suffix in (".go", ".java", ".xml", ".gradle", ".py", ".mod", ".sum", ".md", ".txt", ".yml", ".yaml", ".json"):
         data = data.replace(b"\r\n", b"\n")
     return data
+
+# Validate the entire current files against narrowly transformed v2.2 blobs.
+# Only after that comparison, run every previous provenance rule on the restored
+# v2.2 representations. This is not a file/hash exclusion.
+reviewed_v22 = {}
+
+def exact_replace(data, old, new, count=1):
+    assert data.count(old) == count, "reviewed continuation delta no longer applies"
+    return data.replace(old, new)
+
+def reviewed(path, pairs):
+    before = blob(CANDIDATE_V22, path)
+    expected = before
+    for old, new, count in pairs:
+        expected = exact_replace(expected, old, new, count)
+    assert working_file(path) == expected, "unreviewed v2.3 change: " + path
+    reviewed_v22[path] = before
+
+reviewed("transport/yandex/vyandex.go", [
+    (b"if err := solveVolgaCaptcha(ctx, session, next); err != nil {", b"nextAfterCaptcha, err := solveVolgaCaptcha(ctx, session, next)\n\t\t\t\tif err != nil {", 1),
+    (b"emitVolgaStartup(VolgaCaptchaCompleted)\n", b"emitVolgaStartup(VolgaCaptchaCompleted)\n\t\t\t\temitVolgaStartup(VolgaCaptchaCompletionFollowed)\n", 1),
+    (b"currentURL = docURL\n", b"currentURL = nextAfterCaptcha.String()\n", 1),
+])
+path = "transport/yandex/captcha.go"
+before = blob(CANDIDATE_V22, path)
+prefix, rest = before.split(b"func solveVolgaCaptcha(", 1)
+solver, suffix = rest.split(b"\nfunc parseVolgaCaptcha(", 1)
+solver = exact_replace(solver, b"(err error) {", b"(completion *url.URL, err error) {")
+solver = exact_replace(solver, b"\t\treturn ", b"\t\treturn nil, ", 12)
+solver = exact_replace(solver, b"// No redirect is followed here; the caller retries its ORIGINAL document URL.", b"// No redirect is followed here; the caller continues its bounded bootstrap loop.")
+solver = exact_replace(solver, b'if _, err := resolveAuthRedirect(action.String(), resp.Header.Get("Location")); err != nil {', b'completion, err = resolveAuthRedirect(action.String(), resp.Header.Get("Location"))\n\tif err != nil {')
+solver = exact_replace(solver, b"\treturn nil\n}\n", b"\treturn completion, nil\n}\n")
+prefix = exact_replace(prefix, b"// includes the retry from the original URL", b"// includes the post-captcha continuation")
+assert working_file(path) == prefix + b"func solveVolgaCaptcha(" + solver + b"\nfunc parseVolgaCaptcha(" + suffix, "non-continuation captcha delta"
+reviewed_v22[path] = before
+reviewed("transport/yandex/startup_diagnostics.go", [
+    (b"\tVolgaAuthSuccess\n)", b"\tVolgaAuthSuccess\n\tVolgaCaptchaCompletionFollowed\n)", 1),
+    (b'\tcase VolgaAuthSuccess:\n\t\treturn "VOLGA_AUTH_SUCCESS"', b'\tcase VolgaAuthSuccess:\n\t\treturn "VOLGA_AUTH_SUCCESS"\n\tcase VolgaCaptchaCompletionFollowed:\n\t\treturn "VOLGA_CAPTCHA_COMPLETION_FOLLOWED"', 1),
+])
+reviewed("transport/yandex/captcha_test.go", [
+    (b'"Location": {"/ignored-completion-target"}', b'"Location": {fixtureDoc}', 1),
+    (b"if err := solveVolgaCaptcha(", b"if _, err := solveVolgaCaptcha(", 1),
+    (b"if e := solveVolgaCaptcha(", b"if _, e := solveVolgaCaptcha(", 3),
+])
+reviewed("transport/yandex/startup_diagnostics_test.go", [
+    (b"VolgaCaptchaCompleted, VolgaAuthRetry", b"VolgaCaptchaCompleted, VolgaCaptchaCompletionFollowed, VolgaAuthRetry", 3),
+    (b'"VOLGA_AUTH_SUCCESS"}', b'"VOLGA_AUTH_SUCCESS", "VOLGA_CAPTCHA_COMPLETION_FOLLOWED"}', 1),
+    (b'"AUTH_INITIAL", "AUTH_SESSION", ""}', b'"AUTH_INITIAL", "AUTH_SESSION", "", ""}', 1),
+])
+reviewed("mobile/volga_startup_diagnostics_test.go", [
+    (b"!= 16 {", b"!= 17 {", 1),
+    (b'"VOLGA_CAPTCHA_COMPLETED",', b'"VOLGA_CAPTCHA_COMPLETED", "VOLGA_CAPTCHA_COMPLETION_FOLLOWED",', 1),
+])
+
+def current(path):
+    return reviewed_v22[path] if path in reviewed_v22 else working_file(path)
+
+subprocess.run(["git", "merge-base", "--is-ancestor", CANDIDATE_V22, "HEAD"], check=True)
+v22_paths = subprocess.check_output([
+    "git", "ls-tree", "-r", "--name-only", CANDIDATE_V22, "--",
+    "mobile", "transport", "tunnel", "tunclient", "socks5", "network", "utils", "android/app/src",
+], text=True).splitlines()
+for frozen_path in v22_paths:
+    assert current(frozen_path) == blob(CANDIDATE_V22, frozen_path), "non-continuation v2.2 change: " + frozen_path
 subprocess.run(["git", "merge-base", "--is-ancestor", BASE, "HEAD"], check=True)
 subprocess.run(["git", "merge-base", "--is-ancestor", CANDIDATE_V1, "HEAD"], check=True)
 subprocess.run(["git", "merge-base", "--is-ancestor", CANDIDATE_V21, "HEAD"], check=True)
@@ -108,15 +173,16 @@ gradle = current("android/app/build.gradle").decode()
 assert 'applicationId "io.openflux.app"' in gradle
 assert 'versionCode 10' in gradle and 'versionName "1.0.0"' in gradle
 assert 'applicationIdSuffix ".candidate"' in gradle
-assert 'versionNameSuffix "-candidate.4"' in gradle
-assert 'output.versionCodeOverride = 14' in gradle
-assert gradle.replace('versionNameSuffix "-candidate.4"', 'versionNameSuffix "-candidate.1"').replace('output.versionCodeOverride = 14', 'output.versionCodeOverride = 11').encode() == blob(CANDIDATE_V1, "android/app/build.gradle"), "ordinary Gradle configuration changed"
+assert 'versionNameSuffix "-candidate.5"' in gradle
+assert 'output.versionCodeOverride = 15' in gradle
+assert gradle.replace('versionNameSuffix "-candidate.5"', 'versionNameSuffix "-candidate.1"').replace('output.versionCodeOverride = 15', 'output.versionCodeOverride = 11').encode() == blob(CANDIDATE_V1, "android/app/build.gradle"), "ordinary Gradle configuration changed"
 print("EXACT_BASE_AND_FROZEN_ORACLES=PASS")
 print("STANDARD_SCHEDULING_WIRE_AND_PROFILE_STORE_UNCHANGED=PASS")
 print("GUARD_IMPLEMENTATION_BYTE_IDENTICAL=PASS")
-print("CAPTCHA_ALGORITHM_EXACT_REFERENCE_EXCEPT_AUTH_UA=PASS")
-print("ONLY_AUTH_USER_AGENT_CHANGED_FROM_V21=PASS")
+print("CAPTCHA_ALGORITHM_EXACT_REFERENCE_EXCEPT_AUTH_UA_AND_CONTINUATION=PASS")
+print("ONLY_POST_CAPTCHA_CONTINUATION_CHANGED_FROM_V22=PASS")
+print("AUTH_UA_FINGERPRINT_COOKIES_BUDGETS_AND_CLIENT_UNCHANGED=PASS")
 print("RELAY_HTTP_AND_WS_USER_AGENT_UNCHANGED=PASS")
-print("SAFE_DIAGNOSTICS_BYTE_IDENTICAL=PASS")
+print("EXISTING_SAFE_DIAGNOSTICS_PRESERVED_ONE_FIXED_EVENT_ADDED=PASS")
 print("V2_AUTH_BEHAVIOR_EXACT_WITHOUT_FIXED_OBSERVATIONS=PASS")
 print("ANDROID_VPN_AND_MOBILE_PATHS_BYTE_IDENTICAL=PASS")

@@ -23,6 +23,7 @@ const (
 	VolgaAuthInitialFailed
 	VolgaSessionFailed
 	VolgaAuthSuccess
+	VolgaCaptchaCompletionFollowed
 )
 
 func (e VolgaStartupEvent) String() string {
@@ -59,6 +60,8 @@ func (e VolgaStartupEvent) String() string {
 		return "VOLGA_SESSION_FAILED"
 	case VolgaAuthSuccess:
 		return "VOLGA_AUTH_SUCCESS"
+	case VolgaCaptchaCompletionFollowed:
+		return "VOLGA_CAPTCHA_COMPLETION_FOLLOWED"
 	default:
 		return ""
 	}

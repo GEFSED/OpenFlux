@@ -54,10 +54,10 @@ func TestVolgaSafeDiagnosticsMobileAllowlistAndConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 	got := ReadLogs()
-	if len(strings.Split(got, "\n")) != 16 {
+	if len(strings.Split(got, "\n")) != 17 {
 		t.Fatal("unknown event retained or valid event lost")
 	}
-	for _, want := range []string{"VOLGA_CAPTCHA_DETECTED", "VOLGA_CAPTCHA_STARTED", "VOLGA_CAPTCHA_COMPLETED", "VOLGA_CAPTCHA_FAILED", "VOLGA_AUTH_RETRY", "class=AUTH_CLIENT_CONFIG", "class=AUTH_INITIAL", "class=AUTH_SESSION", "VOLGA_AUTH_SUCCESS"} {
+	for _, want := range []string{"VOLGA_CAPTCHA_DETECTED", "VOLGA_CAPTCHA_STARTED", "VOLGA_CAPTCHA_COMPLETED", "VOLGA_CAPTCHA_COMPLETION_FOLLOWED", "VOLGA_CAPTCHA_FAILED", "VOLGA_AUTH_RETRY", "class=AUTH_CLIENT_CONFIG", "class=AUTH_INITIAL", "class=AUTH_SESSION", "VOLGA_AUTH_SUCCESS"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %s", want)
 		}

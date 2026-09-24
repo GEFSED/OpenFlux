@@ -84,10 +84,10 @@ func TestVolgaStartupDiagnosticsPrivacyAndStages(t *testing.T) {
 		events []VolgaStartupEvent
 	}{
 		{"normal", normalSteps(), "", []VolgaStartupEvent{VolgaAuthSuccess}},
-		{"captcha", append(challengeSteps(), normalSteps()...), "", []VolgaStartupEvent{VolgaCaptchaDetected, VolgaCaptchaStarted, VolgaCaptchaCompleted, VolgaAuthRetry, VolgaAuthSuccess}},
-		{"captcha_cookies", cookieSteps, "", []VolgaStartupEvent{VolgaCaptchaDetected, VolgaCaptchaStarted, VolgaCaptchaCompleted, VolgaAuthRetry, VolgaAuthSuccess}},
+		{"captcha", append(challengeSteps(), normalSteps()...), "", []VolgaStartupEvent{VolgaCaptchaDetected, VolgaCaptchaStarted, VolgaCaptchaCompleted, VolgaCaptchaCompletionFollowed, VolgaAuthRetry, VolgaAuthSuccess}},
+		{"captcha_cookies", cookieSteps, "", []VolgaStartupEvent{VolgaCaptchaDetected, VolgaCaptchaStarted, VolgaCaptchaCompleted, VolgaCaptchaCompletionFollowed, VolgaAuthRetry, VolgaAuthSuccess}},
 		{"captcha_failed", failedCaptcha, "captcha bootstrap missing", []VolgaStartupEvent{VolgaCaptchaDetected, VolgaCaptchaStarted, VolgaCaptchaFailed}},
-		{"repeated_captcha", append(challengeSteps(), redirectStep("/fixture-doc", fixtureChallenge)), "captcha attempt limit", []VolgaStartupEvent{VolgaCaptchaDetected, VolgaCaptchaStarted, VolgaCaptchaCompleted, VolgaAuthRetry, VolgaCaptchaDetected, VolgaCaptchaFailed}},
+		{"repeated_captcha", append(challengeSteps(), redirectStep("/fixture-doc", fixtureChallenge)), "captcha attempt limit", []VolgaStartupEvent{VolgaCaptchaDetected, VolgaCaptchaStarted, VolgaCaptchaCompleted, VolgaCaptchaCompletionFollowed, VolgaAuthRetry, VolgaCaptchaDetected, VolgaCaptchaFailed}},
 		{"request", []captchaStep{{method: "GET", path: "/fixture-doc", err: errors.New("SENTINEL_PROVIDER https://private.invalid/?token=SENTINEL")}}, "document request failed", []VolgaStartupEvent{VolgaDocumentRequestFailed}},
 		{"missing_location", []captchaStep{redirectStep("/fixture-doc", "")}, "without Location", []VolgaStartupEvent{VolgaRedirectRejected}},
 		{"rejected_redirect", []captchaStep{redirectStep("/fixture-doc", "ftp://private.invalid/SENTINEL")}, "invalid authorization redirect", []VolgaStartupEvent{VolgaRedirectRejected}},
@@ -169,8 +169,8 @@ func TestVolgaStartupDiagnosticsRequestConstructionAndBody(t *testing.T) {
 }
 
 func TestVolgaStartupDiagnosticsAllowlist(t *testing.T) {
-	names := []string{"VOLGA_AUTH_START", "VOLGA_DOCUMENT_REQUEST_FAILED", "VOLGA_REDIRECT_REJECTED", "VOLGA_CAPTCHA_DETECTED", "VOLGA_CAPTCHA_STARTED", "VOLGA_CAPTCHA_COMPLETED", "VOLGA_CAPTCHA_FAILED", "VOLGA_AUTH_RETRY", "VOLGA_CLIENT_CONFIG_MISSING", "VOLGA_CLIENT_CONFIG_INVALID", "VOLGA_OFFICE_ACTION_MISSING", "VOLGA_ACTION_URL_MISSING", "VOLGA_ACCESS_TOKEN_MISSING", "VOLGA_AUTH_INITIAL_FAILED", "VOLGA_SESSION_FAILED", "VOLGA_AUTH_SUCCESS"}
-	classes := []string{"", "AUTH_DOCUMENT_REQUEST", "AUTH_REDIRECT", "", "", "", "AUTH_CAPTCHA", "", "AUTH_CLIENT_CONFIG", "AUTH_CLIENT_CONFIG", "AUTH_CLIENT_CONFIG", "AUTH_CLIENT_CONFIG", "AUTH_CLIENT_CONFIG", "AUTH_INITIAL", "AUTH_SESSION", ""}
+	names := []string{"VOLGA_AUTH_START", "VOLGA_DOCUMENT_REQUEST_FAILED", "VOLGA_REDIRECT_REJECTED", "VOLGA_CAPTCHA_DETECTED", "VOLGA_CAPTCHA_STARTED", "VOLGA_CAPTCHA_COMPLETED", "VOLGA_CAPTCHA_FAILED", "VOLGA_AUTH_RETRY", "VOLGA_CLIENT_CONFIG_MISSING", "VOLGA_CLIENT_CONFIG_INVALID", "VOLGA_OFFICE_ACTION_MISSING", "VOLGA_ACTION_URL_MISSING", "VOLGA_ACCESS_TOKEN_MISSING", "VOLGA_AUTH_INITIAL_FAILED", "VOLGA_SESSION_FAILED", "VOLGA_AUTH_SUCCESS", "VOLGA_CAPTCHA_COMPLETION_FOLLOWED"}
+	classes := []string{"", "AUTH_DOCUMENT_REQUEST", "AUTH_REDIRECT", "", "", "", "AUTH_CAPTCHA", "", "AUTH_CLIENT_CONFIG", "AUTH_CLIENT_CONFIG", "AUTH_CLIENT_CONFIG", "AUTH_CLIENT_CONFIG", "AUTH_CLIENT_CONFIG", "AUTH_INITIAL", "AUTH_SESSION", "", ""}
 	read := captureVolgaStartup(t)
 	for i := 0; i < 256; i++ {
 		e := VolgaStartupEvent(i)

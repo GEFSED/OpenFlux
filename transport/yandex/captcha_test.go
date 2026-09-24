@@ -66,7 +66,7 @@ func challengeSteps() []captchaStep {
 	return []captchaStep{
 		redirectStep("/fixture-doc", fixtureChallenge),
 		{method: "GET", path: "/showcaptchafast", status: 200, body: fixtureCaptcha()},
-		{method: "POST", path: "/checkcaptchafast", status: 302, headers: http.Header{"Location": {"/ignored-completion-target"}}},
+		{method: "POST", path: "/checkcaptchafast", status: 302, headers: http.Header{"Location": {fixtureDoc}}},
 	}
 }
 func normalSteps() []captchaStep {
@@ -382,7 +382,7 @@ func TestCaptchaCancellationAndSession(t *testing.T) {
 		})
 		u, _ := url.Parse(fixtureChallenge)
 		start := time.Now()
-		if err := solveVolgaCaptcha(context.Background(), client, u); err == nil || calls.Load() != 1 || time.Since(start) > time.Second {
+		if _, err := solveVolgaCaptcha(context.Background(), client, u); err == nil || calls.Load() != 1 || time.Since(start) > time.Second {
 			t.Fatal("HTTP timeout ignored or retried")
 		}
 	})
@@ -402,7 +402,7 @@ func TestCaptchaCancellationAndSession(t *testing.T) {
 				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(fixtureCaptcha())), Request: r}, nil
 			})
 			u, _ := url.Parse(fixtureChallenge)
-			if e := solveVolgaCaptcha(ctx, client, u); !errors.Is(e, context.Canceled) {
+			if _, e := solveVolgaCaptcha(ctx, client, u); !errors.Is(e, context.Canceled) {
 				t.Fatal("request cancellation not propagated")
 			}
 			if calls > 2 {
@@ -423,7 +423,7 @@ func TestCaptchaCancellationAndSession(t *testing.T) {
 		client := newVolgaAuthClient()
 		client.Transport = nil
 		u, _ := url.Parse(fixtureChallenge)
-		if e := solveVolgaCaptcha(context.Background(), client, u); e == nil {
+		if _, e := solveVolgaCaptcha(context.Background(), client, u); e == nil {
 			t.Fatal("default transport permitted")
 		}
 	})
@@ -580,7 +580,7 @@ func TestCaptchaSharedHTTPTransportAndNoFallback(t *testing.T) {
 	}
 	defer client2.CloseIdleConnections()
 	u, _ := url.Parse(fixtureChallenge)
-	if e := solveVolgaCaptcha(context.Background(), client2, u); e == nil || dials.Load() != 1 {
+	if _, e := solveVolgaCaptcha(context.Background(), client2, u); e == nil || dials.Load() != 1 {
 		t.Fatal("dial failure bypassed or retried")
 	}
 }

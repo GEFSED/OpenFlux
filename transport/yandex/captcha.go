@@ -32,7 +32,7 @@ const (
 	maxCaptchaComplexity      = 24
 	captchaWorkTimeout        = 5 * time.Second
 	captchaFlowTimeout        = 45 * time.Second
-	maxVolgaBootstrapRequests = 10 // includes the retry from the original URL
+	maxVolgaBootstrapRequests = 10 // includes the post-captcha continuation
 )
 
 var (
@@ -103,7 +103,7 @@ func captchaRequestError(ctx context.Context) error {
 	return errors.New("captcha request failed")
 }
 
-func solveVolgaCaptcha(ctx context.Context, session *http.Client, challenge *url.URL) (err error) {
+func solveVolgaCaptcha(ctx context.Context, session *http.Client, challenge *url.URL) (completion *url.URL, err error) {
 	utils.Debugf("[VOLGA] CAPTCHA_FLOW_STARTED")
 	defer func() {
 		if err != nil {
@@ -113,45 +113,45 @@ func solveVolgaCaptcha(ctx context.Context, session *http.Client, challenge *url
 		}
 	}()
 	if session == nil || session.Jar == nil || session.Transport == nil || session.Timeout <= 0 || !isVolgaCaptcha(challenge) {
-		return errors.New("invalid captcha session")
+		return nil, errors.New("invalid captcha session")
 	}
 	ctx, cancel := context.WithTimeout(ctx, captchaFlowTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", challenge.String(), nil)
 	if err != nil {
-		return errors.New("invalid captcha request")
+		return nil, errors.New("invalid captcha request")
 	}
 	setCaptchaHeaders(req)
 	resp, err := session.Do(req)
 	if err != nil {
-		return captchaRequestError(ctx)
+		return nil, captchaRequestError(ctx)
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return errors.New("captcha page status rejected")
+		return nil, errors.New("captcha page status rejected")
 	}
 	body, err := readAuthBody(resp, maxCaptchaBody)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	ssr, action, err := parseVolgaCaptcha(body, challenge)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	workCtx, stopWork := context.WithTimeout(ctx, captchaWorkTimeout)
 	nonce, err := solveCaptchaPoW(workCtx, ssr.Pow.Prefix, ssr.Pow.Complexity)
 	stopWork()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	fingerprint, err := encodeCaptchaFingerprint(buildCaptchaFingerprint(nonce, volgaAuthUserAgent))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	form := url.Values{"version": {"1.5.0"}, "uniquekey": {ssr.UniqueKey}, "chstate": {"ok"}, "fingerprint": {fingerprint}}
 	req, err = http.NewRequestWithContext(ctx, "POST", action.String(), strings.NewReader(form.Encode()))
 	if err != nil {
-		return errors.New("invalid captcha submission")
+		return nil, errors.New("invalid captcha submission")
 	}
 	setCaptchaHeaders(req)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -159,18 +159,19 @@ func solveVolgaCaptcha(ctx context.Context, session *http.Client, challenge *url
 	req.Header.Set("Referer", challenge.String())
 	resp, err = session.Do(req)
 	if err != nil {
-		return captchaRequestError(ctx)
+		return nil, captchaRequestError(ctx)
 	}
-	// No redirect is followed here; the caller retries its ORIGINAL document URL.
+	// No redirect is followed here; the caller continues its bounded bootstrap loop.
 	// A 200/307/308 is not a successful POST-to-GET challenge completion.
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusSeeOther {
-		return errors.New("captcha submission status rejected")
+		return nil, errors.New("captcha submission status rejected")
 	}
-	if _, err := resolveAuthRedirect(action.String(), resp.Header.Get("Location")); err != nil {
-		return errors.New("invalid captcha completion redirect")
+	completion, err = resolveAuthRedirect(action.String(), resp.Header.Get("Location"))
+	if err != nil {
+		return nil, errors.New("invalid captcha completion redirect")
 	}
-	return nil
+	return completion, nil
 }
 
 func parseVolgaCaptcha(body []byte, challenge *url.URL) (*captchaSSRData, *url.URL, error) {

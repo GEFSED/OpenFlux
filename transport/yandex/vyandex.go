@@ -224,14 +224,16 @@ func authorizeWithClient(ctx context.Context, docURL string, session *http.Clien
 				}
 				captchaAttempts++
 				emitVolgaStartup(VolgaCaptchaStarted)
-				if err := solveVolgaCaptcha(ctx, session, next); err != nil {
+				nextAfterCaptcha, err := solveVolgaCaptcha(ctx, session, next)
+				if err != nil {
 					emitVolgaStartup(VolgaCaptchaFailed)
 					return nil, err
 				}
 				emitVolgaStartup(VolgaCaptchaCompleted)
+				emitVolgaStartup(VolgaCaptchaCompletionFollowed)
 				utils.Debugf("[VOLGA] AUTH_RETRY_STARTED")
 				emitVolgaStartup(VolgaAuthRetry)
-				currentURL = docURL
+				currentURL = nextAfterCaptcha.String()
 			} else {
 				currentURL = next.String()
 			}
