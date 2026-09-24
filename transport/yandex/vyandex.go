@@ -162,8 +162,16 @@ type volgaAuth struct {
 }
 
 func authorize(docURL string, limits VolgaConfig) (*volgaAuth, error) {
-	utils.Debugf("[VOLGA] authorizing document")
+	return authorizeContext(context.Background(), docURL, limits)
+}
 
+func authorizeContext(ctx context.Context, docURL string, limits VolgaConfig) (*volgaAuth, error) {
+	session := newVolgaAuthClient(limits)
+	defer session.CloseIdleConnections()
+	return authorizeWithClient(ctx, docURL, limits, session)
+}
+
+func newVolgaAuthClient(limits VolgaConfig) *http.Client {
 	jar, _ := cookiejar.New(nil)
 	authTransport := &http.Transport{DialContext: limits.DialContext, MaxIdleConns: 100, MaxIdleConnsPerHost: 100, IdleConnTimeout: 90 * time.Second}
 	if limits.LowMemory {
@@ -171,7 +179,7 @@ func authorize(docURL string, limits VolgaConfig) (*volgaAuth, error) {
 		authTransport.MaxIdleConnsPerHost = 2
 		authTransport.MaxConnsPerHost = 2
 	}
-	session := &http.Client{
+	return &http.Client{
 		Jar:       jar,
 		Transport: authTransport,
 		Timeout:   30 * time.Second,
@@ -179,15 +187,18 @@ func authorize(docURL string, limits VolgaConfig) (*volgaAuth, error) {
 			return http.ErrUseLastResponse
 		},
 	}
+}
 
-	defer session.CloseIdleConnections()
-
+// The shared client is also used by the challenge flow; no alternate network path.
+func authorizeWithClient(ctx context.Context, docURL string, limits VolgaConfig, session *http.Client) (*volgaAuth, error) {
+	utils.Debugf("[VOLGA] authorizing document")
 	var finalBody []byte
 	var finalURL string
 	currentURL := docURL
+	captchaAttempts := 0
 
-	for i := 0; i < 10; i++ {
-		req, err := http.NewRequest("GET", currentURL, nil)
+	for i := 0; i < maxVolgaBootstrapRequests; i++ {
+		req, err := http.NewRequestWithContext(ctx, "GET", currentURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("invalid document request")
 		}
@@ -217,11 +228,27 @@ func authorize(docURL string, limits VolgaConfig) (*volgaAuth, error) {
 			if loc == "" {
 				return nil, fmt.Errorf("document redirect without Location")
 			}
-			if strings.HasPrefix(loc, "/") {
-				u, _ := url.Parse(currentURL)
-				loc = u.Scheme + "://" + u.Host + loc
+			next, err := resolveAuthRedirect(currentURL, loc)
+			if err != nil {
+				return nil, err
 			}
-			currentURL = loc
+			if isVolgaCaptcha(next) {
+				if i+1 == maxVolgaBootstrapRequests {
+					return nil, fmt.Errorf("too many document redirects")
+				}
+				utils.Debugf("[VOLGA] CAPTCHA_REDIRECT_DETECTED")
+				if captchaAttempts >= maxCaptchaAttempts {
+					return nil, fmt.Errorf("captcha attempt limit reached")
+				}
+				captchaAttempts++
+				if err := solveVolgaCaptcha(ctx, session, next); err != nil {
+					return nil, err
+				}
+				utils.Debugf("[VOLGA] AUTH_RETRY_STARTED")
+				currentURL = docURL
+			} else {
+				currentURL = next.String()
+			}
 			continue
 		}
 
@@ -243,26 +270,19 @@ func authorize(docURL string, limits VolgaConfig) (*volgaAuth, error) {
 	dec := json.NewDecoder(bytes.NewReader(m[1]))
 	dec.UseNumber()
 	if err := dec.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("parse client-config: %w", err)
+		return nil, fmt.Errorf("invalid client-config JSON")
 	}
-
-	utils.Debugf("[VOLGA] client-config keys: %v", mapKeys(cfg))
 
 	office, _ := cfg["officeActionData"].(map[string]interface{})
 	editor, _ := cfg["editorParams"].(map[string]interface{})
 
 	if office == nil {
-		return nil, fmt.Errorf("officeActionData missing (keys: %v)", mapKeys(cfg))
+		return nil, fmt.Errorf("officeActionData missing")
 	}
-
-	utils.Debugf("[VOLGA] office keys: %v", mapKeys(office))
 
 	actionURL := getStr(office, "action_url")
 	accessToken := getStr(office, "access_token")
 	ttl := office["access_token_ttl"]
-
-	utils.Debugf("[VOLGA] access_token: %d bytes", len(accessToken))
-	utils.Debugf("[VOLGA] access_token_ttl: %v (%T)", ttl, ttl)
 
 	a := &volgaAuth{
 		Session:     session,
@@ -272,21 +292,20 @@ func authorize(docURL string, limits VolgaConfig) (*volgaAuth, error) {
 	}
 
 	if actionURL == "" {
-		return nil, fmt.Errorf("action_url missing (keys: %v)", mapKeys(office))
+		return nil, fmt.Errorf("action_url missing")
 	}
 	if a.AccessToken == "" {
 		return nil, fmt.Errorf("access_token missing")
 	}
 
 	ttlStr := formatTTL(ttl)
-	utils.Debugf("[VOLGA] ttl formatted: %q", ttlStr)
 
 	form := url.Values{}
 	form.Set("access_token", a.AccessToken)
 	form.Set("access_token_ttl", ttlStr)
 	body := form.Encode()
 
-	req2, err := http.NewRequest("POST", actionURL, strings.NewReader(body))
+	req2, err := http.NewRequestWithContext(ctx, "POST", actionURL, strings.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("invalid document authorization request")
 	}
@@ -341,7 +360,7 @@ func authorize(docURL string, limits VolgaConfig) (*volgaAuth, error) {
 	dec2 := json.NewDecoder(strings.NewReader(jsonStr))
 	dec2.UseNumber()
 	if err := dec2.Decode(&jsonData); err != nil {
-		return nil, fmt.Errorf("parse Location json: %w", err)
+		return nil, fmt.Errorf("invalid authorization redirect JSON")
 	}
 
 	a.SessionID = getStr(jsonData, "sessionId")
@@ -353,7 +372,7 @@ func authorize(docURL string, limits VolgaConfig) (*volgaAuth, error) {
 		a.UserIDStr = getStr(xiva, "user")
 	}
 
-	req3, err := http.NewRequest("GET", location, nil)
+	req3, err := http.NewRequestWithContext(ctx, "GET", location, nil)
 	if err != nil {
 		return nil, fmt.Errorf("invalid document session request")
 	}
@@ -364,10 +383,10 @@ func authorize(docURL string, limits VolgaConfig) (*volgaAuth, error) {
 	if err != nil {
 		return nil, fmt.Errorf("document session request failed")
 	}
-	io.Copy(io.Discard, resp3.Body)
+	// Session cookies are in the headers; do not drain an untrusted body.
 	resp3.Body.Close()
 
-	a.Cookies = jar.Cookies(locParsed)
+	a.Cookies = session.Jar.Cookies(locParsed)
 
 	if a.Token == "" || a.RequestPath == "" || a.UserIDStr == "" || a.Sign == "" {
 		return nil, fmt.Errorf("incomplete auth: token=%v rp=%v user=%v sign=%v",
@@ -1040,6 +1059,10 @@ type YandexVolgaTransport struct {
 	onData   func([]byte)
 
 	keepAliveStop chan struct{}
+	startMu       sync.Mutex
+	startCalled   bool
+	stopped       bool
+	authCancel    context.CancelFunc
 }
 
 func NewYandexVolgaTransport(docURL string, cfg transport.TransportConfig, preset ...VolgaConfig) *YandexVolgaTransport {
@@ -1058,14 +1081,30 @@ func NewYandexVolgaTransport(docURL string, cfg transport.TransportConfig, prese
 }
 
 func (t *YandexVolgaTransport) Start() error {
-	if err := t.BaseTransport.Start(); err != nil {
-		return err
+	t.startMu.Lock()
+	if t.startCalled || t.stopped {
+		t.startMu.Unlock()
+		return fmt.Errorf("Volga transport already started or stopped")
 	}
+	t.startCalled = true
+	ctx, cancel := context.WithCancel(context.Background())
+	t.authCancel = cancel
+	_ = t.BaseTransport.Start()
+	t.startMu.Unlock()
+	defer cancel()
 
 	utils.Debugf("[VOLGA] authorizing...")
-	auth, err := authorize(t.docURL, t.config)
+	auth, err := authorizeContext(ctx, t.docURL, t.config)
+	t.startMu.Lock()
+	defer t.startMu.Unlock()
+	t.authCancel = nil
 	if err != nil {
+		_ = t.BaseTransport.Stop()
 		return fmt.Errorf("auth: %w", err)
+	}
+	if t.stopped {
+		auth.Session.CloseIdleConnections()
+		return fmt.Errorf("authorization cancelled by Stop")
 	}
 	t.auth = auth
 
@@ -1091,6 +1130,12 @@ func (t *YandexVolgaTransport) Start() error {
 }
 
 func (t *YandexVolgaTransport) Stop() error {
+	t.startMu.Lock()
+	defer t.startMu.Unlock()
+	t.stopped = true
+	if t.authCancel != nil {
+		t.authCancel()
+	}
 	select {
 	case <-t.keepAliveStop:
 	default:
