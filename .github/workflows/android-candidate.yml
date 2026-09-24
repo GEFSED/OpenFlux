@@ -1,7 +1,7 @@
-name: Ordinary Android candidate
+name: Android Candidate v2 captcha
 on:
   push:
-    branches: [codex/android-production-optimized]
+    branches: [codex/android-production-optimized-captcha]
   workflow_dispatch:
 permissions:
   contents: read
@@ -101,17 +101,17 @@ jobs:
           apk=dist/OpenFlux-android-arm64-v8a-candidate.apk
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" > "$apk.badging.txt"
           grep -q "package: name='io.openflux.app.candidate'" "$apk.badging.txt"
-          grep -q "versionCode='11' versionName='1.0.0-candidate.1'" "$apk.badging.txt"
+          grep -q "versionCode='12' versionName='1.0.0-candidate.2'" "$apk.badging.txt"
           grep -q "application-label:'OpenFlux Candidate'" "$apk.badging.txt"
           grep -Fxq "native-code: 'arm64-v8a'" "$apk.badging.txt"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" | tee dist/SIGNING.txt
           grep -q "CN=Android Debug" dist/SIGNING.txt
           cd dist
           sha256sum *-candidate.apk | tee SHA256SUMS
-          printf 'Commit: %s\nPackage: io.openflux.app.candidate\nVersion: 1.0.0-candidate.1 (11)\nABI: arm64-v8a\nSigning: CI debug certificate, not upstream signing identity\nSeparate installation; cannot update io.openflux.app in place. No automatic install.\n' "$GITHUB_SHA" > BUILD.txt
+          printf 'Commit: %s\nPackage: io.openflux.app.candidate\nVersion: 1.0.0-candidate.2 (12)\nABI: arm64-v8a\nSigning: CI debug certificate, not upstream signing identity\nSeparate installation; cannot update io.openflux.app in place. No automatic install.\n' "$GITHUB_SHA" > BUILD.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: OpenFlux-Android-Candidate-${{ github.sha }}
+          name: OpenFlux-Android-Candidate-v2-${{ github.sha }}
           path: |
             dist/*-candidate.apk
             dist/*.badging.txt

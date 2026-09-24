@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches-ignore: [codex/android-production-optimized]
+    branches-ignore: [codex/android-production-optimized, codex/android-production-optimized-captcha]
   pull_request:
   workflow_dispatch:
 
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   go:
-    if: github.ref != 'refs/heads/codex/android-production-optimized'
+    if: github.ref != 'refs/heads/codex/android-production-optimized' && github.ref != 'refs/heads/codex/android-production-optimized-captcha'
     name: Go tests & cross-platform binaries
     runs-on: ubuntu-latest
     steps:
@@ -42,7 +42,7 @@ jobs:
           retention-days: 30
 
   android:
-    if: github.ref != 'refs/heads/codex/android-production-optimized'
+    if: github.ref != 'refs/heads/codex/android-production-optimized' && github.ref != 'refs/heads/codex/android-production-optimized-captcha'
     name: Android debug APKs
     runs-on: ubuntu-latest
     steps:

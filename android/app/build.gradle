@@ -45,7 +45,7 @@ android {
         candidate {
             initWith debug
             applicationIdSuffix ".candidate"
-            versionNameSuffix "-candidate.1"
+            versionNameSuffix "-candidate.2"
             signingConfig signingConfigs.debug
             matchingFallbacks = ["debug"]
         }
@@ -57,7 +57,7 @@ android {
 
     applicationVariants.all { variant ->
         if (variant.buildType.name == "candidate") {
-            variant.outputs.all { output -> output.versionCodeOverride = 11 }
+            variant.outputs.all { output -> output.versionCodeOverride = 12 }
         }
     }
 

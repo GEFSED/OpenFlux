@@ -139,28 +139,41 @@ type volgaAuth struct {
 }
 
 func authorize(docURL string) (*volgaAuth, error) {
-	utils.Debugf("[VOLGA] authorize(%s)", docURL)
+	return authorizeContext(context.Background(), docURL)
+}
 
+func authorizeContext(ctx context.Context, docURL string) (*volgaAuth, error) {
+	session := newVolgaAuthClient()
+	defer session.CloseIdleConnections()
+	return authorizeWithClient(ctx, docURL, session)
+}
+
+func newVolgaAuthClient() *http.Client {
 	jar, _ := cookiejar.New(nil)
-	session := &http.Client{
-		Jar: jar,
-		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 100,
-			IdleConnTimeout:     90 * time.Second,
-		},
-		Timeout: 30 * time.Second,
+	authTransport := &http.Transport{MaxIdleConns: 100, MaxIdleConnsPerHost: 100, IdleConnTimeout: 90 * time.Second}
+	return &http.Client{
+		Jar:       jar,
+		Transport: authTransport,
+		Timeout:   30 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
+}
 
+// The shared client is also used by the challenge flow; no alternate network path.
+func authorizeWithClient(ctx context.Context, docURL string, session *http.Client) (*volgaAuth, error) {
+	utils.Debugf("[VOLGA] authorizing document")
 	var finalBody []byte
 	var finalURL string
 	currentURL := docURL
+	captchaAttempts := 0
 
-	for i := 0; i < 10; i++ {
-		req, _ := http.NewRequest("GET", currentURL, nil)
+	for i := 0; i < maxVolgaBootstrapRequests; i++ {
+		req, err := http.NewRequestWithContext(ctx, "GET", currentURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("invalid document request")
+		}
 		req.Header.Set("User-Agent", volgaUserAgent)
 		req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9")
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
@@ -170,23 +183,42 @@ func authorize(docURL string) (*volgaAuth, error) {
 
 		resp, err := session.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("GET %s: %w", currentURL, err)
+			return nil, fmt.Errorf("document request failed")
 		}
-		body, _ := io.ReadAll(resp.Body)
+		// Preserve the Android document-read path; challenge reads have their
+		// own encoded and decoded bounds in readAuthBody.
+		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
-
-		utils.Debugf("[VOLGA] GET %s -> %d (%d bytes)", currentURL, resp.StatusCode, len(body))
+		if readErr != nil {
+			return nil, fmt.Errorf("document configuration response unreadable")
+		}
 
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 			loc := resp.Header.Get("Location")
 			if loc == "" {
-				return nil, fmt.Errorf("redirect without Location from %s", currentURL)
+				return nil, fmt.Errorf("document redirect without Location")
 			}
-			if strings.HasPrefix(loc, "/") {
-				u, _ := url.Parse(currentURL)
-				loc = u.Scheme + "://" + u.Host + loc
+			next, err := resolveAuthRedirect(currentURL, loc)
+			if err != nil {
+				return nil, err
 			}
-			currentURL = loc
+			if isVolgaCaptcha(next) {
+				if i+1 == maxVolgaBootstrapRequests {
+					return nil, fmt.Errorf("too many document redirects")
+				}
+				utils.Debugf("[VOLGA] CAPTCHA_REDIRECT_DETECTED")
+				if captchaAttempts >= maxCaptchaAttempts {
+					return nil, fmt.Errorf("captcha attempt limit reached")
+				}
+				captchaAttempts++
+				if err := solveVolgaCaptcha(ctx, session, next); err != nil {
+					return nil, err
+				}
+				utils.Debugf("[VOLGA] AUTH_RETRY_STARTED")
+				currentURL = docURL
+			} else {
+				currentURL = next.String()
+			}
 			continue
 		}
 
@@ -196,46 +228,31 @@ func authorize(docURL string) (*volgaAuth, error) {
 	}
 
 	if finalBody == nil {
-		return nil, fmt.Errorf("too many redirects from %s", docURL)
+		return nil, fmt.Errorf("too many document redirects")
 	}
-
-	utils.Debugf("[VOLGA] final URL: %s", finalURL)
 
 	m := reClientConfig.FindSubmatch(finalBody)
 	if len(m) < 2 {
-		preview := string(finalBody)
-		if len(preview) > 3000 {
-			preview = preview[:3000]
-		}
-		utils.Debugf("[VOLGA] HTML preview: %s", preview)
-		return nil, fmt.Errorf("client-config not found in %s", finalURL)
+		return nil, fmt.Errorf("document client-config not found")
 	}
 
 	var cfg map[string]interface{}
 	dec := json.NewDecoder(bytes.NewReader(m[1]))
 	dec.UseNumber()
 	if err := dec.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("parse client-config: %w", err)
+		return nil, fmt.Errorf("invalid client-config JSON")
 	}
-
-	utils.Debugf("[VOLGA] client-config keys: %v", mapKeys(cfg))
 
 	office, _ := cfg["officeActionData"].(map[string]interface{})
 	editor, _ := cfg["editorParams"].(map[string]interface{})
 
 	if office == nil {
-		return nil, fmt.Errorf("officeActionData missing (keys: %v)", mapKeys(cfg))
+		return nil, fmt.Errorf("officeActionData missing")
 	}
-
-	utils.Debugf("[VOLGA] office keys: %v", mapKeys(office))
 
 	actionURL := getStr(office, "action_url")
 	accessToken := getStr(office, "access_token")
 	ttl := office["access_token_ttl"]
-
-	utils.Debugf("[VOLGA] action_url: %s", actionURL)
-	utils.Debugf("[VOLGA] access_token: %d bytes", len(accessToken))
-	utils.Debugf("[VOLGA] access_token_ttl: %v (%T)", ttl, ttl)
 
 	a := &volgaAuth{
 		Session:     session,
@@ -245,23 +262,23 @@ func authorize(docURL string) (*volgaAuth, error) {
 	}
 
 	if actionURL == "" {
-		return nil, fmt.Errorf("action_url missing (keys: %v)", mapKeys(office))
+		return nil, fmt.Errorf("action_url missing")
 	}
 	if a.AccessToken == "" {
 		return nil, fmt.Errorf("access_token missing")
 	}
 
 	ttlStr := formatTTL(ttl)
-	utils.Debugf("[VOLGA] ttl formatted: %q", ttlStr)
 
 	form := url.Values{}
 	form.Set("access_token", a.AccessToken)
 	form.Set("access_token_ttl", ttlStr)
 	body := form.Encode()
 
-	utils.Debugf("[VOLGA] POST %s (body %d bytes)", actionURL, len(body))
-
-	req2, _ := http.NewRequest("POST", actionURL, strings.NewReader(body))
+	req2, err := http.NewRequestWithContext(ctx, "POST", actionURL, strings.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("invalid document authorization request")
+	}
 	req2.Header.Set("User-Agent", volgaUserAgent)
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req2.Header.Set("Origin", "https://disk.yandex.ru")
@@ -275,7 +292,7 @@ func authorize(docURL string) (*volgaAuth, error) {
 
 	resp2, err := session.Do(req2)
 	if err != nil {
-		return nil, fmt.Errorf("POST auth/initial: %w", err)
+		return nil, fmt.Errorf("document authorization request failed")
 	}
 	resp2.Body.Close()
 
@@ -290,15 +307,13 @@ func authorize(docURL string) (*volgaAuth, error) {
 		return nil, fmt.Errorf("auth/initial no Location")
 	}
 
-	utils.Debugf("[VOLGA] Location: %s", location[:minInt(len(location), 300)])
-
 	if strings.Contains(location, "/document/error/") {
 		return nil, fmt.Errorf("auth/initial returned /document/error/ — check access_token_ttl and Referer")
 	}
 
 	locParsed, err := url.Parse(location)
 	if err != nil {
-		return nil, fmt.Errorf("parse Location: %w", err)
+		return nil, fmt.Errorf("invalid document authorization redirect")
 	}
 	qs := locParsed.Query()
 
@@ -315,7 +330,7 @@ func authorize(docURL string) (*volgaAuth, error) {
 	dec2 := json.NewDecoder(strings.NewReader(jsonStr))
 	dec2.UseNumber()
 	if err := dec2.Decode(&jsonData); err != nil {
-		return nil, fmt.Errorf("parse Location json: %w", err)
+		return nil, fmt.Errorf("invalid authorization redirect JSON")
 	}
 
 	a.SessionID = getStr(jsonData, "sessionId")
@@ -327,26 +342,28 @@ func authorize(docURL string) (*volgaAuth, error) {
 		a.UserIDStr = getStr(xiva, "user")
 	}
 
-	req3, _ := http.NewRequest("GET", location, nil)
+	req3, err := http.NewRequestWithContext(ctx, "GET", location, nil)
+	if err != nil {
+		return nil, fmt.Errorf("invalid document session request")
+	}
 	req3.Header.Set("User-Agent", volgaUserAgent)
 	req3.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req3.Header.Set("Referer", actionURL)
 	resp3, err := session.Do(req3)
 	if err != nil {
-		return nil, fmt.Errorf("GET Location: %w", err)
+		return nil, fmt.Errorf("document session request failed")
 	}
-	io.Copy(io.Discard, resp3.Body)
+	// Session cookies are in the headers; do not drain an untrusted body.
 	resp3.Body.Close()
 
-	a.Cookies = jar.Cookies(locParsed)
+	a.Cookies = session.Jar.Cookies(locParsed)
 
 	if a.Token == "" || a.RequestPath == "" || a.UserIDStr == "" || a.Sign == "" {
 		return nil, fmt.Errorf("incomplete auth: token=%v rp=%v user=%v sign=%v",
 			a.Token != "", a.RequestPath != "", a.UserIDStr != "", a.Sign != "")
 	}
 
-	utils.Debugf("[VOLGA] auth OK: user=%d(%s) rp=%s sign=%s ts=%s",
-		a.UserID, a.UserIDStr, a.RequestPath, a.Sign, a.TS)
+	utils.Debugf("[VOLGA] session ready")
 	return a, nil
 }
 
